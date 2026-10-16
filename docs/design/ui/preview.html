@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>布局回归预览用法</title></head>
+<body style="font-family:sans-serif;max-width:720px;margin:40px auto;line-height:1.8">
+<h2>布局回归预览用法</h2>
+<p>布局回归截图直接使用各线稿页的 <code>#fit=WxH</code> 锚点（页面自带等比缩放逻辑，见各页底部脚本与 wireframe.css 的 <code>.preview-mode</code> 规则）：</p>
+<ul>
+<li>最小视口：<code>01-start.html#fit=360x640</code></li>
+<li>最大视口：<code>04-battle.html#fit=1440x2560</code></li>
+</ul>
+<p>页面在该锚点下只保留第一个 .phone、隐藏侧边说明，并按 720×1280 逻辑分辨率等比缩放（scale = min(W/720, H/1280)，无二次缩放）。</p>
+</body>
+</html>

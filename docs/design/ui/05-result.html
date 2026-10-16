@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>线稿 05 · 结算（胜利 / 失败）</title>
+<link rel="stylesheet" href="wireframe.css">
+</head>
+<body>
+
+<!-- ===== 胜利态 ===== -->
+<div class="phone">
+<div class="phone-inner" style="background:linear-gradient(#e8f6e0 0 40%, #f8f8f0 40% 100%);">
+  <!-- 背景遮罩上的战斗画面剪影 -->
+  <div style="position:absolute;inset:0;background:rgba(248,248,240,.55);"></div>
+
+  <div style="position:absolute;left:90px;top:130px;width:540px;height:150px;background:var(--ai-success);border-radius:var(--radius);box-shadow:var(--clay-shadow);display:flex;align-items:center;justify-content:center;color:#fff;font-size:64px;font-weight:900;letter-spacing:12px;border:4px solid rgba(255,255,255,.6);">通 关 ！</div>
+  <div class="callout" style="left:650px;top:150px;">胜利横幅<br>success 绿 + 彩带粒子</div>
+
+  <!-- 经验结算卡 -->
+  <div style="position:absolute;left:60px;top:340px;width:600px;height:560px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:24px;">
+    <div style="font-size:30px;font-weight:900;text-align:center;">第 3 关 · 结算</div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:20px;"><span>击杀敌人</span><b>129 只</b></div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:16px;"><span>最高连锁</span><b>×4</b></div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:16px;"><span>击杀经验累计</span><b>+4226 exp</b></div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:16px;"><span>通关奖励（50×3）</span><b>+150 exp</b></div>
+    <div style="border-top:2px dashed var(--ai-border);margin-top:24px;padding-top:24px;">
+      <div style="display:flex;justify-content:space-between;font-size:28px;"><span><b>Lv.12 → 16</b></span><b style="color:var(--ai-warning);">连升 4 级</b></div>
+      <div class="bar exp" style="margin-top:12px;"><i style="width:31%"></i></div>
+      <div style="font-size:22px;color:var(--ai-text-2nd);margin-top:8px;">升级回满 HP · 共得 4376，扣 831/937/1048/1162 → Lv.16 余 398 · 距 Lv.17 还需 882（条 31%）</div>
+    </div>
+    <div class="ph" style="height:70px;margin-top:14px;font-size:22px;">升级动效占位（金光 / 弹跳）</div>
+  </div>
+
+  <!-- 解锁提示 -->
+  <div style="position:absolute;left:150px;top:950px;" class="chip">🎉 解锁第 4 关 · 雾隐山道</div>
+
+  <!-- 按钮组 -->
+  <div class="btn" style="position:absolute;left:110px;top:1010px;width:500px;height:110px;font-size:36px;">下一关 ▶</div>
+  <div class="btn ghost" style="position:absolute;left:110px;top:1140px;width:240px;height:90px;font-size:28px;">重打本关</div>
+  <div class="btn ghost" style="position:absolute;left:370px;top:1140px;width:240px;height:90px;font-size:28px;">返回选关</div>
+</div>
+</div>
+
+<div style="max-width:420px;font-size:15px;line-height:1.8;">
+  <h2 style="color:#794f27;">05 · 结算（胜利态）</h2>
+  <ul style="padding-left:20px;">
+    <li>半透明遮罩盖在定格的战斗画面上</li>
+    <li>统计行逐条浮现（击杀/最高连锁/奖励），数字滚动</li>
+    <li>升级段独立区块：Lv 徽章弹跳 + 金光动效占位</li>
+    <li>主按钮「下一关」；已通关卡可「重打本关」刷级（D14）</li>
+    <li>解锁提示 chip：通关 L → 解锁 L+1（FR-6）</li>
+    <li>结算同时写档：<code>unlockedLevel</code> / <code>exp</code></li>
+  </ul>
+</div>
+
+<!-- ===== 失败态 ===== -->
+<div class="phone">
+<div class="phone-inner" style="background:linear-gradient(#f3e2e0 0 40%, #f8f8f0 40% 100%);">
+  <div style="position:absolute;inset:0;background:rgba(248,248,240,.6);"></div>
+
+  <div style="position:absolute;left:90px;top:130px;width:540px;height:150px;background:var(--ai-error);border-radius:var(--radius);box-shadow:var(--clay-shadow);display:flex;align-items:center;justify-content:center;color:#fff;font-size:64px;font-weight:900;letter-spacing:12px;border:4px solid rgba(255,255,255,.6);">战 败</div>
+
+  <div style="position:absolute;left:60px;top:340px;width:600px;height:460px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:32px;">
+    <div style="font-size:30px;font-weight:900;text-align:center;">第 4 关 · 第 6 波</div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:28px;"><span>本局击杀</span><b>53 只</b></div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:16px;"><span>本局获得经验</span><b>+1884 exp（保留）</b></div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:16px;"><span>剩余主角 HP</span><b style="color:var(--ai-error);">0</b></div>
+    <div class="ph" style="height:130px;margin-top:28px;font-size:24px;">鼓励文案占位<br>（「练到 Lv.14 再来挑战！」）</div>
+    <div style="font-size:22px;color:var(--ai-text-2nd);margin-top:20px;">失败无惩罚：等级/经验/解锁全部保留（D14）</div>
+  </div>
+
+  <div class="btn" style="position:absolute;left:110px;top:870px;width:500px;height:110px;font-size:36px;">再战一次</div>
+  <div class="btn ghost" style="position:absolute;left:110px;top:1000px;width:240px;height:90px;font-size:28px;">去备战</div>
+  <div class="btn ghost" style="position:absolute;left:370px;top:1000px;width:240px;height:90px;font-size:28px;">返回选关</div>
+</div>
+</div>
+
+<div style="max-width:420px;font-size:15px;line-height:1.8;">
+  <h2 style="color:#794f27;">05 · 结算（失败态）</h2>
+  <ul style="padding-left:20px;">
+    <li>失败横幅用 error 红；底色偏暖灰</li>
+    <li>「本局获得经验（保留）」明示宽松取向，降低挫败</li>
+    <li>鼓励文案可读取「距建议等级差距」动态生成</li>
+    <li>主按钮「再战一次」（从本关第 1 波重来）；「去备战」跳 03 调整装配</li>
+  </ul>
+</div>
+
+<script>
+/* #fit=WxH：仅保留第一个 .phone 并等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
+(function(){
+  const m = location.hash.match(/fit=(\d+)x(\d+)/);
+  if (!m) return;
+  const W = +m[1], H = +m[2], s = Math.min(W/720, H/1280);
+  document.body.classList.add('preview-mode');
+  document.body.style.overflow = 'hidden';
+  const phone = document.querySelector('.phone');
+  phone.style.cssText = 'width:'+W+'px;height:'+H+'px;position:relative;overflow:hidden;';
+  const inner = phone.querySelector('.phone-inner');
+  inner.style.position = 'absolute';
+  inner.style.left = '50%';
+  inner.style.top = '0';
+  inner.style.transformOrigin = 'top center';
+  inner.style.transform = 'translateX(-50%) scale(' + s + ')';
+})();
+</script>
+</body>
+</html>

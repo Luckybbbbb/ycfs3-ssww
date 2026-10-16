@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>线稿 02 · 关卡选择</title>
+<link rel="stylesheet" href="wireframe.css">
+</head>
+<body>
+
+<div class="phone">
+<div class="phone-inner">
+  <!-- 顶栏 -->
+  <div style="position:absolute;left:0;top:0;right:0;height:110px;background:var(--ai-primary-bg);border-bottom:3px solid var(--ai-border-light);display:flex;align-items:center;padding:0 32px;gap:20px;">
+    <div class="btn ghost" style="width:80px;height:70px;font-size:30px;">←</div>
+    <div style="font-size:38px;font-weight:900;flex:1;">关卡选择</div>
+    <div class="chip" style="background:#fff;">Lv.12</div>
+    <div style="width:180px;"><div class="bar exp"><i style="width:62%"></i></div></div>
+  </div>
+  <div class="callout" style="left:470px;top:120px;">顶栏 h=110<br>经验条随 profile</div>
+
+  <!-- 关卡列表（竖向滚动卡片） -->
+  <div style="position:absolute;left:32px;top:140px;right:32px;bottom:40px;overflow:hidden;display:flex;flex-direction:column;gap:24px;">
+
+    <!-- 已通关卡片 -->
+    <div style="background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:24px 28px;display:flex;gap:24px;align-items:center;">
+      <div class="ph" style="width:130px;height:130px;border-radius:var(--radius-sm);">Boss 缩略</div>
+      <div style="flex:1;">
+        <div style="font-size:32px;font-weight:900;">第 3 关 · 幽泽林间</div>
+        <div style="font-size:24px;color:var(--ai-text-2nd);margin:6px 0;">建议 Lv.22~28 · Boss×1</div>
+        <div style="display:flex;gap:10px;"><span class="chip" style="font-size:20px;background:var(--ai-primary-bg);color:#0e7a70;">已通关</span><span class="chip" style="font-size:20px;">slime/fox/zombie/snake</span></div>
+      </div>
+      <div class="btn ghost" style="width:150px;height:80px;font-size:26px;">重打</div>
+    </div>
+
+    <!-- 当前可挑战（高亮） -->
+    <div style="background:var(--ai-primary-bg);border:4px solid var(--ai-primary);border-radius:var(--radius);box-shadow:var(--clay-shadow);padding:24px 28px;display:flex;gap:24px;align-items:center;position:relative;">
+      <div style="position:absolute;top:-20px;right:28px;" class="chip">当前进度</div>
+      <div class="ph" style="width:130px;height:130px;border-radius:var(--radius-sm);">Boss 缩略</div>
+      <div style="flex:1;">
+        <div style="font-size:32px;font-weight:900;">第 4 关 · 雾隐山道</div>
+        <div style="font-size:24px;color:var(--ai-text-2nd);margin:6px 0;">建议 Lv.30~36 · Boss×1</div>
+        <div style="display:flex;gap:10px;"><span class="chip" style="font-size:20px;">slime…tiger</span></div>
+      </div>
+      <div class="btn" style="width:150px;height:80px;font-size:26px;">挑战</div>
+    </div>
+
+    <!-- 未解锁 -->
+    <div style="background:var(--ai-bg-2nd);border:3px solid var(--ai-border-light);border-radius:var(--radius);padding:24px 28px;display:flex;gap:24px;align-items:center;opacity:.75;">
+      <div class="ph" style="width:130px;height:130px;border-radius:var(--radius-sm);color:var(--ai-text-disabled);">🔒<br>未解锁</div>
+      <div style="flex:1;">
+        <div style="font-size:32px;font-weight:900;color:var(--ai-text-2nd);">第 5 关 · ???</div>
+        <div style="font-size:24px;color:var(--ai-text-disabled);margin-top:6px;">通关第 4 关后解锁</div>
+      </div>
+      <div class="btn disabled" style="width:150px;height:80px;font-size:26px;">锁定</div>
+    </div>
+    <div class="ph" style="height:120px;">↓ 更多关卡（列表纵向滚动）</div>
+  </div>
+
+  <div class="callout" style="left:10px;top:620px;">卡片三态：<br><b>已通关 / 当前 / 锁定</b><br>当前关主色描边+阴影</div>
+</div>
+</div>
+
+<div style="max-width:420px;font-size:15px;line-height:1.8;">
+  <h2 style="color:#794f27;">02 · 关卡选择</h2>
+  <p><b>职责：</b>进度可视化 + 选关入口（FR-6，D14 顺序解锁）。</p>
+  <ul style="padding-left:20px;">
+    <li>顶栏：返回 / 标题 / 等级 + 经验条（读 <code>ssww.profile</code>）</li>
+    <li>关卡卡片：Boss 缩略图（boss 序列帧首帧）、名称、建议等级、敌人编成 chip、按钮态</li>
+    <li>三态：已通关（可重打刷级）/ 当前（高亮可挑战）/ 锁定（显示解锁条件）</li>
+    <li>点击「挑战/重打」→ 备战界面（03）；锁定卡片点击无效 + 轻微抖动反馈</li>
+    <li>列表纵向滚动，卡片高 ≈178，同屏 3 张 + 露头</li>
+  </ul>
+</div>
+
+<script>
+/* #fit=WxH：仅保留第一个 .phone 并等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
+(function(){
+  const m = location.hash.match(/fit=(\d+)x(\d+)/);
+  if (!m) return;
+  const W = +m[1], H = +m[2], s = Math.min(W/720, H/1280);
+  document.body.classList.add('preview-mode');
+  document.body.style.overflow = 'hidden';
+  const phone = document.querySelector('.phone');
+  phone.style.cssText = 'width:'+W+'px;height:'+H+'px;position:relative;overflow:hidden;';
+  const inner = phone.querySelector('.phone-inner');
+  inner.style.position = 'absolute';
+  inner.style.left = '50%';
+  inner.style.top = '0';
+  inner.style.transformOrigin = 'top center';
+  inner.style.transform = 'translateX(-50%) scale(' + s + ')';
+})();
+</script>
+</body>
+</html>

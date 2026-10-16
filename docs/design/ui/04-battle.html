@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>线稿 04 · 战斗界面</title>
+<link rel="stylesheet" href="wireframe.css">
+</head>
+<body>
+
+<div class="phone">
+<div class="phone-inner">
+  <!-- ============ 上 35%：战斗区（y 0~448，D3/00 文档第 3 节） ============ -->
+  <div style="position:absolute;left:0;top:0;right:0;height:448px;background:linear-gradient(#bfe3d8 0 120px, #8fbf9f 120px 240px, #6f9f78 240px 330px, #55845e 330px 448px);overflow:hidden;">
+    <!-- 远景层（视差0.15）：太阳 + 远山剪影 + 云 -->
+    <div style="position:absolute;left:560px;top:36px;width:64px;height:64px;border-radius:50%;background:#fff7d6;box-shadow:0 0 30px 12px rgba(255,247,214,.6);"></div>
+    <div style="position:absolute;left:0;top:150px;width:720px;height:100px;background:radial-gradient(ellipse 160px 70px at 80px 100px, #6f9f8a 60%, transparent 61%),radial-gradient(ellipse 220px 90px at 300px 100px, #77a892 60%, transparent 61%),radial-gradient(ellipse 180px 80px at 580px 100px, #6f9f8a 60%, transparent 61%);"></div>
+    <div style="position:absolute;left:90px;top:52px;width:110px;height:36px;border-radius:999px;background:rgba(255,255,255,.75);"></div>
+    <div style="position:absolute;left:330px;top:86px;width:80px;height:26px;border-radius:999px;background:rgba(255,255,255,.6);"></div>
+    <!-- 中景层（视差0.45）：树丛剪影 + 雾带 + 飘叶 -->
+    <div style="position:absolute;left:0;top:236px;width:720px;height:90px;background:radial-gradient(ellipse 90px 80px at 140px 90px, #4f7f5f 60%, transparent 61%),radial-gradient(ellipse 70px 66px at 250px 90px, #568a66 60%, transparent 61%),radial-gradient(ellipse 100px 84px at 470px 90px, #4f7f5f 60%, transparent 61%),radial-gradient(ellipse 80px 70px at 640px 90px, #568a66 60%, transparent 61%);"></div>
+    <div style="position:absolute;left:0;top:280px;width:720px;height:26px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.28) 30%,rgba(255,255,255,.16) 60%,transparent);"></div>
+    <div style="position:absolute;left:180px;top:250px;width:12px;height:12px;border-radius:50% 0 50% 50%;background:#cfe6a8;opacity:.8;"></div>
+    <div style="position:absolute;left:520px;top:262px;width:10px;height:10px;border-radius:0 50% 50% 50%;background:#cfe6a8;opacity:.7;"></div>
+    <!-- 近景层（视差1.0）：地面 + 草丛簇 -->
+    <div style="position:absolute;left:0;top:326px;width:720px;height:122px;background:linear-gradient(#5a8a63 0 40px, #47714f 40px);"></div>
+    <div style="position:absolute;left:40px;top:318px;width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:30px solid #6da378;"></div>
+    <div style="position:absolute;left:300px;top:322px;width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:24px solid #6da378;"></div>
+    <div style="position:absolute;left:660px;top:320px;width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:26px solid #6da378;"></div>
+    <div class="callout" style="left:590px;top:8px;background:#fff3e0;">远中近三层视差<br><b>0.15 / 0.45 / 1.0</b><br>云横移·飘叶·草摆</div>
+    <!-- 顶部悬浮 HUD -->
+    <div style="position:absolute;left:20px;top:16px;right:20px;display:flex;gap:16px;align-items:center;">
+      <div style="flex:1;"><div class="bar hp" style="height:24px;"><i style="width:78%"></i></div>
+        <div style="font-size:20px;color:#cfe6c8;margin-top:4px;">Lv.12 主角 207/265</div></div>
+      <div style="text-align:right;color:#cfe6c8;font-size:22px;font-weight:800;">第 4 波 / 10</div>
+    </div>
+    <!-- 经验条（细） -->
+    <div class="bar exp" style="position:absolute;left:20px;top:96px;right:20px;height:12px;"><i style="width:35%"></i></div>
+
+    <!-- 主角（站左侧 x≈110） -->
+    <div class="ph" style="position:absolute;left:65px;top:150px;width:90px;height:160px;color:#9fb89a;">主角<br>idle</div>
+    <div class="callout" style="left:8px;top:330px;background:#1c241c;color:#cfe6c8;border-color:#5a7a55;">主角站位 x≈110<br>判定半径 40</div>
+
+    <!-- 敌人 ×3（右侧，停位 x≈560~610） -->
+    <div class="ph" style="position:absolute;left:560px;top:130px;width:80px;height:110px;color:#9fb89a;">敌A</div>
+    <div class="ph" style="position:absolute;left:600px;top:220px;width:80px;height:140px;color:#9fb89a;">敌B<br>(tiger)</div>
+    <div class="ph" style="position:absolute;left:540px;top:310px;width:80px;height:100px;color:#9fb89a;">敌C</div>
+    <!-- 敌方弹幕线稿 -->
+    <div style="position:absolute;left:380px;top:262px;width:60px;height:16px;border-radius:999px;background:rgba(255,120,120,.7);"></div>
+    <div style="position:absolute;left:300px;top:238px;width:60px;height:16px;border-radius:999px;background:rgba(255,180,80,.7);"></div>
+    <!-- 主角技能弹 -->
+    <div style="position:absolute;left:200px;top:200px;width:44px;height:44px;border-radius:50%;background:var(--wx-fire);opacity:.85;"></div>
+    <div style="position:absolute;left:150px;top:330px;width:44px;height:44px;border-radius:50%;background:var(--wx-water);opacity:.85;"></div>
+
+    <!-- Boss 血条（Boss 波显示） -->
+    <div style="position:absolute;left:60px;top:390px;right:60px;display:flex;align-items:center;gap:12px;">
+      <span style="color:#ffd9d9;font-size:20px;font-weight:800;">BOSS</span>
+      <div class="bar" style="flex:1;height:18px;"><i style="width:64%;background:var(--ai-error);"></i></div>
+    </div>
+  </div>
+
+  <!-- ============ 联动栏（y 448~504，56px） ============ -->
+  <div style="position:absolute;left:0;top:448px;right:0;height:56px;background:var(--ai-bg-2nd);border-top:3px solid var(--ai-border);border-bottom:3px solid var(--ai-border);display:flex;align-items:center;gap:14px;padding:0 20px;">
+    <!-- 5 行档位蓄力条 -->
+    <div class="wx metal" style="width:44px;height:44px;font-size:20px;position:relative;">金<div style="position:absolute;bottom:-8px;left:4px;right:4px;height:8px;background:#fff;border:1px solid var(--ai-border);border-radius:4px;"><i style="display:block;width:60%;height:100%;background:var(--ai-primary);border-radius:4px;"></i></div></div>
+    <div class="wx wood" style="width:44px;height:44px;font-size:20px;position:relative;">木<div style="position:absolute;bottom:-8px;left:4px;right:4px;height:8px;background:#fff;border:1px solid var(--ai-border);border-radius:4px;"><i style="display:block;width:20%;height:100%;background:var(--ai-primary);border-radius:4px;"></i></div></div>
+    <div class="wx water" style="width:44px;height:44px;font-size:20px;position:relative;">水<div style="position:absolute;bottom:-8px;left:4px;right:4px;height:8px;background:#fff;border:1px solid var(--ai-border);border-radius:4px;"><i style="display:block;width:100%;height:100%;background:var(--ai-error);border-radius:4px;"></i></div></div>
+    <div class="wx fire" style="width:44px;height:44px;font-size:20px;position:relative;">火<div style="position:absolute;bottom:-8px;left:4px;right:4px;height:8px;background:#fff;border:1px solid var(--ai-border);border-radius:4px;"><i style="display:block;width:0;height:100%;"></i></div></div>
+    <div class="wx earth" style="width:44px;height:44px;font-size:20px;position:relative;">土<div style="position:absolute;bottom:-8px;left:4px;right:4px;height:8px;background:#fff;border:1px solid var(--ai-border);border-radius:4px;"><i style="display:block;width:40%;height:100%;background:var(--ai-primary);border-radius:4px;"></i></div></div>
+    <div style="flex:1;text-align:center;font-size:20px;color:var(--ai-text-2nd);font-weight:700;">档位 1~5（满档红条）</div>
+    <!-- 4 装配槽（CD 转圈示意） -->
+    <div class="wx fire" style="width:44px;height:44px;font-size:20px;opacity:.5;">火</div>
+    <div class="wx water" style="width:44px;height:44px;font-size:20px;">水</div>
+    <div class="wx wood" style="width:44px;height:44px;font-size:20px;">木</div>
+    <div class="wx earth" style="width:44px;height:44px;font-size:20px;opacity:.5;">土</div>
+  </div>
+  <div class="callout" style="left:440px;top:462px;">联动栏 h=56：左=五行档位条<br>右=4 装配槽（CD 半透明）</div>
+
+  <!-- ============ 下 65%：三消区（y 504~1280，与 00 文档第 3 节一致） ============ -->
+  <!-- 连锁提示（浮在棋盘顶部，不占独立栏） -->
+  <div style="position:absolute;left:210px;top:520px;z-index:40;">
+    <div class="chip" style="font-size:22px;box-shadow:var(--clay-shadow-sm);">连锁 ×3！水行 +2 档</div>
+  </div>
+
+  <!-- 8×8 棋盘（720×720，格 90，y504~1224） -->
+  <div style="position:absolute;left:0;top:504px;width:720px;height:720px;background:var(--ai-bg);display:grid;grid-template-columns:repeat(8,90px);grid-template-rows:repeat(8,90px);">
+    <!-- 行1（刻意横四连，见虚线框示意） --> <div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div>
+    <!-- 行2 --> <div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div>
+    <!-- 行3 --> <div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div>
+    <!-- 行4 --> <div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div>
+    <!-- 行5（含消耗品道具格） --> <div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div style="width:74px;height:74px;margin:8px;border-radius:18px;background:#ffe9c2;border:3px solid var(--ai-warning);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:30px;">🧪<div style="font-size:13px;color:var(--ai-text);">7s</div></div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div>
+    <!-- 行6 --> <div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div>
+    <!-- 行7 --> <div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div>
+    <!-- 行8 --> <div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx fire" style="width:74px;height:74px;margin:8px;font-size:28px;">火</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx metal" style="width:74px;height:74px;margin:8px;font-size:28px;">金</div><div class="wx water" style="width:74px;height:74px;margin:8px;font-size:28px;">水</div><div class="wx earth" style="width:74px;height:74px;margin:8px;font-size:28px;">土</div><div class="wx wood" style="width:74px;height:74px;margin:8px;font-size:28px;">木</div>
+  </div>
+  <div class="callout" style="left:470px;top:600px;">棋盘 720×720 @y504<br>格 90×90，棋子 74</div>
+
+  <!-- 行1 横四连高亮示意（匹配线框） -->
+  <div style="position:absolute;left:184px;top:512px;width:352px;height:74px;border:4px dashed #b04a17;border-radius:14px;z-index:39;"></div>
+
+  <!-- 底栏（y1224~1280） -->
+  <div style="position:absolute;left:0;top:1224px;right:0;height:56px;background:var(--ai-bg-2nd);border-top:3px solid var(--ai-border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;">
+    <div class="btn ghost" style="width:70px;height:44px;font-size:20px;">⏸</div>
+    <div style="font-size:18px;color:var(--ai-text-2nd);">第 4 关 · 第 4 波</div>
+    <div class="btn ghost" style="width:70px;height:44px;font-size:20px;">⚙</div>
+  </div>
+</div>
+</div>
+
+<div style="max-width:420px;font-size:15px;line-height:1.8;">
+  <h2 style="color:#794f27;">04 · 战斗界面（主界面）</h2>
+  <p><b>职责：</b>双区联动主战场（D3/D11/D12）。</p>
+  <ul style="padding-left:20px;">
+    <li><b>上 35%（448px）战斗区</b>：深草绿战场底；HUD（HP 条/等级/波次/经验细条）；主角站左 idle；敌人右侧停位发扇形弹幕；Boss 波顶部出现 Boss 血条</li>
+    <li><b>联动栏（56px）</b>：左 5 行档位蓄力条（满档变红示意释放时机）；右 4 装配槽，CD 中半透明</li>
+    <li><b>下 65% 三消区</b>：连锁提示浮层 → 8×8 棋盘（720×720，格 90）→ 底栏（暂停/关卡信息/设置）</li>
+    <li>橙色虚线框 = 横四连匹配示意；🧪格 = 消耗品道具（倒计时圈，点击即用，D10）</li>
+    <li>玩家全部操作只发生在棋盘（拖动/点选交换 + 点道具）</li>
+  </ul>
+</div>
+
+<script>
+/* #fit=WxH：仅保留第一个 .phone 并等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
+(function(){
+  const m = location.hash.match(/fit=(\d+)x(\d+)/);
+  if (!m) return;
+  const W = +m[1], H = +m[2], s = Math.min(W/720, H/1280);
+  document.body.classList.add('preview-mode');
+  document.body.style.overflow = 'hidden';
+  const phone = document.querySelector('.phone');
+  phone.style.cssText = 'width:'+W+'px;height:'+H+'px;position:relative;overflow:hidden;';
+  const inner = phone.querySelector('.phone-inner');
+  inner.style.position = 'absolute';
+  inner.style.left = '50%';
+  inner.style.top = '0';
+  inner.style.transformOrigin = 'top center';
+  inner.style.transform = 'translateX(-50%) scale(' + s + ')';
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ycfs3-ssww 界面线稿索引</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .card { width:300px; background:#fff; border:3px solid var(--ai-border); border-radius:var(--radius); box-shadow:var(--clay-shadow-sm); padding:24px; display:block; text-decoration:none; color:var(--ai-text); transition:transform .2s; }
+  .card:hover { transform:translateY(-4px); }
+  .card h3 { font-size:24px; margin-bottom:8px; }
+  .card p { font-size:15px; color:var(--ai-text-2nd); line-height:1.6; }
+  .preview { height:180px; border-radius:var(--radius-sm); margin-bottom:16px; border:2px solid var(--ai-border-light); }
+</style>
+</head>
+<body style="display:block;max-width:1100px;margin:0 auto;">
+
+<h1 style="font-size:34px;margin:16px 0 8px;">ycfs3-ssww 界面线稿设计稿</h1>
+<p style="font-size:16px;color:var(--ai-text-2nd);line-height:1.8;">
+风格基调：<b>animal-island-ui</b>（自然田园：青绿 #19c8b9 / 棕字 #794f27 / 米色底 / 大圆角 / Nunito+Noto Sans SC 圆体）
+× <b>Claymorphism</b>（ui-ux-pro-max v2.15 推荐：软 3D 厚阴影、玩具感、休闲游戏适配）<br>
+逻辑分辨率 720×1280（D3），线稿按 0.5 缩放展示；橙色虚线框为标注非界面内容。Token 见 <code>wireframe.css</code>。
+</p>
+
+<div style="display:flex;flex-wrap:wrap;gap:24px;margin-top:24px;">
+  <a class="card" href="01-start.html"><div class="preview" style="background:linear-gradient(#d8f3ef,#f8f8f0);"></div><h3>01 · 开始界面</h3><p>LOGO / 主角立绘 / 开始冒险 / 存档信息 / 设置</p></a>
+  <a class="card" href="02-level-select.html"><div class="preview" style="background:var(--ai-primary-bg);"></div><h3>02 · 关卡选择</h3><p>关卡卡片三态：已通关 / 当前 / 锁定；等级+经验条顶栏</p></a>
+  <a class="card" href="03-loadout.html"><div class="preview" style="background:var(--ai-bg-2nd);"></div><h3>03 · 备战界面</h3><p>主角面板 / 4 装配槽 / 技能库（Lv 解锁）/ 出战确认</p></a>
+  <a class="card" href="04-battle.html"><div class="preview" style="background:linear-gradient(#2f3b2f 45%,#f8f8f0 45%);"></div><h3>04 · 战斗界面</h3><p>上 35% 远中近景视差自动战斗 + 联动栏（档位/装配槽）+ 下 65% 8×8 三消棋盘</p></a>
+  <a class="card" href="05-result.html"><div class="preview" style="background:linear-gradient(90deg,#e8f6e0 50%,#f3e2e0 50%);"></div><h3>05 · 结算</h3><p>胜利（经验明细/升级/解锁）/ 失败（无惩罚/鼓励文案）</p></a>
+</div>
+
+<p style="margin-top:28px;font-size:14px;color:var(--ai-text-2nd);">
+上游文档：<code>docs/design/README.md</code>（D1~D14 决策）· <code>00-宏观框架.md</code> 第 3 节（分区）· <code>01-需求拆分.md</code>（FR-7 UI）· <code>02-三消玩法设计.md</code>（棋盘规格）· <code>03-主角技能设计.md</code>（技能池）。<br>
+参考库：animal-island-ui（.tmp/animal-island-ui，仅本地参考不提交）· ui-ux-pro-max v2.15.0。
+</p>
+
+</body>
+</html>

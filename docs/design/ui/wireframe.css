@@ -1,0 +1,147 @@
+/* ============================================================
+   ycfs3-ssww 界面线稿共享样式
+   风格基调：animal-island-ui（自然田园）× Claymorphism（软 3D 玩具感）
+   Token 来源：.tmp/animal-island-ui/src/styles/variables.less（v2.15 参考库）
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Noto+Sans+SC:wght@400;500;700;900&display=swap');
+
+:root {
+  /* animal-island-ui 色板 */
+  --ai-primary: #19c8b9;        /* 青绿主色 */
+  --ai-primary-hover: #3dd4c6;
+  --ai-primary-bg: #e6f9f6;
+  --ai-success: #6fba2c;
+  --ai-warning: #f5c31c;
+  --ai-error: #e05a5a;
+  --ai-text: #794f27;           /* 棕色文字 */
+  --ai-text-2nd: #9f927d;
+  --ai-text-disabled: #c4b89e;
+  --ai-border: #dcd8d1;
+  --ai-border-light: #e8e2d6;
+  --ai-bg: #f8f8f0;             /* 米白底 */
+  --ai-bg-2nd: #f0e8d8;         /* 米黄次底 */
+  --ai-mask: rgba(0, 0, 0, 0.35);
+
+  /* Claymorphism 软 3D */
+  --clay-shadow: 0 8px 0 rgba(121, 79, 39, 0.18), 0 12px 24px rgba(61, 52, 40, 0.14);
+  --clay-shadow-sm: 0 4px 0 rgba(121, 79, 39, 0.15), 0 6px 12px rgba(61, 52, 40, 0.10);
+  --clay-inset: inset 0 -4px 0 rgba(121, 79, 39, 0.12);
+
+  /* 五行棋子色（02-三消玩法设计.md 第 1 节，extraction-shooters const.js:6-8） */
+  --wx-metal: #ccccff;
+  --wx-wood: #44ff44;
+  --wx-water: #4488ff;
+  --wx-fire: #ff4444;
+  --wx-earth: #cc8844;
+
+  /* 战斗区 */
+  --battle-bg: #2f3b2f;         /* 深草绿战场 */
+
+  --radius: 24px;
+  --radius-sm: 16px;
+  --font: 'Nunito', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: #e9e4d8;
+  display: flex; gap: 48px; align-items: flex-start;
+  justify-content: center;
+  padding: 32px;
+  color: var(--ai-text);
+}
+
+/* ===== 手机画框：720×1280 逻辑分辨率，等比缩放 0.5 展示 ===== */
+.phone {
+  width: 360px; height: 640px;
+  transform-origin: top left;
+  flex: none;
+  position: relative;
+}
+.phone-scale { transform: scale(0.5); width: 360px; height: 640px; }
+.phone-inner {
+  width: 720px; height: 1280px;
+  transform: scale(0.5); transform-origin: top left;
+  background: var(--ai-bg);
+  border-radius: 28px;
+  overflow: hidden;
+  position: relative;
+  outline: 3px solid #c9bfa8; /* 外描边不占布局：内部保持完整 720×1280 */
+  box-shadow: 0 12px 32px rgba(61, 52, 40, 0.25);
+}
+/* 每页实际写 720×1280 内容，用 .phone-inner 包裹；页面展示容器再缩放 */
+
+/* ===== 线稿标注 ===== */
+.callout {
+  position: absolute;
+  font-size: 22px; line-height: 1.4;
+  color: #b04a17; background: #fff3e0;
+  border: 2px dashed #e08a3c; border-radius: 8px;
+  padding: 6px 12px;
+  max-width: 300px;
+  z-index: 50;
+  pointer-events: none;
+}
+.callout b { color: #8a3510; }
+.dim { /* 尺寸标注线 */
+  position: absolute; background: #e08a3c; opacity: .8; z-index: 49;
+}
+.dim.h { height: 3px; }
+.dim.v { width: 3px; }
+
+/* ===== 通用线稿组件 ===== */
+.ph { /* 灰盒占位 placeholder */
+  background: repeating-linear-gradient(45deg, #efe9db 0 12px, #e6ddc9 12px 24px);
+  border: 2px solid var(--ai-border);
+  border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ai-text-2nd); font-weight: 700;
+  text-align: center;
+}
+.btn {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ai-primary); color: #fff;
+  font-weight: 800; border-radius: var(--radius);
+  box-shadow: var(--clay-shadow);
+  border: 3px solid rgba(255,255,255,.6);
+}
+.btn.warn { background: var(--ai-warning); color: var(--ai-text); }
+.btn.ghost { background: var(--ai-bg-2nd); color: var(--ai-text); box-shadow: var(--clay-shadow-sm); }
+.btn.disabled { background: #d8d2c4; color: var(--ai-text-disabled); box-shadow: none; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #fff; border: 2px solid var(--ai-border);
+  border-radius: 999px; padding: 4px 14px;
+  font-size: 22px; font-weight: 700;
+}
+
+/* 五行棋子（线稿：圆形 + 汉字） */
+.wx {
+  width: 64px; height: 64px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 900; font-size: 30px;
+  border: 3px solid rgba(121, 79, 39, 0.35);
+  box-shadow: var(--clay-inset);
+}
+.wx.metal { background: var(--wx-metal); }
+.wx.wood  { background: var(--wx-wood); }
+.wx.water { background: var(--wx-water); color: #fff; }
+.wx.fire  { background: var(--wx-fire); color: #fff; }
+.wx.earth { background: var(--wx-earth); color: #fff; }
+
+/* 进度条 */
+.bar {
+  height: 20px; background: #fff; border: 2px solid var(--ai-border);
+  border-radius: 999px; overflow: hidden;
+}
+.bar > i { display: block; height: 100%; background: var(--ai-primary); border-radius: 999px; }
+.bar.hp > i { background: var(--ai-success); }
+.bar.exp > i { background: var(--ai-warning); }
+
+/* #fit 模式：隐藏侧边说明与第二个画框（胜负双态页仅取第一个） */
+body.preview-mode { padding: 0 !important; }
+body.preview-mode > div:not(.phone) { display: none !important; }
+body.preview-mode .phone ~ .phone { display: none !important; }

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>线稿 03 · 备战界面</title>
+<link rel="stylesheet" href="wireframe.css">
+</head>
+<body>
+
+<div class="phone">
+<div class="phone-inner">
+  <!-- 顶栏 -->
+  <div style="position:absolute;left:0;top:0;right:0;height:110px;background:var(--ai-primary-bg);border-bottom:3px solid var(--ai-border-light);display:flex;align-items:center;padding:0 32px;gap:20px;">
+    <div class="btn ghost" style="width:80px;height:70px;font-size:30px;">←</div>
+    <div style="font-size:38px;font-weight:900;flex:1;">备战 · 第 4 关</div>
+    <div class="chip" style="background:#fff;">Lv.12</div>
+  </div>
+
+  <!-- 主角面板 -->
+  <div style="position:absolute;left:32px;top:140px;width:400px;height:330px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:20px;">
+    <div class="ph" style="width:160px;height:270px;float:left;margin-right:20px;">主角<br>立绘<br>player<br>idle</div>
+    <div style="font-size:30px;font-weight:900;">赤狐 · Lv.12</div>
+    <div style="font-size:24px;margin-top:10px;">HP <b>265</b> / 265</div>
+    <div class="bar hp" style="margin-top:8px;"><i style="width:100%"></i></div>
+    <div style="font-size:24px;margin-top:14px;">ATK <b>21</b></div>
+    <div style="font-size:22px;color:var(--ai-text-2nd);margin-top:14px;line-height:1.5;">升级：Lv.12 → 13<br>还需 682 经验</div>
+  </div>
+
+  <!-- 出战信息 -->
+  <div style="position:absolute;left:460px;top:140px;right:32px;height:330px;background:var(--ai-bg-2nd);border:3px solid var(--ai-border);border-radius:var(--radius);padding:20px;">
+    <div style="font-size:28px;font-weight:900;">出战信息</div>
+    <div style="font-size:22px;line-height:1.7;margin-top:12px;">
+      关卡：第 4 关 · 雾隐山道<br>
+      波次：10 波，第 10 波为关底 Boss<br>
+      敌人：slime / fox / zombie /<br>
+      　　　snake / tiger<br>
+      建议等级：Lv.30+
+    </div>
+    <div class="chip" style="margin-top:8px;font-size:20px;">⚠ 等级低于建议</div>
+  </div>
+
+  <!-- 4 装配槽（D6） -->
+  <div style="position:absolute;left:32px;top:500px;right:32px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);padding:20px 24px;">
+    <div style="font-size:28px;font-weight:900;margin-bottom:16px;">技能装配 <span style="font-size:22px;color:var(--ai-text-2nd);font-weight:400;">（4 槽 · 点击槽位从下方技能库更换）</span></div>
+    <div style="display:flex;gap:20px;justify-content:space-between;">
+      <div class="wx fire" style="width:120px;height:120px;font-size:26px;flex-direction:column;">火<div style="font-size:18px;font-weight:700;">火弹</div></div>
+      <div class="wx water" style="width:120px;height:120px;font-size:26px;flex-direction:column;">水<div style="font-size:18px;font-weight:700;">寒冰锁链</div></div>
+      <div class="wx wood" style="width:120px;height:120px;font-size:26px;flex-direction:column;">木<div style="font-size:18px;font-weight:700;">藤蔓束缚</div></div>
+      <div class="wx earth" style="width:120px;height:120px;font-size:26px;flex-direction:column;">土<div style="font-size:18px;font-weight:700;">石甲术</div></div>
+    </div>
+  </div>
+  <div class="callout" style="left:10px;top:530px;">装配槽 120×120<br>五行色圆底 + 技能名<br>对应联动栏 4 图标</div>
+
+  <!-- 技能库列表 -->
+  <div style="position:absolute;left:32px;top:800px;right:32px;bottom:150px;overflow:hidden;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);padding:20px 24px;">
+    <div style="font-size:28px;font-weight:900;margin-bottom:14px;">技能库 <span style="font-size:22px;color:var(--ai-text-2nd);font-weight:400;">（Lv 解锁 · 灰=未解锁）</span></div>
+    <div style="display:flex;flex-direction:column;gap:12px;font-size:23px;">
+      <div style="display:flex;gap:16px;align-items:center;border:2px solid var(--ai-border-light);border-radius:var(--radius-sm);padding:10px 16px;">
+        <div class="wx metal" style="width:56px;height:56px;font-size:22px;">金</div>
+        <div style="flex:1;"><b>金弹</b> · 穿透 ×1.3 <span style="color:var(--ai-text-2nd);font-size:20px;">｜CD 2.0s｜Lv1</span></div>
+        <div class="btn ghost" style="width:110px;height:56px;font-size:22px;">装配</div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;border:2px solid var(--ai-border-light);border-radius:var(--radius-sm);padding:10px 16px;">
+        <div class="wx metal" style="width:56px;height:56px;font-size:22px;">金</div>
+        <div style="flex:1;"><b>贯日连珠</b> · 3 发各 ×0.7 <span style="color:var(--ai-text-2nd);font-size:20px;">｜CD 4.0s｜Lv3</span></div>
+        <div class="btn ghost" style="width:110px;height:56px;font-size:22px;">装配</div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;border:2px solid var(--ai-border-light);border-radius:var(--radius-sm);padding:10px 16px;opacity:.55;">
+        <div class="wx earth" style="width:56px;height:56px;font-size:22px;">土</div>
+        <div style="flex:1;"><b>召唤类技能</b> · 预留扩展位 <span style="color:var(--ai-text-2nd);font-size:20px;">｜Lv10+｜原型期未开放</span></div>
+        <div class="btn disabled" style="width:110px;height:56px;font-size:22px;">🔒</div>
+      </div>
+      <div class="ph" style="height:90px;">↓ 更多技能（纵向滚动，15 技能池见 03 文档 5.2）</div>
+    </div>
+  </div>
+
+  <!-- 出战按钮 -->
+  <div class="btn" style="position:absolute;left:160px;top:1140px;width:400px;height:110px;font-size:38px;">出 战</div>
+</div>
+</div>
+
+<div style="max-width:420px;font-size:15px;line-height:1.8;">
+  <h2 style="color:#794f27;">03 · 备战界面</h2>
+  <p><b>职责：</b>装配管理（FR-3.3，D6 4 槽）+ 出战确认。</p>
+  <ul style="padding-left:20px;">
+    <li>主角面板：立绘 + 等级/HP/ATK + 升级缺口（读 profile）</li>
+    <li>出战信息：目标关卡的波次/敌编成/建议等级；低于建议给警告 chip（不禁止出战）</li>
+    <li>装配槽 4 个：五行色圆底 = 联动栏图标同源；点击槽位 → 弹技能库选择</li>
+    <li>技能库：全部 15 技能，未解锁灰显 + 显示解锁等级；已装配标记防重复装配</li>
+    <li>换装立即写 <code>ssww.profile.loadout</code>（FR-8）</li>
+  </ul>
+</div>
+
+<script>
+/* #fit=WxH：仅保留第一个 .phone 并等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
+(function(){
+  const m = location.hash.match(/fit=(\d+)x(\d+)/);
+  if (!m) return;
+  const W = +m[1], H = +m[2], s = Math.min(W/720, H/1280);
+  document.body.classList.add('preview-mode');
+  document.body.style.overflow = 'hidden';
+  const phone = document.querySelector('.phone');
+  phone.style.cssText = 'width:'+W+'px;height:'+H+'px;position:relative;overflow:hidden;';
+  const inner = phone.querySelector('.phone-inner');
+  inner.style.position = 'absolute';
+  inner.style.left = '50%';
+  inner.style.top = '0';
+  inner.style.transformOrigin = 'top center';
+  inner.style.transform = 'translateX(-50%) scale(' + s + ')';
+})();
+</script>
+</body>
+</html>

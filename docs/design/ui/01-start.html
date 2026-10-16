@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>线稿 01 · 开始界面</title>
+<link rel="stylesheet" href="wireframe.css">
+</head>
+<body>
+
+<div class="phone">
+<div class="phone-inner">
+  <!-- 背景：田园米色 + 远山/云朵线稿占位 -->
+  <div class="ph" style="position:absolute;inset:0;border:none;border-radius:0;background:linear-gradient(#d8f3ef 0 46%, #f8f8f0 46% 100%);display:block;">
+    <div style="margin:180px auto 0;width:420px;height:120px;" class="ph">远景装饰占位<br>（云 / 山 / 树，低饱和）</div>
+  </div>
+
+  <!-- 标题 LOGO -->
+  <div class="ph" style="position:absolute;left:110px;top:130px;width:500px;height:220px;font-size:40px;">
+    游戏 LOGO 占位<br><span style="font-size:24px">（主标题 + 副标题，Claymorphism 厚描边字）</span>
+  </div>
+  <div class="callout" style="left:640px;top:150px;">主视觉标题区<br><b>y≈130~350</b><br>LOGO 可浮动动画</div>
+
+  <!-- 主角立绘 -->
+  <div class="ph" style="position:absolute;left:210px;top:430px;width:300px;height:400px;font-size:26px;">
+    主角立绘占位<br>（player idle 序列帧）<br>idle 8fps 循环
+  </div>
+  <div class="callout" style="left:10px;top:470px;">主角狐狸<br>复用 player 资源<br><b>180×320</b> 绘制</div>
+
+  <!-- 按钮组 -->
+  <div class="btn" style="position:absolute;left:160px;top:900px;width:400px;height:110px;font-size:36px;">开 始 冒 险</div>
+  <div class="btn ghost" style="position:absolute;left:160px;top:1030px;width:190px;height:90px;font-size:28px;">设 置</div>
+  <div class="btn ghost" style="position:absolute;left:370px;top:1030px;width:190px;height:90px;font-size:28px;">关 于</div>
+  <div class="callout" style="left:590px;top:910px;">主按钮 400×110<br>次按钮 190×90<br>点击 200ms 软按压</div>
+
+  <!-- 存档信息 -->
+  <div class="chip" style="position:absolute;left:170px;top:1160px;">存档：Lv.12 · 已通关第 3 关</div>
+  <div class="chip" style="position:absolute;left:520px;top:1160px;">v0.1 原型</div>
+
+  <!-- 新档分支标注 -->
+  <div class="callout" style="left:20px;top:880px;">无存档时：<br>按钮文案=「开始游戏」<br>隐藏存档信息条</div>
+</div>
+</div>
+
+<!-- 旁边规格说明 -->
+<div style="max-width:420px;font-size:15px;line-height:1.8;">
+  <h2 style="color:#794f27;">01 · 开始界面</h2>
+  <p><b>职责：</b>展示标题和存档信息，提供开始和设置入口。</p>
+  <ul style="padding-left:20px;">
+    <li>背景：田园渐变（上青绿天 #d8f3ef → 米白地 #f8f8f0），呼应 animal-island 自然风</li>
+    <li>主角立绘 = <code>player idle_01~16</code> 序列帧，canvas 绘制 0.25 缩放</li>
+    <li>有存档：主按钮「开始冒险」直接进选关；无存档：「开始游戏」进引导</li>
+    <li>全部可点元素 ≥ 88px 高（触屏 44pt×2 逻辑像素）</li>
+    <li>无滚动、单屏完成</li>
+  </ul>
+  <p style="margin-top:12px;color:#b04a17;">※ 橙色虚线框为标注，非界面内容</p>
+</div>
+
+<script>
+/* #fit=WxH：仅保留第一个 .phone 并等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
+(function(){
+  const m = location.hash.match(/fit=(\d+)x(\d+)/);
+  if (!m) return;
+  const W = +m[1], H = +m[2], s = Math.min(W/720, H/1280);
+  document.body.classList.add('preview-mode');
+  document.body.style.overflow = 'hidden';
+  const phone = document.querySelector('.phone');
+  phone.style.cssText = 'width:'+W+'px;height:'+H+'px;position:relative;overflow:hidden;';
+  const inner = phone.querySelector('.phone-inner');
+  inner.style.position = 'absolute';
+  inner.style.left = '50%';
+  inner.style.top = '0';
+  inner.style.transformOrigin = 'top center';
+  inner.style.transform = 'translateX(-50%) scale(' + s + ')';
+})();
+</script>
+</body>
+</html>
