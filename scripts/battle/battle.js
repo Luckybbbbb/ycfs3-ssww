@@ -1,35 +1,124 @@
 // scripts/battle/battle.js
-// M2 战斗编排:最小敌人批次(静态停位靶,推进/弹幕/胜负 M3)+ 档位形态 + DOT + 同刻事件顺序
-// 同刻顺序(03 文档 4.4):投射物命中 → 周期效果跳伤 → 技能自动释放判定
+// 战斗编排:M2 档位形态+DOT 保留;M3 增加波次/潮汐/敌方弹幕/胜负(FR-1.2/1.4、FR-4)
+// 同刻顺序(03 文档 4.4 + M3 增补):投射物命中 → 周期效果跳伤 → 敌方行动/主角受击 → 技能自动释放判定
 // 形态表(4.2):tier1 单体 / tier2 双目标 / tier3 三目标+溅射 r60 50% / tier4 范围 r90 全额 /
 //             tier5 范围 r140 全额+范围内全体附加元素能力
 // 相对路径: scripts/battle/battle.js
 
-import { Enemy } from './enemy.js';
-import { advanceBolt, findHitTargets } from './projectile.js';
+import { Enemy, ENEMY_SPAWN_X, MIN_QUEUE_GAP } from './enemy.js';
+import { advanceBolt, findHitTargets, advanceEnemyBolt, enemyBoltHitsPlayer } from './projectile.js';
 import { BOLT_SPEED, PLAYER_X, boltDamage, BURN_COEFF, LEECH_PCT, SHIELD_ATK, SLOW_PCT } from '../skills/registry.js';
+import { buildWave, ENEMY_TYPES,
+         enemyHp, enemyDmg, barrageDmg, enemySpd, attackInterval, barrageCount, fanAngle, barrageSpeed } from './wave.js';
+import { ENEMY_STOP_X } from '../skills/registry.js';
+import { tickZones, tickAura, tickBind } from '../skills/behaviors.js';
+
+export const PHASE = { FIGHTING: 'FIGHTING', VICTORY: 'VICTORY', DEFEAT: 'DEFEAT' };
 
 export class Battle {
-  // expPerKill = 2 + w_global(04 文档第 3 节;第 1 关第 1 波 w_global=1 → 3)
-  constructor({ atk = 10, maxHp = 100, expPerKill = 3 } = {}) {
+  // expPerKill(M2 演示 API):传入则固定每杀经验;默认 null(M3)按 2+w_global 动态、Boss ×20(05 文档第 5 节)
+  constructor({ atk = 10, maxHp = 100, expPerKill = null, level = 1, rng = null } = {}) {
     this.atk = atk;
     this.maxHp = maxHp;
     this.hp = maxHp;
     this.shield = 0;
     this.enemies = [];
-    this.bolts = [];
+    this.bolts = [];      // 主角技能弹
+    this.ebolts = [];     // 敌方弹幕(FR-1.2)
     this.clock = 0;
     this.kills = 0;
     this.expGained = 0;
     this.expPerKill = expPerKill;
     this.log = [];            // 数字例复核用事件流水
+    // M3 波次状态(FR-4)
+    this.level = level;
+    this.rng = rng;           // 注入 mulberry32(类型抽取可复现);null 时用 LCG 兜底
+    this._rngFallback = 42;
+    this.wave = 0;            // w_local 1..10;0=未开波
+    this.wGlobal = 0;
+    this.tides = [];          // 当前波潮汐序列 [[type,...],...]
+    this.tideIdx = 0;
+    this.phase = PHASE.FIGHTING;
+    this.hurtT = 0;           // 主角受击闪白计时(FR-1.1 验收)
+    this.shakeT = 0;          // 受击 screenshake(00 文档 3.1:4px/120ms)
+    this.playerAttackT = 0;   // 主角攻击动画计时(释放技能时播放 walk_start 单次,16.7fps×3帧≈0.18s)
+    this.zones = [];          // M4 行为区域(dotzone/field;behaviors.pushZone 维护,同技能刷新不叠加)
+    this.aura = null;         // M4 生机光环(behaviors.applyAura 维护)
   }
 
-  // M2 演示批次:敌人置于停位列,纵向排列在战斗区可见范围(y 150~375,不被联动栏/棋盘遮挡)
+  // M2 演示 API(保留,单测依赖):敌人置于停位静态靶,不移动不攻击
   spawnWave(count, hp) {
     for (let i = 0; i < count; i++) {
       this.enemies.push(new Enemy({ hp, x: 560, y: 150 + i * 45 }));
     }
+  }
+
+  // ---- M3 波次编排(FR-4) ----
+  startLevel(level = this.level) {
+    this.level = level;
+    this.wave = 0;
+    this.tides = [];
+    this.tideIdx = 0;
+    this.phase = PHASE.FIGHTING;
+    this.nextWave();
+  }
+
+  nextWave() {
+    this.wave += 1;
+    this.wGlobal = (this.level - 1) * 10 + this.wave; // 04 文档第 4 节
+    this.tides = buildWave(this.wave, this.level, this.rng || this._fallbackRng);
+    this.tideIdx = 0;
+    this.spawnTide();
+  }
+
+  // 无注入 rng 时的确定性兜底(LCG);有种子场景一律传 mulberry32
+  _fallbackRng() {
+    this._rngFallback = (this._rngFallback * 1103515245 + 12345) % 2147483648;
+    return this._rngFallback / 2147483648;
+  }
+
+  // 潮汐刷怪:同屏 ≤5(每潮 ≤5 只);上一潮清空后刷下一潮。
+  // 需求方增补:敌人只沿 X 轴排队(最小中心距 MIN_QUEUE_GAP),不纵向堆叠
+  spawnTide() {
+    const tide = this.tides[this.tideIdx];
+    const bossWave = this.wave === 10;
+    for (let i = 0; i < tide.length; i++) {
+      const type = tide[i];
+      const w = this.wGlobal;
+      // Boss 居中,护卫上下错开(仍同列排队,仅 y 视觉错开);普通潮 y 微错开避免完全重叠
+      const y = bossWave ? (type === 'boss' ? 230 : (i === 1 ? 150 : 300)) : 240;
+      const spec = { name: type, w, x: ENEMY_SPAWN_X, y };
+      this.enemies.push(this.makeEnemy(type, w, spec));
+    }
+    this.reassignSlots();
+    // 出生点在各自槽位右后方(排队入场,不从同一点挤)
+    for (const e of this.aliveEnemies()) {
+      if (e.slotX != null && e.x < e.slotX + 40) e.x = e.slotX + 40;
+    }
+    this.log.push({ t: this.clock, ev: 'tide', wave: this.wave, tide: this.tideIdx, types: tide.join(',') });
+  }
+
+  // X 轴队列槽位:存活敌按当前 x 升序(最靠前=最接近主角)排队,front=560,中心距 ≥ MIN_QUEUE_GAP;
+  // 前排死亡后幸存者前移补位(逐个靠近,「慢慢靠近主角」的需求口径)
+  reassignSlots() {
+    const alive = this.enemies.filter(e => e.alive).sort((a, b) => a.x - b.x);
+    alive.forEach((e, i) => { e.slotX = ENEMY_STOP_X + i * MIN_QUEUE_GAP; });
+  }
+
+  makeEnemy(type, w, spec) {
+    // 数值由 wave.js 公式统一计算(04 文档第 3 节);此处只组装
+    return new Enemy({
+      ...spec,
+      hp: enemyHp(type, w),
+      dmg: enemyDmg(type, w),
+      spd: enemySpd(w),
+      interval: attackInterval(w),
+      boltCount: barrageCount(w),
+      fanDeg: fanAngle(w),
+      boltSpeed: barrageSpeed(w),
+      boltDmg: barrageDmg(type, w),
+      radius: ENEMY_TYPES[type].radius,
+    });
   }
 
   aliveEnemies() { return this.enemies.filter(e => e.alive); }
@@ -46,10 +135,18 @@ export class Battle {
     return best;
   }
 
+  // 击杀经验:固定 expPerKill(M2)或 2+w_global(Boss ×20,05 文档第 5 节)
+  expFor(e) {
+    if (this.expPerKill != null) return this.expPerKill;
+    const base = 2 + (e.w || this.wGlobal);
+    return e.isBoss ? base * 20 : base;
+  }
+
   // 释放判定后由 main/测试调用:按档位形态生成弹与作用(4.2 表)
   launch(castResult) {
     const target = this.nearestAlive();
     if (!target) return null;
+    this.playerAttackT = 0.18; // 主角攻击动画(walk_start 3 帧 @16.7fps,对标 player.tscn startup)
     const el = castResult.element, tier = castResult.tier;
     const raw = boltDamage(this.atk, el, tier); // 浮点,入账时 round(4.4)
     this.log.push({ t: this.clock, ev: 'launch', el, tier });
@@ -88,7 +185,7 @@ export class Battle {
     const dmg = Math.round(b.rawDmg * mult);
     const r = e.hurt(dmg);
     this.log.push({ t: this.clock, ev: 'hit', el: b.el, tier: b.tier, dmg, mult, hpAfter: e.hp, killed: r.killed, target: this.enemies.indexOf(e) });
-    if (r.killed) { this.kills++; this.expGained += this.expPerKill; this.log.push({ t: this.clock, ev: 'kill' }); }
+    if (r.killed) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
     // 元素能力(4.3;灼烧刷新=覆盖 dpsFloat 并只延长 until,不重置跳伤时钟——4.4)
     if (b.el === 'fire') {
       const dps = this.atk * BURN_COEFF[b.tier - 1];
@@ -96,7 +193,10 @@ export class Battle {
       if (e.burn) { e.burn.dpsFloat = dps; e.burn.until = until; }
       else e.burn = { dpsFloat: dps, until };
     }
-    if (b.el === 'water') e.slowT = Math.max(e.slowT, 2); // 减速 2s,幅度按 SLOW_PCT[tier-1](M3 移动消费)
+    if (b.el === 'water') {
+      e.slowT = Math.max(e.slowT, 2); // 减速 2s
+      e.slowPct = SLOW_PCT[b.tier - 1]; // 幅度按档位(03 文档 4.3;M3 移动/弹速消费)
+    }
     if (b.el === 'wood') {
       const heal = Math.round(dmg * LEECH_PCT[b.tier - 1] / 100);
       this.hp = Math.min(this.maxHp, this.hp + heal);
@@ -111,10 +211,43 @@ export class Battle {
     return r;
   }
 
+  // 主角受击:护盾先吸收,余量入 HP(03 文档第 3 节土行护盾语义;FR-1.4 失败判定)
+  hurtPlayer(dmg) {
+    const toShield = Math.min(this.shield, dmg);
+    this.shield -= toShield;
+    const rest = dmg - toShield;
+    this.hp = Math.max(0, this.hp - rest);
+    this.hurtT = 0.2;   // 受击闪白反馈
+    this.shakeT = 0.12; // screenshake 4px/120ms(00 文档 3.1)
+    this.log.push({ t: this.clock, ev: 'player_hurt', dmg, toShield, hp: this.hp });
+    if (this.hp <= 0 && this.phase === PHASE.FIGHTING) {
+      this.phase = PHASE.DEFEAT; // FR-1.4:失败不扣等级不扣解锁(D14,存档 M4 接)
+      this.log.push({ t: this.clock, ev: 'defeat' });
+    }
+    return rest;
+  }
+
+  // 失败重试(05 文档第 2/6 节):从本关第 1 波重来,局内已获经验/击杀不清退
+  restart() {
+    this.enemies = [];
+    this.bolts = [];
+    this.ebolts = [];
+    this.hp = this.maxHp;
+    this.shield = 0;
+    this.hurtT = 0;
+    this.shakeT = 0;
+    this.startLevel(this.level);
+  }
+
   update(dt) {
+    // 受击反馈计时在结算后也要衰减(否则 DEFEAT 定格时闪白常驻)
+    if (this.hurtT > 0) this.hurtT -= dt;
+    if (this.shakeT > 0) this.shakeT -= dt;
+    if (this.playerAttackT > 0) this.playerAttackT -= dt;
+    if (this.phase !== PHASE.FIGHTING) return; // 结算后冻结(胜负弹层接管,FR-1.4)
     const prevClock = this.clock;
     this.clock += dt;
-    // 1) 弹移动与命中(命中判定在 projectile.js:圆形碰撞 FR-1.3)
+    // 1) 主角技能弹移动与命中(命中判定在 projectile.js:圆形碰撞 FR-1.3)
     for (const b of this.bolts) {
       b.lastDt = dt; // 记录帧步长(扫掠检测用,REQ-M2-04 整改 2)
       if (!advanceBolt(b, dt)) continue;
@@ -155,16 +288,54 @@ export class Battle {
       }
     }
     this.bolts = this.bolts.filter(b => !b.done && b.x < 780);
-    // 2) 周期跳伤 + 状态生命周期(减速到期)
+    // 2) 周期跳伤 + 状态生命周期(减速到期)+ 束缚 DOT(M4 行为内核)
     for (const e of this.enemies) {
       if (e.slowT > 0) e.slowT = Math.max(0, e.slowT - dt);
       const burnDmg = e.tickBurn(prevClock, this.clock);
+      const bindDmg = tickBind(e, prevClock, this.clock);
       if (burnDmg > 0) {
         this.log.push({ t: this.clock, ev: 'burn', hpAfter: e.hp });
-        if (!e.alive) { this.kills++; this.expGained += this.expPerKill; this.log.push({ t: this.clock, ev: 'kill' }); }
+        if (!e.alive) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
+      }
+      if (bindDmg > 0) {
+        this.log.push({ t: this.clock, ev: 'bind', hpAfter: e.hp });
+        if (!e.alive) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
       }
     }
-    // 3) 自动释放判定在外部(main/测试)按同刻顺序最后执行:caster.tryCast → battle.launch
+    // 2.5) 区域/光环 tick(M4:dot 区逐秒跳伤、领域减速、光环回血;03 文档 4.4 周期口径)
+    tickZones(this.zones, prevClock, this.clock, this.enemies);
+    tickAura(this.aura, prevClock, this.clock, this);
+    // 3) 敌方行动(FR-1.2):队列补位 → 推进/进射程开火(扇形弹幕) → 敌方弹推进与主角碰撞
+    this.reassignSlots();
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      for (const eb of e.update(dt, PLAYER_X, 280)) this.ebolts.push(eb);
+    }
+    for (const eb of this.ebolts) {
+      eb.lastDt = dt;
+      advanceEnemyBolt(eb, dt);
+      if (enemyBoltHitsPlayer(eb, PLAYER_X, 280)) {
+        eb.done = true;
+        this.hurtPlayer(eb.dmg);
+      }
+    }
+    this.ebolts = this.ebolts.filter(b => !b.done && b.x > -40 && b.x < 780 && b.y > -40 && b.y < 490);
+    this.enemies = this.enemies.filter(e => e.alive || e.deathT < 0.4); // 死亡表现 0.4s 后移除
+    for (const e of this.enemies) if (!e.alive) e.deathT += dt;
+    // 4) 潮汐/波次推进(FR-4):本潮清空 → 下一潮;全波清空 → 下一波/通关
+    if (this.phase === PHASE.FIGHTING && this.aliveEnemies().length === 0 && this.bolts.length === 0) {
+      if (this.tideIdx < this.tides.length - 1) {
+        this.tideIdx += 1;
+        this.spawnTide();
+      } else if (this.wave >= 10) {
+        this.phase = PHASE.VICTORY; // FR-1.4:第 10 波清空 → 通关
+        const bonus = 50 * this.level; // 通关奖励(05 文档第 5 节)
+        this.expGained += bonus;
+        this.log.push({ t: this.clock, ev: 'victory', bonus });
+      } else if (this.wave > 0) {
+        this.nextWave();
+      }
+    }
+    // 5) 自动释放判定在外部(main/测试)按同刻顺序最后执行:caster.tryCast → battle.launch
   }
 }
-void SLOW_PCT;

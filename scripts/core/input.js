@@ -28,6 +28,14 @@ export function attachInput(canvas, handlers) {
 
   function onDown(e) {
     const p = toLogical(pos(e));
+    // 路由拦截(M4):全屏弹层(选关/结算)时所有按下事件直接交给 onBlankDown,
+    // 不再按棋盘几何分流(弹层覆盖棋盘区,按钮点击不能落到 onTap)
+    if (handlers.interceptDown && handlers.interceptDown(p)) {
+      if (handlers.onBlankDown) handlers.onBlankDown(p);
+      downXY = null; downCell = null;
+      e.preventDefault();
+      return;
+    }
     const cell = handlers.cellAt ? handlers.cellAt(p.x, p.y) : null;
     downXY = p;
     downCell = cell;
