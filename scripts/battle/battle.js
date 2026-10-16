@@ -11,6 +11,7 @@ import { PLAYER_X, boltDamage, BURN_COEFF, LEECH_PCT, SHIELD_ATK, SLOW_PCT } fro
 import { buildWave, ENEMY_TYPES,
          enemyHp, enemyDmg, barrageDmg, enemySpd, attackInterval, barrageCount, fanAngle, barrageSpeed } from './wave.js';
 import { ENEMY_STOP_X } from '../skills/registry.js';
+import { tickZones, tickAura, tickBind } from '../skills/behaviors.js';
 
 export const PHASE = { FIGHTING: 'FIGHTING', VICTORY: 'VICTORY', DEFEAT: 'DEFEAT' };
 
@@ -41,6 +42,9 @@ export class Battle {
     this.hurtT = 0;           // 主角受击闪白计时(FR-1.1 验收)
     this.shakeT = 0;          // 受击 screenshake(00 文档 3.1:4px/120ms)
     this.playerAttackT = 0;   // 主角攻击动画计时(释放技能时播放 walk_start 单次,16.7fps×3帧≈0.18s)
+    this.zones = [];          // M4 行为区域(dotzone/field;behaviors.pushZone 维护,同技能刷新不叠加)
+    this.aura = null;         // M4 生机光环(behaviors.applyAura 维护)
+    this.invincibleT = 0;     // M5 无敌道具剩余秒(免伤;02 文档第 6 节)
   }
 
   // M2 演示 API(保留,单测依赖):敌人置于停位静态靶,不移动不攻击
@@ -209,6 +213,10 @@ export class Battle {
 
   // 主角受击:护盾先吸收,余量入 HP(03 文档第 3 节土行护盾语义;FR-1.4 失败判定)
   hurtPlayer(dmg) {
+    if (this.invincibleT > 0) {
+      this.log.push({ t: this.clock, ev: 'invincible_block', dmg });
+      return 0;
+    }
     const toShield = Math.min(this.shield, dmg);
     this.shield -= toShield;
     const rest = dmg - toShield;
@@ -240,6 +248,7 @@ export class Battle {
     if (this.hurtT > 0) this.hurtT -= dt;
     if (this.shakeT > 0) this.shakeT -= dt;
     if (this.playerAttackT > 0) this.playerAttackT -= dt;
+    if (this.invincibleT > 0) this.invincibleT -= dt; // 无敌按现实时间衰减(道具效果,02 第 6 节)
     if (this.phase !== PHASE.FIGHTING) return; // 结算后冻结(胜负弹层接管,FR-1.4)
     const prevClock = this.clock;
     this.clock += dt;
@@ -280,15 +289,23 @@ export class Battle {
       }
     }
     this.bolts = this.bolts.filter(b => !b.done && b.x < 780);
-    // 2) 周期跳伤 + 状态生命周期(减速到期)
+    // 2) 周期跳伤 + 状态生命周期(减速到期)+ 束缚 DOT(M4 行为内核)
     for (const e of this.enemies) {
       if (e.slowT > 0) e.slowT = Math.max(0, e.slowT - dt);
       const burnDmg = e.tickBurn(prevClock, this.clock);
+      const bindDmg = tickBind(e, prevClock, this.clock);
       if (burnDmg > 0) {
         this.log.push({ t: this.clock, ev: 'burn', hpAfter: e.hp });
         if (!e.alive) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
       }
+      if (bindDmg > 0) {
+        this.log.push({ t: this.clock, ev: 'bind', hpAfter: e.hp });
+        if (!e.alive) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
+      }
     }
+    // 2.5) 区域/光环 tick(M4:dot 区逐秒跳伤、领域减速、光环回血;03 文档 4.4 周期口径)
+    tickZones(this.zones, prevClock, this.clock, this.enemies);
+    tickAura(this.aura, prevClock, this.clock, this);
     // 3) 敌方行动(FR-1.2):队列补位 → 推进/进射程开火(扇形弹幕) → 敌方弹推进与主角碰撞
     this.reassignSlots();
     for (const e of this.enemies) {

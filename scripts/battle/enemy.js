@@ -43,6 +43,8 @@ export class Enemy {
     this.slowT = 0;            // 减速剩余秒数(水弹命中,03 文档第 3 节)
     this.slowPct = 0;          // 减速幅度(百分点;速度 ×(1−pct/100))
     this.deathT = 0;           // 死亡表现计时
+    this.bindT = 0;            // M4 藤蔓束缚剩余秒(behaviors.applyBind;停止移动/攻击)
+    this.stunT = 0;            // M4 裂地眩晕剩余秒(behaviors.applyPulse 附加;停止攻击)
     this.attackAnimT = 0;      // 攻击动画剩余秒(开火时置满,单次播放)
     const t = ENEMY_TYPES[name];
     // 攻击动画时长 = 帧数 / (fps×2)(开火时序列帧加速单次播放;待机仍按原 fps 循环)
@@ -59,13 +61,16 @@ export class Enemy {
   update(dt, px, py) {
     if (!this.alive) return [];
     if (this.attackAnimT > 0) this.attackAnimT = Math.max(0, this.attackAnimT - dt);
+    if (this.bindT > 0) this.bindT = Math.max(0, this.bindT - dt);   // M4 藤蔓束缚:停止移动/攻击
+    if (this.stunT > 0) this.stunT = Math.max(0, this.stunT - dt);   // M4 裂地眩晕:停止攻击
     let fired = [];
+    const disabled = (this.bindT > 0) || (this.stunT > 0);
     const target = this.slotX ?? this.stopX;
-    if (this.spd > 0 && this.x > target) {
+    if (!disabled && this.spd > 0 && this.x > target) {
       // 左移至队列槽位(水面弹减速同时作用于移速,03 文档第 3 节「移速/弹速」)
       this.x = Math.max(target, this.x - this.spd * this.slowFactor() * dt);
     }
-    if (this.interval > 0 && this.x - px <= ATTACK_RANGE) {
+    if (!disabled && this.interval > 0 && this.x - px <= ATTACK_RANGE) {
       this.atkTimer += dt;
       if (this.atkTimer >= this.interval) {
         this.atkTimer -= this.interval;

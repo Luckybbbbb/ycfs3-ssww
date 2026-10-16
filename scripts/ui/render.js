@@ -7,6 +7,8 @@
 import { BOARD_W, BOARD_H, BOARD_Y, CELL, ELEMENTS, isItem } from '../board/grid.js';
 import { roundRect } from './draw_util.js';
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
+import { skillById } from '../skills/library.js';
+import { cumThreshold, expNeed } from '../meta/exp.js';
 import { ENEMY_TYPES } from '../battle/wave.js';
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
@@ -100,6 +102,25 @@ export function render(ctx, engine, hud) {
       ctx.beginPath(); ctx.arc(b.x, b.y, 9, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
     }
+    // ===== M4 行为视觉:区域(dot=灼烧橙 / field=寒霜蓝)+ 生机光环(木绿圈) =====
+    for (const z of battle.zones || []) {
+      ctx.fillStyle = z.kind === 'dot' ? 'rgba(255,120,50,.18)' : 'rgba(120,190,255,.18)';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = z.kind === 'dot' ? 'rgba(255,120,50,.5)' : 'rgba(120,190,255,.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    if (battle.aura) {
+      ctx.strokeStyle = 'rgba(90,220,130,.5)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(PLAYER_X, 300, 110, 0, Math.PI * 2); ctx.stroke();
+    }
+    // M5 无敌道具:主角金圈
+    if (battle.invincibleT > 0) {
+      ctx.strokeStyle = `rgba(245,195,28,${Math.min(1, battle.invincibleT)})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(PLAYER_X, 300, 96, 0, Math.PI * 2); ctx.stroke();
+    }
     // ===== 主角:战斗待机=idle 8fps 循环;释放技能时 walk_start 3 帧单次(攻击动画) =====
     let pf;
     if (battle.playerAttackT > 0) {
@@ -132,8 +153,18 @@ export function render(ctx, engine, hud) {
     ctx.font = "12px 'Nunito','Noto Sans SC',sans-serif";
     ctx.textAlign = 'left';
     ctx.fillText(`HP ${battle.hp}/${battle.maxHp}`, 24, 33);
-    // 波次进度(FR-7 最小:第 x/10 波)+ 经验
-    ctx.fillText(`第 ${battle.wave}/10 波 · EXP ${battle.expGained}`, 24, 60);
+    // 波次进度(FR-7:第 x/10 波)+ 等级
+    const prof = hud.profile ? hud.profile() : null;
+    ctx.fillText(`Lv${prof ? prof.level : 1} · 第 ${battle.wave}/10 波`, 24, 60);
+    // 经验条(FR-7:战斗区经验条;进度=累计经验在当前级内的余量 / 升级需求)
+    if (prof) {
+      const inLv = Math.max(0, (prof.expTotal || 0) - cumThreshold(prof.level));
+      const frac = Math.min(1, inLv / expNeed(prof.level));
+      ctx.fillStyle = 'rgba(0,0,0,.35)';
+      roundRect(ctx, 16, 68, 200, 10, 5); ctx.fill();
+      ctx.fillStyle = '#f5c31c';
+      roundRect(ctx, 20, 71, Math.max(0, 192 * frac), 4, 2); ctx.fill();
+    }
     // Boss 血条(顶部居中,FR-7)
     const boss = battle.enemies.find(e => e.alive && e.isBoss);
     if (boss) {
@@ -168,19 +199,32 @@ export function render(ctx, engine, hud) {
         roundRect(ctx, x0 + k * 15, 460 + (i % 2) * 12, 12, 14, 3); ctx.fill();
       }
     }
-    // 4 装配槽(宝石图 + CD 扫描)
+    // 4 装配槽(宝石图 + CD 扫描;M4 起槽位存技能 ID,按技能行取元素色,CD 按技能)
     if (hud.caster) {
-      hud.caster.loadout.forEach((el, i) => {
+      hud.caster.loadout.forEach((id, i) => {
         const x = 500 + i * 52;
+        const sk = skillById(id);
+        const el = sk ? sk.el : id;
+        const cd = sk ? (hud.caster.skillCds[sk.id] || 0) : 0;
         ctx.fillStyle = '#fff';
         roundRect(ctx, x, 458, 44, 36, 8); ctx.fill();
         const img = GEM_IMG[el];
         if (img && img.complete && img.naturalWidth > 0) ctx.drawImage(img, x + 6, 462, 32, 28);
         else { ctx.fillStyle = GEM_SRC[el]; roundRect(ctx, x + 6, 462, 32, 28, 6); ctx.fill(); }
-        const cd = hud.caster.cds[el];
         if (cd > 0) {
+          // CD 转圈(FR-7:径向扫描覆盖,自 12 点方向顺时针消退)
+          const frac = Math.min(1, cd / (sk ? sk.cd : 2.0));
           ctx.fillStyle = 'rgba(0,0,0,.45)';
-          roundRect(ctx, x, 458, 44 * (cd / 2.0), 36, 8); ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(x + 22, 476);
+          ctx.arc(x + 22, 476, 26, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+          ctx.closePath();
+          ctx.fill();
+        }
+        // 非初始弹标记(技能库技能:右上小点)
+        if (sk && sk.unlockLevel > 1) {
+          ctx.fillStyle = '#f5c31c';
+          ctx.beginPath(); ctx.arc(x + 38, 463, 3, 0, Math.PI * 2); ctx.fill();
         }
       });
     }
@@ -206,6 +250,10 @@ export function render(ctx, engine, hud) {
       ctx.strokeStyle = '#f5c31c';
       ctx.lineWidth = 3;
       roundRect(ctx, x + 8, y + 8, CELL - 16, CELL - 16, 18);
+      ctx.stroke();
+      // 道具格倒计时圈(FR-7/02 文档第 6 节:10s 环形倒计时,自 12 点方向顺时针)
+      ctx.beginPath();
+      ctx.arc(x + CELL / 2, y + CELL / 2, CELL / 2 - 4, -Math.PI / 2, -Math.PI / 2 + Math.max(0, Math.min(1, cell.expire / 10)) * Math.PI * 2);
       ctx.stroke();
       ctx.fillStyle = '#794f27';
       ctx.font = "30px 'Nunito','Noto Sans SC',sans-serif";
@@ -238,13 +286,22 @@ export function render(ctx, engine, hud) {
     ctx.globalAlpha = 1;
   }
 
+  // 连锁提示(FR-7:连锁进行中右上角常显;单次消除由飞字提示)
+  if (engine.chain >= 2) {
+    ctx.fillStyle = 'rgba(224,102,46,.9)';
+    ctx.font = "bold 26px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.textAlign = 'right';
+    ctx.fillText(`连锁 ×${engine.chain}`, 704, BOARD_Y + 34);
+    ctx.textAlign = 'center';
+  }
+
   // ===== 底栏 =====
   ctx.fillStyle = '#f0e8d8';
   ctx.fillRect(0, 1224, 720, 56);
   ctx.fillStyle = '#9f927d';
   ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
   const st = engine.paralyzed ? '棋盘瘫痪 · 等待恢复'
-    : `M3 · 第 ${battle ? battle.level : 1} 关 · 击杀 ${battle ? battle.kills : 0}`;
+    : `M3 · 第 ${battle ? battle.level : 1} 关 · 击杀 ${battle ? battle.kills : 0} · 消除 ${hud.cleared ? hud.cleared() : 0}`;
   ctx.fillText(st, 360, 1258);
 
   // 特效层
@@ -262,9 +319,38 @@ export function render(ctx, engine, hud) {
 
   // ===== 胜负结算弹层(FR-1.4 验收:失败/通关各触发对应弹层) =====
   if (battle && battle.phase === 'VICTORY') {
-    overlay(ctx, '通关!', `本关经验 +${battle.expGained} · 击杀 ${battle.kills}`, '#3fae5c', '点击任意处重新挑战');
+    overlay(ctx, '通关!', `本关经验 +${battle.expGained} · 击杀 ${battle.kills}`, '#3fae5c', '点击任意处返回选关');
   } else if (battle && battle.phase === 'DEFEAT') {
     overlay(ctx, '失败', `本局击杀 ${battle.kills} · 已获经验 ${battle.expGained}(不清退)`, '#c44', '点击任意处从第 1 波重来');
+  }
+
+  // ===== M4 选关界面(FR-6:顺序解锁,锁定灰置) =====
+  if (hud.screen && hud.screen() === 'menu') {
+    ctx.fillStyle = 'rgba(20,22,15,.82)';
+    ctx.fillRect(0, 0, 720, 1280);
+    ctx.fillStyle = '#fdf6e8';
+    ctx.font = "52px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.textAlign = 'center';
+    ctx.fillText('三消守卫', 360, 340);
+    ctx.font = "22px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, 390);
+    const prof = hud.profile ? hud.profile() : { level: 1 };
+    const prog = hud.progress ? hud.progress() : { unlockedLevel: 1 };
+    ctx.fillText(`Lv${prof.level} · 通关进度 ${prog.lastLevelCleared}/5`, 360, 460);
+    for (let i = 1; i <= 5; i++) {
+      const bx = 75 + (i - 1) * 118, by = 600, unlocked = i <= prog.unlockedLevel;
+      ctx.fillStyle = unlocked ? '#fdf6e8' : 'rgba(200,200,200,.25)';
+      roundRect(ctx, bx, by, 100, 100, 16); ctx.fill();
+      if (unlocked) { ctx.strokeStyle = '#7ba86f'; ctx.lineWidth = 3; roundRect(ctx, bx, by, 100, 100, 16); ctx.stroke(); }
+      ctx.fillStyle = unlocked ? '#5a4a32' : 'rgba(120,120,120,.6)';
+      ctx.font = "40px 'Nunito','Noto Sans SC',sans-serif";
+      ctx.fillText(i, bx + 50, by + 52);
+      ctx.font = "14px 'Nunito','Noto Sans SC',sans-serif";
+      ctx.fillText(unlocked ? (i <= prog.lastLevelCleared ? '可重打' : '可挑战') : '未解锁', bx + 50, by + 82);
+    }
+    ctx.fillStyle = '#9f927d';
+    ctx.font = "16px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.fillText('点击已解锁关卡开始', 360, 760);
   }
 }
 
