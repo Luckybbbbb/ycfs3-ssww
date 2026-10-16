@@ -120,9 +120,9 @@ export class BoardEngine {
   _beginRound() {
     const blocks = findMatchBlocks(this.grid);
     if (!blocks.length) { this.state = STATE.IDLE; this._onSettle(); return; }
-    // 发事件（逐轮即发，02 文档 5.1；每连通块一事件）
+    // 发事件（逐轮即发，02 文档 5.1；每连通块一事件；r/c 为表现层粒子发射点）
     for (const b of blocks) {
-      this.events.push({ type: 'match_cleared', element: ELEMENTS[b.el], count: b.cells.length, chain: this.chain });
+      this.events.push({ type: 'match_cleared', element: ELEMENTS[b.el], count: b.cells.length, chain: this.chain, r: b.cells[0].r, c: b.cells[0].c });
     }
     // 消耗品生成（按单事件 count：4→普通、≥5→高级；02 文档 5.1/6）
     const cleared = [];
@@ -236,20 +236,24 @@ export class BoardEngine {
   }
 
   // ---------- 渲染辅助 ----------
-  // 返回 [{r,c,el|item,offsetY,alpha}]：offsetY 为下落/交换动画偏移（逻辑像素）
+  // 返回 [{r,c,el|item,offsetY,alpha,scale,flash}]：offsetY 为下落/交换动画偏移(逻辑像素,
+  // 内置缓动:下落 cubic-out、交换 easeInOutQuad),alpha/scale/flash 为消除淡出参数。
   cellsForRender() {
+    const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+    const easeInOutQuad = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
     const out = [];
-    const swapProgress = (this.state === STATE.SWAPPING || this.state === STATE.REBOUND)
+    const swapRaw = (this.state === STATE.SWAPPING || this.state === STATE.REBOUND)
       ? 1 - Math.max(0, this.fx.t) / SWAP_TIME : 0;
+    const swapProgress = easeInOutQuad(swapRaw);
     const fallProgress = this.state === STATE.FALLING && this.fallTotal > 0
       ? 1 - Math.max(0, this.fallT) / this.fallTotal : 1;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const cell = this.grid[r][c];
         if (!cell) continue;
-        let offsetY = 0, alpha = 1;
+        let offsetY = 0, alpha = 1, scale = 1, flash = 0;
         const fm = this.falls.find(m => m.r === r && m.c === c);
-        if (fm && fallProgress < 1) offsetY = -fm.dist * 90 * (1 - fallProgress);
+        if (fm && fallProgress < 1) offsetY = -fm.dist * 90 * (1 - easeOutCubic(fallProgress));
         if (this.state === STATE.SWAPPING || this.state === STATE.REBOUND) {
           const { swapA: A, swapB: B } = this.fx;
           if (A && B) {
@@ -260,8 +264,12 @@ export class BoardEngine {
           }
         }
         const cl = this.clearing.find(k => k.r === r && k.c === c);
-        if (cl) alpha = Math.max(0, cl.t / CLEAR_TIME);
-        out.push({ r, c, ...cell, offsetY, alpha });
+        if (cl) {
+          alpha = Math.max(0, cl.t / CLEAR_TIME);
+          scale = 0.4 + 0.6 * alpha;        // 消除时收缩
+          flash = alpha > 0.7 ? (alpha - 0.7) / 0.3 : 0; // 消除起始白闪
+        }
+        out.push({ r, c, ...cell, offsetY, alpha, scale, flash });
       }
     }
     return out;
