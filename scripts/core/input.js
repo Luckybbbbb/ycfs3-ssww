@@ -28,6 +28,13 @@ export function attachInput(canvas, handlers) {
 
   function onDown(e) {
     const p = toLogical(pos(e));
+    // 全屏弹层(胜负结算/选关)接管:所有按下都路由到 onBlankDown,不落到棋盘格
+    if (handlers.interceptDown && handlers.interceptDown()) {
+      downCell = null; downXY = null; moved = false;
+      if (handlers.onBlankDown) handlers.onBlankDown(p);
+      e.preventDefault();
+      return;
+    }
     const cell = handlers.cellAt ? handlers.cellAt(p.x, p.y) : null;
     downXY = p;
     downCell = cell;

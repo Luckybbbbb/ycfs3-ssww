@@ -1,11 +1,15 @@
 // scripts/ui/render.js
-// Canvas 渲染:战斗区(M2 实装:序列帧主角/敌人+弹+血条)+ 联动栏(档位条+装配槽)+ 三消棋盘
+// Canvas 渲染:M3 战斗区(视差三层+六类敌人序列帧+双方弹+血条+波次/Boss HUD+胜负弹层)
+//             + 联动栏(档位条+装配槽)+ 三消棋盘
 // 相对路径: scripts/ui/render.js
-// 素材: player/slime 序列帧复用 godot-roguelike(04 文档第 6 节帧清单);宝石见 gems/LICENSE.md
+// 素材: player/slime/fox/zombie/snake/tiger/boss 序列帧复用 godot-roguelike(04 文档第 6 节);宝石见 gems/LICENSE.md
 
 import { BOARD_W, BOARD_H, BOARD_Y, CELL, ELEMENTS, isItem } from '../board/grid.js';
 import { roundRect } from './draw_util.js';
-import { PLAYER_X, ENEMY_STOP_X, TIER_MULT } from '../skills/registry.js';
+import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
+import { ENEMY_TYPES } from '../battle/wave.js';
+import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
+import { BATTLE_H } from '../battle/parallax.js';
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
 const GEM_SRC = { metal: '#ccccff', wood: '#44ff44', water: '#4488ff', fire: '#ff4444', earth: '#cc8844' };
@@ -17,23 +21,27 @@ for (const el of ELEMENTS) {
   GEM_IMG[el] = img;
 }
 
-// 序列帧预载(player idle 16 帧 ×0.25=180×320;slime 15 帧 ×0.5)
-function loadSeq(dir, prefix, count, pad) {
-  const frames = [];
-  for (let i = 1; i <= count; i++) {
-    const img = new Image();
-    const n = pad ? String(i).padStart(3, '0') : String(i).padStart(2, '0');
-    img.src = new URL(`../../assets/sprites/${dir}/${prefix}${n}.png`, import.meta.url).href;
-    frames.push(img);
-  }
-  return frames;
-}
-const PLAYER_FRAMES = loadSeq('player', 'idle_', 16, false);
-const SLIME_FRAMES = [];
-for (const n of ['001','004','007','010','013','016','019','022','025','028','031','034','037','039','045']) {
+// 序列帧预载(帧清单见 scripts/assets/manifest.js;此处按同清单懒加载,缺图走矢量兜底)
+const PLAYER_FRAMES = [];
+for (let i = 1; i <= 16; i++) {
   const img = new Image();
-  img.src = new URL(`../../assets/sprites/slime/s_${n}_nobg.png`, import.meta.url).href;
-  SLIME_FRAMES.push(img);
+  img.src = new URL(`../../assets/sprites/player/idle_${String(i).padStart(2, '0')}.png`, import.meta.url).href;
+  PLAYER_FRAMES.push(img);
+}
+// 攻击动画:walk_start 3 帧单次播放(资源无独立攻击帧,对标 player.tscn startup 16.7fps)
+const PLAYER_ATK_FRAMES = [];
+for (let i = 1; i <= 3; i++) {
+  const img = new Image();
+  img.src = new URL(`../../assets/sprites/player/walk_start_${String(i).padStart(2, '0')}.png`, import.meta.url).href;
+  PLAYER_ATK_FRAMES.push(img);
+}
+const ENEMY_FRAMES = {};
+for (const [type, t] of Object.entries(ENEMY_TYPES)) {
+  ENEMY_FRAMES[type] = t.frames.map(n => {
+    const img = new Image();
+    img.src = new URL(`../../assets/sprites/${t.dir}/${t.prefix}${String(n).padStart(3, '0')}_nobg.png`, import.meta.url).href;
+    return img;
+  });
 }
 const seqFrame = (frames, t, fps) => frames[Math.floor(t * fps) % frames.length];
 
@@ -43,63 +51,48 @@ export function render(ctx, engine, hud) {
   worldT += 1 / 60;
   ctx.clearRect(0, 0, 720, 1280);
   const battle = hud.battle;
+  const px = hud.parallax;
 
-  // ===== 战斗区背景(视差三层底子,M3 接动态) =====
-  const sky = ctx.createLinearGradient(0, 0, 0, 448);
-  sky.addColorStop(0, '#7ec8e3');
-  sky.addColorStop(1, '#c9ecf5');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, 720, 448);
-  ctx.fillStyle = 'rgba(255,236,150,.9)';
-  ctx.beginPath(); ctx.arc(600, 90, 46, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(255,236,150,.25)';
-  ctx.beginPath(); ctx.arc(600, 90, 70, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,.75)';
-  for (const [x, y, s] of [[120, 70, 1], [340, 120, 0.7], [520, 55, 0.85]]) {
-    ctx.beginPath();
-    ctx.arc(x, y, 26 * s, 0, Math.PI * 2);
-    ctx.arc(x + 30 * s, y - 10 * s, 20 * s, 0, Math.PI * 2);
-    ctx.arc(x + 58 * s, y, 24 * s, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.fillStyle = '#a8cfa8';
-  ctx.beginPath();
-  ctx.moveTo(0, 330); ctx.lineTo(140, 210); ctx.lineTo(260, 330);
-  ctx.lineTo(420, 180); ctx.lineTo(560, 330);
-  ctx.lineTo(660, 240); ctx.lineTo(720, 330);
-  ctx.lineTo(720, 448); ctx.lineTo(0, 448);
-  ctx.fill();
-  const grass = ctx.createLinearGradient(0, 390, 0, 448);
-  grass.addColorStop(0, '#6cae57');
-  grass.addColorStop(1, '#4f9040');
-  ctx.fillStyle = grass;
-  ctx.fillRect(0, 396, 720, 52);
+  // ===== 战斗区(FR-1.5 视差三层;screenshake/zoom pulse 变换) =====
+  const tf = px ? px.transform() : { ox: 0, oy: 0, scale: 1 };
+  ctx.save();
+  ctx.translate(360 + tf.ox, 224 + tf.oy);
+  ctx.scale(tf.scale, tf.scale);
+  ctx.translate(-360, -224);
+  if (px) px.draw(ctx);
+  else drawFlatBackdrop(ctx);
 
   if (battle) {
-    // ===== 敌人(slime 序列帧 ×0.5 ≈ 107×193) =====
+    // ===== 敌人(六类序列帧,尺寸=贴图×scale;死亡淡出放大) =====
     for (const e of battle.enemies) {
-      if (!e.alive) {
-        if (e.deathT < 0.4) {
-          e.deathT += 1 / 60;
-          ctx.globalAlpha = 1 - e.deathT / 0.4;
-          drawSlime(ctx, e, 1 + e.deathT * 2);
-          ctx.globalAlpha = 1;
-        }
+      const t = ENEMY_TYPES[e.name] || ENEMY_TYPES.slime;
+      const dying = !e.alive;
+      if (dying) {
+        ctx.globalAlpha = Math.max(0, 1 - e.deathT / 0.4);
+        drawEnemy(ctx, e, t, 1 + e.deathT * 2);
+        ctx.globalAlpha = 1;
         continue;
       }
-      drawSlime(ctx, e, 1);
-      // 血条
-      const bw = 80, bx = e.x - bw / 2, by = e.y - 105;
+      drawEnemy(ctx, e, t, 1);
+      // 血条(Boss 另有顶部大血条,此处保留小血条)
+      const bw = 80, bx = e.x - bw / 2, by = e.y - t.srcH * t.scale / 2 - 18;
       ctx.fillStyle = 'rgba(0,0,0,.4)';
       roundRect(ctx, bx - 2, by - 2, bw + 4, 10, 5); ctx.fill();
       ctx.fillStyle = '#e5484d';
       roundRect(ctx, bx, by, Math.max(0, bw * e.hp / e.maxHp), 6, 3); ctx.fill();
-      // 灼烧标记
-      if (e.burn) { ctx.fillStyle = '#ff7744'; ctx.font = '16px sans-serif'; ctx.fillText('🔥', e.x + 30, e.y - 90); }
-      // 减速标记
-      if (e.slowT > 0) { ctx.fillStyle = '#88ccff'; ctx.font = '16px sans-serif'; ctx.fillText('❄', e.x - 38, e.y - 90); }
+      // 灼烧/减速标记
+      if (e.burn) { ctx.fillStyle = '#ff7744'; ctx.font = '16px sans-serif'; ctx.fillText('🔥', e.x + 30, e.y - t.srcH * t.scale / 2 - 24); }
+      if (e.slowT > 0) { ctx.fillStyle = '#88ccff'; ctx.font = '16px sans-serif'; ctx.fillText('❄', e.x - 38, e.y - t.srcH * t.scale / 2 - 24); }
     }
-    // ===== 技能弹 =====
+    // ===== 敌方弹幕(暗红光点,FR-1.2) =====
+    for (const b of battle.ebolts) {
+      ctx.fillStyle = '#ff5566';
+      ctx.shadowColor = '#ff5566';
+      ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+    // ===== 技能弹(五行色光点) =====
     for (const b of battle.bolts) {
       ctx.fillStyle = GEM_SRC[b.el];
       ctx.shadowColor = GEM_SRC[b.el];
@@ -107,13 +100,24 @@ export function render(ctx, engine, hud) {
       ctx.beginPath(); ctx.arc(b.x, b.y, 9, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
     }
-    // ===== 主角(player idle 16 帧,720×1280×0.25=180×320,站位 x≈110) =====
-    const pf = seqFrame(PLAYER_FRAMES, worldT, 8);
+    // ===== 主角:战斗待机=idle 8fps 循环;释放技能时 walk_start 3 帧单次(攻击动画) =====
+    let pf;
+    if (battle.playerAttackT > 0) {
+      const p = 1 - Math.max(0, battle.playerAttackT) / 0.18;
+      pf = PLAYER_ATK_FRAMES[Math.min(2, Math.floor(p * 3))];
+    } else {
+      pf = seqFrame(PLAYER_FRAMES, worldT, 8);
+    }
     if (pf && pf.complete && pf.naturalWidth > 0) {
       ctx.drawImage(pf, PLAYER_X - 90, 448 - 320, 180, 320);
     } else {
       ctx.fillStyle = '#3f6fb5';
       roundRect(ctx, PLAYER_X - 40, 448 - 220, 80, 220, 24); ctx.fill();
+    }
+    // 受击闪白反馈(FR-1.1 验收)
+    if (battle.hurtT > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${Math.min(0.6, battle.hurtT * 3)})`;
+      ctx.fillRect(0, 0, 720, BATTLE_H);
     }
     // 主角 HP/护盾条(战斗区左上)
     ctx.fillStyle = 'rgba(0,0,0,.35)';
@@ -128,10 +132,26 @@ export function render(ctx, engine, hud) {
     ctx.font = "12px 'Nunito','Noto Sans SC',sans-serif";
     ctx.textAlign = 'left';
     ctx.fillText(`HP ${battle.hp}/${battle.maxHp}`, 24, 33);
+    // 波次进度(FR-7 最小:第 x/10 波)+ 经验
+    ctx.fillText(`第 ${battle.wave}/10 波 · EXP ${battle.expGained}`, 24, 60);
+    // Boss 血条(顶部居中,FR-7)
+    const boss = battle.enemies.find(e => e.alive && e.isBoss);
+    if (boss) {
+      const bw2 = 320, bx2 = (720 - bw2) / 2;
+      ctx.fillStyle = 'rgba(0,0,0,.45)';
+      roundRect(ctx, bx2 - 3, 17, bw2 + 6, 20, 8); ctx.fill();
+      ctx.fillStyle = '#a13a44';
+      roundRect(ctx, bx2, 20, Math.max(0, bw2 * boss.hp / boss.maxHp), 14, 6); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.fillText(`BOSS ${boss.hp}/${boss.maxHp}`, 360, 31);
+      ctx.textAlign = 'left';
+    }
     ctx.textAlign = 'center';
   }
+  ctx.restore(); // 视差/震动变换结束(联动栏与棋盘不参与 screenshake)
 
-  // ===== 联动栏(M2 实装:5 行档位条 + 4 装配槽) =====
+  // ===== 联动栏(M2:5 行档位条 + 4 装配槽) =====
   ctx.fillStyle = '#f0e8d8';
   ctx.fillRect(0, 448, 720, 56);
   ctx.strokeStyle = '#dcd8d1';
@@ -223,7 +243,8 @@ export function render(ctx, engine, hud) {
   ctx.fillRect(0, 1224, 720, 56);
   ctx.fillStyle = '#9f927d';
   ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
-  const st = engine.paralyzed ? '棋盘瘫痪 · 等待恢复' : `M2 · 击杀 ${hud.battle ? hud.battle.kills : 0}`;
+  const st = engine.paralyzed ? '棋盘瘫痪 · 等待恢复'
+    : `M3 · 第 ${battle ? battle.level : 1} 关 · 击杀 ${battle ? battle.kills : 0}`;
   ctx.fillText(st, 360, 1258);
 
   // 特效层
@@ -238,16 +259,71 @@ export function render(ctx, engine, hud) {
     ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
     ctx.fillText(hud.toast.text, 360, 545);
   }
+
+  // ===== 胜负结算弹层(FR-1.4 验收:失败/通关各触发对应弹层) =====
+  if (battle && battle.phase === 'VICTORY') {
+    overlay(ctx, '通关!', `本关经验 +${battle.expGained} · 击杀 ${battle.kills}`, '#3fae5c', '点击任意处重新挑战');
+  } else if (battle && battle.phase === 'DEFEAT') {
+    overlay(ctx, '失败', `本局击杀 ${battle.kills} · 已获经验 ${battle.expGained}(不清退)`, '#c44', '点击任意处从第 1 波重来');
+  }
 }
 
-function drawSlime(ctx, e, scale) {
-  const f = seqFrame(SLIME_FRAMES, worldT + e.y, 8);
-  const w = 107 * scale, h = 193 * scale;
+function overlay(ctx, title, line, color, hint) {
+  ctx.fillStyle = 'rgba(10,10,20,.55)';
+  ctx.fillRect(0, 0, 720, 1280);
+  ctx.fillStyle = '#fdf6e8';
+  roundRect(ctx, 160, 460, 400, 220, 20); ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 4;
+  roundRect(ctx, 160, 460, 400, 220, 20); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = "44px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.textAlign = 'center';
+  ctx.fillText(title, 360, 550);
+  ctx.fillStyle = '#5a4a32';
+  ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.fillText(line, 360, 600);
+  ctx.fillText(hint, 360, 645);
+  ctx.textAlign = 'center';
+}
+
+// 视差未就绪时的静态兜底(与 M2 版面一致)
+function drawFlatBackdrop(ctx) {
+  const sky = ctx.createLinearGradient(0, 0, 0, 448);
+  sky.addColorStop(0, '#7ec8e3');
+  sky.addColorStop(1, '#c9ecf5');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, 720, 448);
+  ctx.fillStyle = '#a8cfa8';
+  ctx.beginPath();
+  ctx.moveTo(0, 330); ctx.lineTo(140, 210); ctx.lineTo(260, 330);
+  ctx.lineTo(420, 180); ctx.lineTo(560, 330);
+  ctx.lineTo(660, 240); ctx.lineTo(720, 330);
+  ctx.lineTo(720, 448); ctx.lineTo(0, 448);
+  ctx.fill();
+  const grass = ctx.createLinearGradient(0, 390, 0, 448);
+  grass.addColorStop(0, '#6cae57');
+  grass.addColorStop(1, '#4f9040');
+  ctx.fillStyle = grass;
+  ctx.fillRect(0, 396, 720, 52);
+}
+
+function drawEnemy(ctx, e, t, scale) {
+  const frames = ENEMY_FRAMES[e.name] || ENEMY_FRAMES.slime;
+  // 攻击动画:开火后 animDur 内按 2×fps 单次正播;其余时间按原 fps 慢速循环(待机)
+  let f;
+  if (e.attackAnimT > 0 && e.animDur > 0) {
+    const p = 1 - e.attackAnimT / e.animDur;
+    f = frames[Math.min(frames.length - 1, Math.floor(p * frames.length))];
+  } else {
+    f = seqFrame(frames, worldT + e.y, t.fps);
+  }
+  const w = t.srcW * t.scale * scale, h = t.srcH * t.scale * scale;
   if (f && f.complete && f.naturalWidth > 0) {
     ctx.drawImage(f, e.x - w / 2, e.y - h / 2, w, h);
   } else {
     ctx.fillStyle = '#5fae5f';
-    ctx.beginPath(); ctx.ellipse(e.x, e.y, 45 * scale, 70 * scale, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(e.x, e.y, (t.radius || 45) * scale, (t.radius || 45) * 1.4 * scale, 0, 0, Math.PI * 2); ctx.fill();
   }
 }
-void TIER_MULT; void ENEMY_STOP_X;
+
+void TIER_MULT; void PLAYER_Y; void ENEMY_SPAWN_X;
