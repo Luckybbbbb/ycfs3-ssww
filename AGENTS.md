@@ -1,11 +1,11 @@
 # ycfs3-ssww 工程纪律（AGENTS.md）
 
-竖屏小游戏：上半 35% 为横版放置自动战斗（复用 godot-roguelike 的主角与敌人资源），下半 65% 为 10×10 五行元素三消；三消消除后合成技能供上半主角自动释放（消除数量越多技能越强，生成有次数限制）；主角可杀怪升级，挑战更难关卡。引擎 Godot 4.6 + GL Compatibility。
+竖屏小游戏：上半 35% 为横版放置自动战斗（复用 godot-roguelike 的主角与敌人资源），下半 65% 为 8×8 五行元素三消；三消消除后合成技能供上半主角自动释放（消除即资源：消除数量越多技能越强，档位充能 + CD 门控，无独立生成次数限制）；主角可杀怪升级，挑战更难关卡。技术路线：纯 HTML5 Canvas 2D（逻辑分辨率 720×1280），序列帧资源直接复用 godot-roguelike。
 
 ## 目录约定
 
-- `scripts/{autoload,entities,ui,...}` 全小写下划线；文件头注释标相对路径
-- `assets/sprites/...` 贴图按来源子目录存放（player/slime/fox_anim/zombie/snake/tiger/boss 等，沿用 godot-roguelike 原始目录名，保证脚本帧路径常量不改）
+- `scripts/{core,assets,board,battle,skills,meta,api,ui}` 模块划分见 docs/design/00-宏观框架.md 第 5 节；文件头注释标相对路径
+- `assets/sprites/...` 贴图按来源子目录存放（player/slime/fox_anim/zombie/snake/tiger/boss 等，沿用 godot-roguelike 原始目录名，帧号清单见 docs/design/04-敌人设计.md 第 6 节）
 - `docs/standards/` 审核协议与 TDD 标准；`docs/architecture/` 系统文档；`docs/changelog.md` 改动记录
 - `.claude/skills/ssww-*` 项目 skill 真身；`.agents/skills/` 为其 junction 镜像
 
