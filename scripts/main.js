@@ -214,7 +214,9 @@ function boot() {
         const { progress: p2 } = onVictory(progress, battle.level);
         progress = p2;
         api.submitRun({ level: battle.level, victory: true, expGained: battle.expGained, kills: battle.kills })
-          .then(res => { if (res && res.progress) progress = { ...progress, ...res.progress }; });
+          .then(res => { // 只回写 lastLevelCleared(存储回读不含本次解锁的 unlockedLevel,不能覆盖)
+            if (res && res.progress) progress = { ...progress, lastLevelCleared: res.progress.lastLevelCleared };
+          });
       } else if (battle.phase === 'DEFEAT' && !victoryHandled) {
         victoryHandled = true;
         api.submitRun({ level: battle.level, victory: false, expGained: battle.expGained, kills: battle.kills });
