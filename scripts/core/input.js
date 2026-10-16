@@ -33,6 +33,7 @@ export function attachInput(canvas, handlers) {
     downCell = cell;
     moved = false;
     if (cell) handlers.onCellDown(cell, p);
+    else if (handlers.onBlankDown) handlers.onBlankDown(p); // 非棋盘区(联动栏等)
     e.preventDefault();
   }
   function onMove(e) {

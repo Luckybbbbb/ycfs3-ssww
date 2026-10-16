@@ -161,28 +161,27 @@ export class BoardEngine {
   }
 
   // 标准下落补位：每列非空格（棋子+道具）保持顺序沉降，顶部 safePick 补新（02 文档第 4 节/B3）
+  // 收集自底向上,回写必须自顶向下(kept 反转)——此前直接写回导致未消除列整列上下翻转(REQ-M2-05 基线缺陷)
   _applyFalls() {
     const moves = []; // {r,c,dist}
     for (let c = 0; c < COLS; c++) {
-      // 快照本列旧内容（自底向上）
+      // 快照本列旧内容（自底向上,带真实旧行号——底部被消除时 kept 不贴底,不能用 ROWS-1-i 反推）
       const oldCol = [];
-      for (let r = ROWS - 1; r >= 0; r--) oldCol.push(this.grid[r][c]);
-      // 新列：非空格按原顺序沉降到底部，顶部空位补新
-      const kept = oldCol.filter(x => x !== null);
+      for (let r = ROWS - 1; r >= 0; r--) oldCol.push({ cell: this.grid[r][c], row: r });
+      // 新列：顶部空位补新(占位),kept 反转为自顶向下接在后面 → 列内相对顺序保持
+      const kept = oldCol.filter(x => x.cell !== null);
       const newCount = ROWS - kept.length;
       const newCol = [];
-      for (let i = 0; i < newCount; i++) newCol.push({ fresh: true });
-      for (const cell of kept) newCol.push(cell);
-      // 顶部补位用 safePick（此时列下方已是最终态；跨列左二依赖已处理列）
-      for (let r = 0; r < newCount; r++) newCol[r] = { el: 0, _fresh: true };
+      for (let i = 0; i < newCount; i++) newCol.push({ el: 0, _fresh: true });
+      for (let i = kept.length - 1; i >= 0; i--) newCol.push(kept[i].cell);
       for (let r = 0; r < ROWS; r++) this.grid[r][c] = newCol[r];
+      // 顶部补位用 safePick（此时列下方已是最终态；跨列左二依赖已处理列）
       for (let r = 0; r < newCount; r++) {
         this.grid[r][c] = { el: safePickRefill(this.rng, this.grid, r, c) };
       }
-      // 位移 = 新行 − 旧行（kept 中第 i 个自底向上：旧行 = ROWS−1−i）
-      for (const cell of kept) {
+      // 位移 = 新行 − 旧行（kept 记录真实旧行号;保留棋子与补位新子都生成位移）
+      for (const { cell, row: oldR } of kept) {
         const newR = this.grid.findIndex(row => row[c] === cell);
-        const oldR = ROWS - 1 - kept.indexOf(cell);
         if (newR !== oldR) moves.push({ r: newR, c, dist: newR - oldR });
       }
       for (let r = 0; r < newCount; r++) moves.push({ r, c, dist: newCount - r });
@@ -265,8 +264,9 @@ export class BoardEngine {
   }
 
   // ---------- 渲染辅助 ----------
-  // 返回 [{r,c,el|item,offsetY,alpha,scale,flash}]：offsetY 为下落/交换动画偏移(逻辑像素,
-  // 内置缓动:下落 cubic-out、交换 easeInOutQuad),alpha/scale/flash 为消除淡出参数。
+  // 返回 [{r,c,el|item,offsetX,offsetY,alpha,scale,flash}]:
+  // offsetX/Y 为交换动画偏移(交换含水平分量,修复水平交换误用垂直偏移),下落为 offsetY;
+  // alpha/scale/flash 为消除淡出参数。
   cellsForRender() {
     const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
     const easeInOutQuad = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
@@ -280,16 +280,22 @@ export class BoardEngine {
       for (let c = 0; c < COLS; c++) {
         const cell = this.grid[r][c];
         if (!cell) continue;
-        let offsetY = 0, alpha = 1, scale = 1, flash = 0;
+        let offsetX = 0, offsetY = 0, alpha = 1, scale = 1, flash = 0;
         const fm = this.falls.find(m => m.r === r && m.c === c);
         if (fm && fallProgress < 1) offsetY = -fm.dist * 90 * (1 - easeOutCubic(fallProgress));
         if (this.state === STATE.SWAPPING || this.state === STATE.REBOUND) {
           const { swapA: A, swapB: B } = this.fx;
           if (A && B) {
-            const dir = { r: B.r - A.r, c: B.c - A.c };
-            const t = this.fx.back ? swapProgress : 1 - swapProgress; // 回弹反向
-            if (r === A.r && c === A.c) offsetY += (dir.r * 90) * (1 - swapProgress) * (this.fx.back ? -1 : 1);
-            if (r === B.r && c === B.c) offsetY += (-dir.r * 90) * (1 - swapProgress) * (this.fx.back ? -1 : 1);
+            const dirR = B.r - A.r, dirC = B.c - A.c;
+            const t = this.fx.back ? swapProgress : 1 - swapProgress; // 交换进度(A→B);回弹反向
+            if (r === A.r && c === A.c) {
+              offsetX += dirC * 90 * t;
+              offsetY += dirR * 90 * t;
+            }
+            if (r === B.r && c === B.c) {
+              offsetX += -dirC * 90 * t;
+              offsetY += -dirR * 90 * t;
+            }
           }
         }
         const cl = this.clearing.find(k => k.r === r && k.c === c);
@@ -298,7 +304,7 @@ export class BoardEngine {
           scale = 0.4 + 0.6 * alpha;        // 消除时收缩
           flash = alpha > 0.7 ? (alpha - 0.7) / 0.3 : 0; // 消除起始白闪
         }
-        out.push({ r, c, ...cell, offsetY, alpha, scale, flash });
+        out.push({ r, c, ...cell, offsetX, offsetY, alpha, scale, flash });
       }
     }
     return out;

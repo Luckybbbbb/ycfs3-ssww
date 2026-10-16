@@ -200,3 +200,81 @@ test('无道具瘫痪盘：(行+列)%5 注入后定时重试确定恢复（02 �
   const results = [7, 42, 99].map(run);
   console.log('PARALYZE_RECOVER ' + results.map((t, i) => `seed${[7,42,99][i]}=${t.toFixed(2)}s(第${Math.ceil(t/2)}轮)`).join(' '));
 });
+
+// ---- 下落顺序回归(REQ-M2-05 基线缺陷:未消除列不得上下翻转) ----
+test('无消除扰动列保持原序:交换后 FALLING 落定,各列元素自顶向下与交换前列一致(用户报告的上下颠倒)', () => {
+  const e = new BoardEngine(20260601);
+  stepToIdle(e);
+  const before = e.grid.map(row => row.map(c => c.el));
+  // codex 复现入口:交换 (0,4)↔(0,5)
+  assert.ok(e.trySwap({ r: 0, c: 4 }, { r: 0, c: 5 }), '交换放行');
+  stepToIdle(e);
+  // 逐列校验:沉降语义下「每列的元素多重集按相对顺序保持」——无消除的列顶多整体平移,
+  // 但列内相对顺序必须不变。用列内非 fresh 序列等价校验:列元素序列(自顶向下)应是
+  // before 列去掉被消格后前对齐。最直接:比较每列的「同元素相邻对」集合不变(序不变则邻接对不变)。
+  const pairs = (g) => {
+    const s = new Set();
+    for (let c = 0; c < 8; c++) for (let r = 0; r < 7; r++) s.add(`${g[r][c].el}>${g[r+1][c].el}@c${c}`);
+    return s;
+  };
+  // 精确校验:对每个未发生消除与补位的列(列元素多重集与顺序整体保持),列序列应为原列或原列去掉若干后补位。
+  // 直接断言:列 0(交换只动第 4/5 列,若 0 列无连锁)在落定后其棋子序列是 before 列 0 的子序列(允许顶部插入新子)。
+  const isSubseqKeepOrder = (oldCol, newCol) => {
+    let i = 0;
+    for (let r = 0; r < 8; r++) {
+      if (i < oldCol.length && newCol[r] === oldCol[i]) i++;
+    }
+    return i === oldCol.length;
+  };
+  // 稳妥通用断言:任意列的「非新增棋子」相对顺序必须保持(用元素值序列的子序列判定)
+  let checked = 0;
+  for (let c = 0; c < 8; c++) {
+    const oldVals = before.map(row => row[c]);
+    // 落定后该列:旧棋子相对顺序应为其在原列中的顺序(子序列)
+    const newVals = e.grid.map(row => row[c]);
+    // 从新列中删去「不在旧列计数内的多余元素」后应可由旧列子序列匹配——简化:多重集+子序列
+    const remain = [...oldVals];
+    const picked = [];
+    for (const v of newVals) {
+      const idx = remain.indexOf(v);
+      if (idx >= 0) { picked.push(v); remain.splice(idx, 1); }
+    }
+    // picked 必须是 oldVals 的子序列且长度=被保留棋子数(>=6:至多消除 2 格)
+    let k = 0;
+    for (const v of oldVals) if (k < picked.length && picked[k] === v) k++;
+    assert.equal(k, picked.length, `列 ${c} 保留棋子相对顺序被打乱(上下翻转)`);
+    checked++;
+  }
+  assert.ok(checked === 8);
+});
+
+test('下落动画:保留棋子位移正确(codex 复现例 seed=7 交换(6,6)↔(6,7),起始 offsetY=−dist×90)', () => {
+  const e = new BoardEngine(7);
+  stepToIdle(e);
+  assert.ok(e.trySwap({ r: 6, c: 6 }, { r: 6, c: 7 }), '交换放行');
+  let n = 0;
+  while (e.state !== 'FALLING' && n < 200) { e.update(1 / 60); n++; }
+  assert.equal(e.state, 'FALLING');
+  const cells = e.cellsForRender();
+  // 每条 falls 位移:起始 offsetY = −dist×90
+  for (const m of e.falls) {
+    const cell = cells.find(c => c.r === m.r && c.c === m.c);
+    assert.ok(Math.abs(cell.offsetY + m.dist * 90) < 1e-6, `格(${m.r},${m.c}) 起始 offsetY=${cell.offsetY},应=${-m.dist * 90}`);
+  }
+  assert.ok(e.falls.length >= 5, '保留棋子与补位新子都应有位移记录(此前保留棋子位移丢失)');
+  // 中间帧:动画单调推进(第 12 帧 offsetY 介于起始与 0 之间)
+  e.update(12 / 60);
+  for (const m of e.falls) {
+    const cell = e.cellsForRender().find(c => c.r === m.r && c.c === m.c);
+    const v = cell.offsetY;
+    assert.ok(v <= 0.01 && v >= -m.dist * 90 - 0.01, '中间帧 offsetY 在 [−dist×90, 0] 区间');
+  }
+  // 落定:动画走完(fallT 归零进入连锁判定前)全部位移归零
+  let guard = 0;
+  while (e.state === 'FALLING' && guard < 200) { e.update(1 / 60); guard++; }
+  assert.equal(e.state !== 'FALLING', true, '下落完成');
+  assert.equal(e.falls.length, 0, '落定后 falls 清空(全部位移归零)');
+  for (const c of e.cellsForRender()) {
+    assert.equal(c.offsetY, 0, `格(${c.r},${c.c}) 落定 offsetY=0`);
+  }
+});
