@@ -23,12 +23,19 @@ export class Caster {
     this.cds = {};        // 元素键 CD 视图(M2 兼容:镜像该行初始弹)
     this.skillCds = {};   // 技能键 CD(技能库真实口径,03 文档 5.2 各技能独立 CD)
     for (const el of FIVE) { this.cds[el] = 0; this.skillCds[`${el}_bolt`] = 0; }
+    this.cdBoostT = 0;      // M5 CD 加速剩余秒
+    this.cdBoostRate = 1;
   }
 
   setLevel(level) { this.level = level; }
 
+  // M5 CD 加速道具(02 文档第 6 节):期间技能 CD 流速 ×rate(默认 2),现实时间计时
+  setCdBoost(seconds, rate = 2) { this.cdBoostT = seconds; this.cdBoostRate = rate; }
+
   update(dt) {
-    for (const id in this.skillCds) this.skillCds[id] = Math.max(0, this.skillCds[id] - dt);
+    const rate = this.cdBoostT > 0 ? this.cdBoostRate : 1;
+    if (this.cdBoostT > 0) this.cdBoostT = Math.max(0, this.cdBoostT - dt);
+    for (const id in this.skillCds) this.skillCds[id] = Math.max(0, this.skillCds[id] - dt * rate);
     for (const el of FIVE) this.cds[el] = this.skillCds[`${el}_bolt`];
   }
 

@@ -20,6 +20,7 @@ import { createApi } from './api/api.js';
 import { applyExp, maxHpAt, atkAt } from './meta/exp.js';
 import { canPlay, onVictory } from './meta/levels.js';
 import { loadProgress, saveProgress } from './meta/save.js';
+import { applyItem } from './board/items.js';
 
 const canvas = document.getElementById('game');
 fitCanvas(canvas);
@@ -130,7 +131,21 @@ attachInput(canvas, {
   onTap: (cell) => {
     if (screen !== 'playing') return;
     const item = engine.tapItem(cell);
-    if (item) { showToast('道具生效（效果待 M5 接入战斗）'); sfx.item(); }
+    if (!item) return;
+    // M5:道具效果接入战斗(02 文档第 6 节;数值由 items.applyItem 统一口径)
+    const fx = applyItem(item, { maxHP: battle.maxHp });
+    if (fx.kind === 'heal') {
+      const before = battle.hp;
+      battle.hp = Math.min(battle.maxHp, battle.hp + fx.amount);
+      showToast(`回血 +${battle.hp - before}`);
+    } else if (fx.kind === 'invincible') {
+      battle.invincibleT = fx.seconds;
+      showToast(`无敌 ${fx.seconds}s`);
+    } else if (fx.kind === 'cd') {
+      caster.setCdBoost(fx.seconds, fx.rate);
+      showToast(`CD 加速 ×${fx.rate}(${fx.seconds}s)`);
+    }
+    sfx.item();
   },
 });
 

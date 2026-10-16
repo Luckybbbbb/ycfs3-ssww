@@ -114,6 +114,12 @@ export function render(ctx, engine, hud) {
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(PLAYER_X, 300, 110, 0, Math.PI * 2); ctx.stroke();
     }
+    // M5 无敌道具:主角金圈
+    if (battle.invincibleT > 0) {
+      ctx.strokeStyle = `rgba(245,195,28,${Math.min(1, battle.invincibleT)})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(PLAYER_X, 300, 96, 0, Math.PI * 2); ctx.stroke();
+    }
     // ===== 主角:战斗待机=idle 8fps 循环;释放技能时 walk_start 3 帧单次(攻击动画) =====
     let pf;
     if (battle.playerAttackT > 0) {

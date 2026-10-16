@@ -44,6 +44,7 @@ export class Battle {
     this.playerAttackT = 0;   // 主角攻击动画计时(释放技能时播放 walk_start 单次,16.7fps×3帧≈0.18s)
     this.zones = [];          // M4 行为区域(dotzone/field;behaviors.pushZone 维护,同技能刷新不叠加)
     this.aura = null;         // M4 生机光环(behaviors.applyAura 维护)
+    this.invincibleT = 0;     // M5 无敌道具剩余秒(免伤;02 文档第 6 节)
   }
 
   // M2 演示 API(保留,单测依赖):敌人置于停位静态靶,不移动不攻击
@@ -211,8 +212,12 @@ export class Battle {
     return r;
   }
 
-  // 主角受击:护盾先吸收,余量入 HP(03 文档第 3 节土行护盾语义;FR-1.4 失败判定)
+  // 主角受击:无敌期免伤(02 文档第 6 节无敌道具);护盾先吸收,余量入 HP(FR-1.4 失败判定)
   hurtPlayer(dmg) {
+    if (this.invincibleT > 0) {
+      this.log.push({ t: this.clock, ev: 'invincible_block', dmg });
+      return 0;
+    }
     const toShield = Math.min(this.shield, dmg);
     this.shield -= toShield;
     const rest = dmg - toShield;
@@ -244,6 +249,7 @@ export class Battle {
     if (this.hurtT > 0) this.hurtT -= dt;
     if (this.shakeT > 0) this.shakeT -= dt;
     if (this.playerAttackT > 0) this.playerAttackT -= dt;
+    if (this.invincibleT > 0) this.invincibleT -= dt; // 无敌按现实时间衰减(道具效果,02 第 6 节)
     if (this.phase !== PHASE.FIGHTING) return; // 结算后冻结(胜负弹层接管,FR-1.4)
     const prevClock = this.clock;
     this.clock += dt;
