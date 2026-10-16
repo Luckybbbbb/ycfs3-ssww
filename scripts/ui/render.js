@@ -8,6 +8,7 @@ import { BOARD_W, BOARD_H, BOARD_Y, CELL, ELEMENTS, isItem } from '../board/grid
 import { roundRect } from './draw_util.js';
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
 import { skillById } from '../skills/library.js';
+import { cumThreshold, expNeed } from '../meta/exp.js';
 import { ENEMY_TYPES } from '../battle/wave.js';
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
@@ -152,9 +153,18 @@ export function render(ctx, engine, hud) {
     ctx.font = "12px 'Nunito','Noto Sans SC',sans-serif";
     ctx.textAlign = 'left';
     ctx.fillText(`HP ${battle.hp}/${battle.maxHp}`, 24, 33);
-    // 波次进度(FR-7 最小:第 x/10 波)+ 等级/经验(M4)
+    // 波次进度(FR-7:第 x/10 波)+ 等级
     const prof = hud.profile ? hud.profile() : null;
-    ctx.fillText(`Lv${prof ? prof.level : 1} · 第 ${battle.wave}/10 波 · EXP ${battle.expGained}`, 24, 60);
+    ctx.fillText(`Lv${prof ? prof.level : 1} · 第 ${battle.wave}/10 波`, 24, 60);
+    // 经验条(FR-7:战斗区经验条;进度=累计经验在当前级内的余量 / 升级需求)
+    if (prof) {
+      const inLv = Math.max(0, (prof.expTotal || 0) - cumThreshold(prof.level));
+      const frac = Math.min(1, inLv / expNeed(prof.level));
+      ctx.fillStyle = 'rgba(0,0,0,.35)';
+      roundRect(ctx, 16, 68, 200, 10, 5); ctx.fill();
+      ctx.fillStyle = '#f5c31c';
+      roundRect(ctx, 20, 71, Math.max(0, 192 * frac), 4, 2); ctx.fill();
+    }
     // Boss 血条(顶部居中,FR-7)
     const boss = battle.enemies.find(e => e.alive && e.isBoss);
     if (boss) {
@@ -202,8 +212,14 @@ export function render(ctx, engine, hud) {
         if (img && img.complete && img.naturalWidth > 0) ctx.drawImage(img, x + 6, 462, 32, 28);
         else { ctx.fillStyle = GEM_SRC[el]; roundRect(ctx, x + 6, 462, 32, 28, 6); ctx.fill(); }
         if (cd > 0) {
+          // CD 转圈(FR-7:径向扫描覆盖,自 12 点方向顺时针消退)
+          const frac = Math.min(1, cd / (sk ? sk.cd : 2.0));
           ctx.fillStyle = 'rgba(0,0,0,.45)';
-          roundRect(ctx, x, 458, 44 * (cd / (sk ? sk.cd : 2.0)), 36, 8); ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(x + 22, 476);
+          ctx.arc(x + 22, 476, 26, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+          ctx.closePath();
+          ctx.fill();
         }
         // 非初始弹标记(技能库技能:右上小点)
         if (sk && sk.unlockLevel > 1) {
@@ -234,6 +250,10 @@ export function render(ctx, engine, hud) {
       ctx.strokeStyle = '#f5c31c';
       ctx.lineWidth = 3;
       roundRect(ctx, x + 8, y + 8, CELL - 16, CELL - 16, 18);
+      ctx.stroke();
+      // 道具格倒计时圈(FR-7/02 文档第 6 节:10s 环形倒计时,自 12 点方向顺时针)
+      ctx.beginPath();
+      ctx.arc(x + CELL / 2, y + CELL / 2, CELL / 2 - 4, -Math.PI / 2, -Math.PI / 2 + Math.max(0, Math.min(1, cell.expire / 10)) * Math.PI * 2);
       ctx.stroke();
       ctx.fillStyle = '#794f27';
       ctx.font = "30px 'Nunito','Noto Sans SC',sans-serif";
@@ -266,13 +286,22 @@ export function render(ctx, engine, hud) {
     ctx.globalAlpha = 1;
   }
 
+  // 连锁提示(FR-7:连锁进行中右上角常显;单次消除由飞字提示)
+  if (engine.chain >= 2) {
+    ctx.fillStyle = 'rgba(224,102,46,.9)';
+    ctx.font = "bold 26px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.textAlign = 'right';
+    ctx.fillText(`连锁 ×${engine.chain}`, 704, BOARD_Y + 34);
+    ctx.textAlign = 'center';
+  }
+
   // ===== 底栏 =====
   ctx.fillStyle = '#f0e8d8';
   ctx.fillRect(0, 1224, 720, 56);
   ctx.fillStyle = '#9f927d';
   ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
   const st = engine.paralyzed ? '棋盘瘫痪 · 等待恢复'
-    : `M3 · 第 ${battle ? battle.level : 1} 关 · 击杀 ${battle ? battle.kills : 0}`;
+    : `M3 · 第 ${battle ? battle.level : 1} 关 · 击杀 ${battle ? battle.kills : 0} · 消除 ${hud.cleared ? hud.cleared() : 0}`;
   ctx.fillText(st, 360, 1258);
 
   // 特效层

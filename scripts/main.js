@@ -33,13 +33,14 @@ let progress = loadProgress();
 let screen = 'menu';          // 'menu' | 'playing'(FR-6 选关入口)
 let victoryHandled = false;
 let expSeen = 0;              // 已计入 profile 的经验水位(每帧增量入账)
+let clearedTotal = 0;         // 本局累计消除格数(FR-7 底栏"消除"计数,startLevel 归零)
 
 const engine = new BoardEngine(20260601);
 const charge = new Charge();
 const caster = new Caster(charge, profile.loadout, profile.level);
 const parallax = new Parallax({ effects: profile.settings.effects !== false });
 const battle = new Battle({ atk: atkAt(profile.level), maxHp: maxHpAt(profile.level), rng: makeRng(20260601) });
-const hud = { toast: null, fx: new FxLayer(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress };
+const hud = { toast: null, fx: new FxLayer(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress, cleared: () => clearedTotal };
 
 function showToast(text) { hud.toast = { text, t: 1.2 }; }
 
@@ -74,6 +75,7 @@ function startLevel(L) {
   battle.kills = 0;
   battle.expGained = 0;
   expSeen = 0;
+  clearedTotal = 0;
   victoryHandled = false;
   screen = 'playing';
   lastWave = 0;
@@ -159,6 +161,7 @@ startLoop(
     // 事件消费:充能(FR-3.1) + 表现层
     for (const e of engine.drainEvents()) {
       if (e.type === 'match_cleared') {
+        clearedTotal += e.count; // FR-7 底栏消除计数
         const gain = charge.feed(e);
         showToast(`${e.element} ×${e.count} 连锁${e.chain} → ${e.element}档 +${gain}`);
         sfx.match(e.chain);
