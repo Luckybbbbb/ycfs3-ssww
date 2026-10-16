@@ -182,3 +182,21 @@ test('固定种子下同一操作序列两次运行终态逐格一致', () => {
   };
   assert.equal(run(), run());
 });
+
+// ---- 瘫痪态恢复出口（02 文档第 8 节 P1 整改：无道具也必有恢复转移）----
+test('无道具瘫痪盘：(行+列)%5 注入后定时重试确定恢复（02 第 8 节数字例）', () => {
+  const run = (seed) => {
+    const e = new BoardEngine(seed);
+    assert.ok(stepToIdle(e));
+    // 注入死局盘：无现成匹配、0 个合法交换、无道具
+    e.grid = emptyGrid().map((row, r) => row.map((_, c) => ({ el: (r + c) % 5 })));
+    e.paralyzed = true; e.state = 'PARALYZED'; e.paralyzeT = 0;
+    let t = 0;
+    while (e.paralyzed && t < 120) { e.update(0.016); t += 0.016; }
+    assert.ok(!e.paralyzed, `seed=${seed} 瘫痪盘应在有限轮内恢复`);
+    assert.ok(hasNoMatches(e.grid) && hasValidSwap(e.grid), '恢复后终态合法');
+    return t;
+  };
+  const results = [7, 42, 99].map(run);
+  console.log('PARALYZE_RECOVER ' + results.map((t, i) => `seed${[7,42,99][i]}=${t.toFixed(2)}s(第${Math.ceil(t/2)}轮)`).join(' '));
+});

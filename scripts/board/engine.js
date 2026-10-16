@@ -32,6 +32,7 @@ export class BoardEngine {
     this.clearing = [];        // [{r,c,t}]
     this.falls = [];           // [{r,c,fromY}]  渲染用偏移
     this.paralyzed = false;
+    this.paralyzeT = 0;        // 瘫痪态定时重试计时（02 文档第 8 节恢复转移）
     this.pendingItemRemovals = []; // RESOLVING/FALLING 期间被移除的道具格，落定后补位
     this._init();
   }
@@ -100,13 +101,26 @@ export class BoardEngine {
         break;
       default: break;
     }
-    // 道具倒计时（02 文档第 6 节：10s 超时）
+    // 道具倒计时（02 文档第 6 节：10s 超时；瘫痪态同样倒计时，超时是恢复链的一环）
     if (this.state === STATE.IDLE) {
       const expired = tickItems(this.grid, dt);
       for (const cell of expired) this.pendingItemRemovals.push(cell);
       if (expired.length) this._refillAfterRemovals();
-      // 瘫痪态恢复：任何道具移除后重试
-      if (this.paralyzed && expired.length) this._tryRecover();
+    }
+    // 瘫痪态恢复转移（02 文档第 8 节）：道具超时移除即时重试 + 每 2s 定时重试一轮
+    if (this.state === STATE.PARALYZED) {
+      this.paralyzeT += dt;
+      const expired = tickItems(this.grid, dt);
+      if (expired.length) {
+        for (const cell of expired) this.grid[cell.r][cell.c] = null;
+        this._applyFalls(); // 标准下落补位（瘫痪态瞬时完成，不播动画）
+        this.falls = [];
+        this._paralyzeRetry();
+      }
+      if (this.paralyzed && this.paralyzeT >= 2) {
+        this.paralyzeT -= 2;
+        this._paralyzeRetry();
+      }
     }
   }
 
@@ -208,31 +222,46 @@ export class BoardEngine {
     for (let i = 0; i < 3; i++) {
       if (shuffleGrid(this.grid, this.rng)) return; // shuffleGrid 内含配额+双验证
     }
-    this._regenerate();
+    if (this._tryRegenerate()) return;
+    this.paralyzed = true;
+    this.state = STATE.PARALYZED;
+    this.paralyzeT = 0;
+    this.events.push({ type: 'board_paralyzed' });
   }
 
-  _regenerate() {
+  // 重新生成 50 次（开局同规则+双验证，道具格保留原位）；成功回写 grid 返回 true
+  _tryRegenerate() {
     for (let i = 0; i < 50; i++) {
       const reserved = [];
       for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
         if (isItem(this.grid[r][c])) reserved.push({ r, c });
       }
       const g = generateGrid(this.rng, reserved);
-      // 配额（棋子数不足时由瘫痪态兜底，此处棋子 ≥61 足够）
-      if (hasNoMatches(g) && hasValidSwap(g)) { this.grid = g; return; }
+      if (hasNoMatches(g) && hasValidSwap(g)) { this.grid = g; return true; }
     }
-    this.paralyzed = true;
-    this.state = STATE.PARALYZED;
-    this.events.push({ type: 'board_paralyzed' });
+    return false;
+  }
+
+  // 瘫痪态恢复转移（02 文档第 8 节）：洗牌 3 次 + 重生成 50 次为一轮；
+  // 每 2s 定时触发一轮（+道具过期即时触发），各轮独立抽样，无次数上限——
+  // 单轮成功率 P>0 时失败 k 轮概率 (1-P)^k → 0，恢复时间以实测数字例标定（见 02 文档）。
+  _paralyzeRetry() {
+    if (!this.paralyzed) return;
+    for (let i = 0; i < 3; i++) {
+      if (shuffleGrid(this.grid, this.rng)) return this._recover();
+    }
+    if (this._tryRegenerate()) this._recover();
+  }
+
+  _recover() {
+    this.paralyzed = false;
+    this.state = STATE.IDLE;
+    this.paralyzeT = 0;
   }
 
   _tryRecover() {
     if (!this.paralyzed) return;
-    // 任一道具移除后重试一次洗牌
-    if (shuffleGrid(this.grid, this.rng)) {
-      this.paralyzed = false;
-      this.state = STATE.IDLE;
-    }
+    this._paralyzeRetry();
   }
 
   // ---------- 渲染辅助 ----------
