@@ -20,7 +20,6 @@ import { preload } from './assets/loader.js';
 import { createApi } from './api/api.js';
 import { applyExp, maxHpAt, atkAt } from './meta/exp.js';
 import { canPlay, onVictory } from './meta/levels.js';
-import { loadProgress, saveProgress } from './meta/save.js';
 import { applyItem } from './board/items.js';
 
 const canvas = document.getElementById('game');
@@ -30,7 +29,8 @@ window.addEventListener('resize', () => fitCanvas(canvas));
 // ---- M4 局外状态(FR-5/6/8):api 统一读写(本地后端回落 save.js),事件驱动写档 ----
 const api = createApi();
 const profile = await api.getProfile();
-let progress = loadProgress();
+const levels0 = await api.getLevels();   // FR-8/整改 F5:进度统一经 API 读取(远端可替换)
+let progress = { unlockedLevel: levels0.unlockedLevel, lastLevelCleared: levels0.lastLevelCleared, bestChains: 0 };
 let screen = 'menu';          // 'menu' | 'playing'(FR-6 选关入口)
 let victoryHandled = false;
 let expSeen = 0;              // 已计入 profile 的经验水位(每帧增量入账)
@@ -122,6 +122,7 @@ function boot() {
         } else {
           screen = 'menu';
         }
+        victoryHandled = false; // 整改 F3:重试后允许再次结算解锁
         return;
       }
       if (p.y >= 448 && p.y <= 504) {
@@ -205,16 +206,21 @@ function boot() {
         }
       }
       // M4 FR-6:通关结算(解锁 L+1/写进度档/submitRun);失败不扣任何档内字段(D14)
+      if ((battle.phase === 'VICTORY' || battle.phase === 'DEFEAT') && !victoryHandled) {
+        persistProfile(); // 整改 F4:未升级的经验也写入档案,重载不丢收益
+      }
       if (battle.phase === 'VICTORY' && !victoryHandled) {
         victoryHandled = true;
         const { progress: p2 } = onVictory(progress, battle.level);
         progress = p2;
-        saveProgress(localStorage, progress);
-        api.submitRun({ level: battle.level, victory: true, expGained: battle.expGained, kills: battle.kills });
+        api.submitRun({ level: battle.level, victory: true, expGained: battle.expGained, kills: battle.kills })
+          .then(res => { if (res && res.progress) progress = { ...progress, ...res.progress }; });
       } else if (battle.phase === 'DEFEAT' && !victoryHandled) {
         victoryHandled = true;
         api.submitRun({ level: battle.level, victory: false, expGained: battle.expGained, kills: battle.kills });
       }
+      // 失败/通关重试后允许再次结算(F3:victoryHandled 必须复位)
+      if (battle.phase === 'FIGHTING') victoryHandled = false;
       // 换波同步视差与受击 screenshake
       if (battle.wave !== lastWave) {
         lastWave = battle.wave;

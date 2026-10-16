@@ -387,7 +387,7 @@ test('FR-3.3 换装立即生效:cycleSlot 后新行立即可释放(REQ-M2-01 整
   assert.equal(caster.tryCast('earth', true), null, '未装配不释放');
   const old = caster.loadout[3]; // metal 槽
   const next = caster.cycleSlot(3);
-  assert.equal(next, 'earth', 'metal 槽轮换到未装配的 earth');
+  assert.equal(next, 'earth_bolt', 'metal 槽轮换到未装配的 earth 行(M4 起返回技能 ID)');
   assert.ok(caster.loadout.some(v => v === 'earth' || v === 'earth_bolt'), 'earth 入槽(M4 起槽位存技能 ID)');
   const r = caster.tryCast('earth', true);
   assert.ok(r && r.tier === 3, '换装立即生效');

@@ -38,13 +38,25 @@ function writeJson(storage, key, value) {
   try { storage.setItem(key, JSON.stringify(value)); } catch { /* 隐私模式等写失败静默保留内存态 */ }
 }
 
+// 字段类型校验(F9):合法 JSON 但字段类型错误时回落该字段默认值,不抛错。
+function pick(v, key, want, d) {
+  const v2 = v ? v[key] : undefined;
+  if (typeof v2 === want) return v2;
+  return d[key];
+}
+
 export function loadProfile(storage = globalThis.localStorage) {
   const d = defaultProfile();
   const v = readJson(storage, KEY_PROFILE, defaultProfile);
+  const settings = (v.settings && typeof v.settings === 'object' && !Array.isArray(v.settings))
+    ? { effects: v.settings.effects !== false } : d.settings;
   return {
-    ...d,
-    ...v,
-    loadout: Array.isArray(v.loadout) && v.loadout.length === 4 ? v.loadout : d.loadout,
+    level: pick(v, 'level', 'number', d),
+    expTotal: pick(v, 'expTotal', 'number', d),
+    unlockedLevel: pick(v, 'unlockedLevel', 'number', d),
+    loadout: Array.isArray(v.loadout) && v.loadout.length === 4 && v.loadout.every(x => typeof x === 'string')
+      ? v.loadout : d.loadout,
+    settings,
   };
 }
 

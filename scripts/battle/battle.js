@@ -60,6 +60,11 @@ export class Battle {
     this.wave = 0;
     this.tides = [];
     this.tideIdx = 0;
+    this.enemies = [];
+    this.bolts = [];      // 清上一局技能弹(F7:跨局状态不残留)
+    this.ebolts = [];     // 清上一局敌方弹(F7:审核复算例——残留 19 伤弹带入次关)
+    this.zones = [];      // 清行为区域
+    this.aura = null;     // 清光环
     this.phase = PHASE.FIGHTING;
     this.nextWave();
   }
@@ -134,6 +139,17 @@ export class Battle {
     return best;
   }
 
+  // 统一击杀登记(REQ-M4-02 整改 F2):幂等——同一敌人只登记一次,
+  // 供直击/灼烧/束缚/锁链/脉冲/灼烧区等全部伤害路径调用,杜绝同秒合杀重复计数
+  registerKill(e) {
+    if (!e || e.alive || e._killRegistered) return false; // 击杀入账时 alive 已为 false
+    e._killRegistered = true;
+    this.kills++;
+    this.expGained += this.expFor(e);
+    this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss });
+    return true;
+  }
+
   // 击杀经验:固定 expPerKill(M2)或 2+w_global(Boss ×20,05 文档第 5 节)
   expFor(e) {
     if (this.expPerKill != null) return this.expPerKill;
@@ -185,7 +201,7 @@ export class Battle {
     const dmg = Math.round(b.rawDmg * mult);
     const r = e.hurt(dmg);
     this.log.push({ t: this.clock, ev: 'hit', el: b.el, tier: b.tier, dmg, mult, hpAfter: e.hp, killed: r.killed, target: this.enemies.indexOf(e) });
-    if (r.killed) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
+    if (r.killed) this.registerKill(e);
     // 元素能力(4.3;灼烧刷新=覆盖 dpsFloat 并只延长 until,不重置跳伤时钟——4.4)
     if (b.el === 'fire') {
       const dps = this.atk * BURN_COEFF[b.tier - 1];
@@ -236,6 +252,8 @@ export class Battle {
     this.enemies = [];
     this.bolts = [];
     this.ebolts = [];
+    this.zones = [];  // 重试不保留区域/光环(F7)
+    this.aura = null;
     this.hp = this.maxHp;
     this.shield = 0;
     this.hurtT = 0;
@@ -296,15 +314,15 @@ export class Battle {
       const bindDmg = tickBind(e, prevClock, this.clock);
       if (burnDmg > 0) {
         this.log.push({ t: this.clock, ev: 'burn', hpAfter: e.hp });
-        if (!e.alive) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
+        this.registerKill(e); // 幂等:合杀时另一路径已登记则跳过(REQ-M4-02 整改 F2)
       }
       if (bindDmg > 0) {
         this.log.push({ t: this.clock, ev: 'bind', hpAfter: e.hp });
-        if (!e.alive) { this.kills++; this.expGained += this.expFor(e); this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss }); }
+        this.registerKill(e); // 同上
       }
     }
     // 2.5) 区域/光环 tick(M4:dot 区逐秒跳伤、领域减速、光环回血;03 文档 4.4 周期口径)
-    tickZones(this.zones, prevClock, this.clock, this.enemies);
+    tickZones(this.zones, prevClock, this.clock, this.enemies, this); // ctx 供区内击杀登记(F2)
     tickAura(this.aura, prevClock, this.clock, this);
     // 3) 敌方行动(FR-1.2):队列补位 → 推进/进射程开火(扇形弹幕) → 敌方弹推进与主角碰撞
     this.reassignSlots();

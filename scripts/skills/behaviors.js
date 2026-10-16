@@ -1,5 +1,5 @@
 // scripts/skills/behaviors.js
-// 非子弹类技能行为实装(03 文档 5.2 八类行为内核中本项目用到的 6 类:dotzone/chain/bind/multi/shield/pulse/field/aura)
+// 非子弹类技能行为实装(03 文档 5.2):实现八类非子弹技能行为 dotzone/chain/bind/multi/shield/pulse/field/aura
 // 纯函数、以 ctx(battle 兼容接口:atk/maxHp/hp/shield/enemies/bolts/makeBolt/clock)操作;
 // 区域(zones)/光环(aura)状态与逐秒 tick 以纯函数提供,battle 接线在 M4 集成时完成。
 // 口径:非子弹类主数值 ×4.2 档位倍率(4.4);计算浮点、作用时 round;区域/光环重复释放=刷新时长按新档位,不叠加。
@@ -25,7 +25,10 @@ export function applyChain(ctx, skill, tier) {
     if (!e) break;
     picked.push(e);
   }
-  for (const e of picked) e.hurt(dmg);
+  for (const e of picked) {
+    const r = e.hurt(dmg);
+    if (r.killed) ctx.registerKill(e); // 统一击杀登记(F2)
+  }
   return picked.length;
 }
 
@@ -53,9 +56,13 @@ export function tickBind(e, prevClock, clock) {
 export function applyMulti(ctx, skill, tier) {
   const raw = tiered(skill, ctx.atk, tier);
   const fired = [];
+  const picked = [];
   for (let i = 0; i < skill.params.count; i++) {
-    const e = ctx.nearestAlive(fired.map(b => b.target).filter(Boolean));
+    // 3 发弹按最近序分配(5.1);目标不足 count 时回落最近敌,仍发满 count 发
+    // (REQ-M4-02 整改 F8:单敌场景也发满 3 发)
+    const e = ctx.nearestAlive(picked) || ctx.nearestAlive();
     if (!e) break;
+    if (!picked.includes(e)) picked.push(e);
     const b = ctx.makeBolt(skill.el, tier, raw, e);
     b.skillId = skill.id;
     ctx.bolts.push(b);
@@ -83,7 +90,8 @@ export function applyPulse(ctx, skill, tier) {
     if (!e.alive) continue;
     const dx = e.x - center.x, dy = e.y - center.y;
     if (dx * dx + dy * dy <= skill.params.r * skill.params.r) {
-      e.hurt(dmg);
+      const r = e.hurt(dmg);
+      if (r.killed) ctx.registerKill(e); // 统一击杀登记(F2)
       if (skill.params.stunTime) e.stunT = Math.max(e.stunT || 0, skill.params.stunTime);
       hits++;
     }
@@ -107,10 +115,12 @@ export function pushZone(ctx, skill, tier, center) {
 
 // 区域逐帧 tick:dot 区对区内敌每整秒跳 round(dpsFloat);slow 区对区内敌刷新减速(幅度/时长)。
 // 返回 {dotDamage, slowed}
-export function tickZones(zones, prevClock, clock, enemies) {
+export function tickZones(zones, prevClock, clock, enemies, ctx = null) {
   let dotDamage = 0;
   let slowed = 0;
-  for (const z of zones) {
+  for (let zi = zones.length - 1; zi >= 0; zi--) {
+    const z = zones[zi];
+    if (clock > z.until + 1e-9) { zones.splice(zi, 1); continue; } // 到期移除(F6:区域持续期=until)
     const inR = enemies.filter(e => {
       if (!e.alive) return false;
       const dx = e.x - z.x, dy = e.y - z.y;
@@ -120,7 +130,11 @@ export function tickZones(zones, prevClock, clock, enemies) {
       const from = Math.floor(prevClock + 1e-9) + 1;
       const to = Math.min(Math.floor(clock + 1e-9), Math.floor(z.until + 1e-9));
       for (let s = from; s <= to; s++) {
-        for (const e of inR) dotDamage += e.hurt(Math.round(z.dpsFloat)).applied;
+        for (const e of inR) {
+          const r = e.hurt(Math.round(z.dpsFloat));
+          dotDamage += r.applied;
+          if (r.killed && ctx?.registerKill) ctx.registerKill(e); // 击杀登记(F2)
+        }
       }
     } else if (z.kind === 'slow') {
       for (const e of inR) {

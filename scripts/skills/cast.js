@@ -7,7 +7,7 @@
 
 import { BOLT_CD } from './registry.js';
 import { DEFAULT_LOADOUT } from './registry.js';
-import { skillById, pickSkillForElement } from './library.js';
+import { skillById, pickSkillForElement, SKILL_LIBRARY } from './library.js';
 import { dispatch as dispatchBehavior } from './behaviors.js';
 
 const FIVE = ['fire', 'water', 'wood', 'metal', 'earth'];
@@ -44,15 +44,21 @@ export class Caster {
     this.loadout = loadout.map(toSkillId);
   }
 
-  // 槽位轮换(最小换装入口):该槽换为下一个未装配的元素行(初始弹),立即生效
+  // 槽位换装(FR-3.3 真实装配入口,REQ-M4-02 整改 F1):该槽在「当前等级已解锁的全部技能」中
+  // 轮换(库序,从当前技能之后环回),同技能不可重复装配(5.1);Lv3/Lv6 技能升级解锁后即可经此
+  // 入槽,立即生效并写档(main 持久化)。返回新装入的技能 ID(无候选时返回当前值)。
   cycleSlot(slotIndex) {
     const cur = this.loadout[slotIndex];
-    const curEl = skillById(cur)?.el ?? cur;
-    const rest = FIVE.filter(el => !this.loadout.some(id => (skillById(id)?.el ?? id) === el));
-    const next = rest[0] ?? FIVE.find(el => el !== curEl);
-    if (!next) return cur;
-    this.loadout[slotIndex] = `${next}_bolt`;
-    return next;
+    const unlocked = SKILL_LIBRARY.filter(s => s.unlockLevel <= this.level);
+    const start = Math.max(0, unlocked.findIndex(s => s.id === cur));
+    for (let k = 1; k <= unlocked.length; k++) {
+      const cand = unlocked[(start + k) % unlocked.length];
+      if (!this.loadout.includes(cand.id)) {
+        this.loadout[slotIndex] = cand.id;
+        return cand.id;
+      }
+    }
+    return cur; // 无可换(已解锁技能全部在槽)→ 保持
   }
 
   // 判定并执行一次释放:返回 {element, tier, skill, kind, result?} 或 null
