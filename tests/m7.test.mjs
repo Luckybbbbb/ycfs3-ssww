@@ -243,7 +243,7 @@ test('M7 fx 防重叠(6.1):同位置 ±24px 向上推 min(fy, ft.y - size×1.1)'
   const first = fx.combatTexts[0];
   fx.combatFloat({ kind: 'dmg', x: 310, y: 205, n: 6, el: 'fire', jitter: 0 });
   const second = fx.combatTexts[1];
-  assert.ok(second.y <= first.y - 16 * 1.1 + 1e-9, `第二条上推(实得 ${second.y} vs ${first.y})`);
+  assert.ok(second.y <= first.y - first.size * 1.1 + 1e-9, `第二条上推(实得 ${second.y} vs ${first.y})`);
   // 不同位置(>24px)不推
   fx.combatFloat({ kind: 'dmg', x: 400, y: 200, n: 7, el: 'fire', jitter: 0 });
   assert.equal(fx.combatTexts[2].y, 200, '距离外不推');
@@ -343,17 +343,19 @@ test('M7 F3 弹跳缩放(easeOutBack):经**实际 draw** 验证过冲与回落(R
   const ctx = {
     set font(v) { this._f = v; }, get font() { return this._f; },
     set globalAlpha(v) {}, set fillStyle(v) {}, set textAlign(v) {},
+    set strokeStyle(v) {}, set lineWidth(v) {}, set lineJoin(v) {},
     fillText(text) { drawn.push({ text, font: this._f }); },
+    strokeText() {}, // 描边(黑色描边调整后 draw 会调用)
   };
   fx.update(0.144 * 0.5); // 段①中点(p=0.06)
   fx.draw(ctx);
   const midFont = drawn.at(-1).font;
   const midSize = parseInt(String(midFont).match(/(\d+)px/)?.[1] || '0', 10);
-  assert.ok(midSize > Math.round(16 * 1.2), `段①中段过冲(font ${midFont} ${midSize}px > peak 字号 ${Math.round(16 * 1.2)}px)——弹跳`);
+  assert.ok(midSize > Math.round(c.size * 1.2), `段①中段过冲(font ${midFont} ${midSize}px > peak 字号 ${Math.round(c.size * 1.2)}px)——弹跳`);
   fx.update(0.144 * 0.5); // 段①末(p≈0.12)
   fx.draw(ctx);
   const endSize = parseInt(String(drawn.at(-1).font).match(/(\d+)px/)?.[1] || '0', 10);
-  assert.ok(Math.abs(endSize - 16 * 1.2) <= 1, `段①末回落 peak(${endSize}px ≈ ${16 * 1.2}px)`);
+  assert.ok(Math.abs(endSize - c.size * 1.2) <= 1, `段①末回落 peak(${endSize}px ≈ ${c.size * 1.2}px)`);
   // 线性缩放实现会使中段无过冲——本用例可捕获退回线性(裁决 F7 指认)
 });
 
@@ -551,4 +553,36 @@ test('M7 F7 终局同帧:唯一敌击杀的 kill 与 victory 同一次 update(�
   assert.equal(kills.length, 1, '唯一击杀');
   assert.equal(kills[0].t, vLog.t, `kill(t=${kills[0].t})与 victory(t=${vLog.t})同一次 update——终局帧事件`);
   assert.equal(kinds(b.floatTexts).filter(k => k === 'kill').length, 1, '击破事件在终局帧事件队列');
+});
+
+// ---- 需求方反馈调整(2026-10-17):冒字字号 ×2 + 黑色描边 ----
+test('M7 冒字字号翻倍(需求反馈):FT_STYLE 全部 size ×2(直击 32/击破 40/溅射 20)', () => {
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 1, el: 'fire', jitter: 0 });
+  fx.combatFloat({ kind: 'kill', x: 0, y: 60 });
+  fx.combatFloat({ kind: 'splash', x: 0, y: 120, n: 2, el: 'fire' });
+  assert.deepEqual(fx.combatTexts.map(c => c.size), [32, 40, 20], '直击 32/击破 40/溅射 20(原 16/20/10 的 2 倍)');
+});
+
+test('M7 黑色描边(需求反馈):draw 先 strokeText(#000)后 fillText,描边宽≈字号/8', () => {
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 9, el: 'fire', jitter: 0 });
+  const calls = [];
+  const ctx = {
+    set font(v) { this._f = v; }, get font() { return this._f; },
+    set globalAlpha(v) {}, set fillStyle(v) { this._fill = v; }, set strokeStyle(v) { this._stroke = v; },
+    set lineWidth(v) { this._lw = v; }, set lineJoin(v) {}, set textAlign(v) {},
+    fillText(t) { calls.push({ op: 'fill', t, fill: this._fill, font: this._f }); },
+    strokeText(t) { calls.push({ op: 'stroke', t, stroke: this._stroke, lw: this._lw, font: this._f }); },
+  };
+  fx.draw(ctx);
+  const d = fx.combatTexts[0];
+  const expectFont = Math.round(d.size); // p=0 时 scale=easeOutBack(0)=0.2→font=round(32×0.2)=6?
+  const strokeIdx = calls.findIndex(c => c.op === 'stroke' && c.t === '-9');
+  const fillIdx = calls.findIndex(c => c.op === 'fill' && c.t === '-9');
+  assert.ok(strokeIdx !== -1 && fillIdx !== -1, 'strokeText 与 fillText 均调用');
+  assert.ok(strokeIdx < fillIdx, '描边先于填充(外圈不遮字)');
+  assert.equal(calls[strokeIdx].stroke, '#000', '描边黑色');
+  assert.ok(calls[strokeIdx].lw >= 3, `描边宽≥3(实得 ${calls[strokeIdx].lw})`);
+  assert.equal(calls[fillIdx].fill, '#ff4444', '填充仍为元素色');
 });

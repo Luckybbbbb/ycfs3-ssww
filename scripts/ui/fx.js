@@ -12,20 +12,20 @@ const GEM_RGB = { metal: [200, 200, 255], wood: [80, 200, 90], water: [70, 140, 
 // REQ-M7-02 F6:灼烧/吸血/光环/护盾/状态标记不再硬编码;非五行语义色[免伤/受击/击破]为独立字面值)
 // kind → {color, fmt, imp, size};n=实际变化量(6.4),el=元素(直击/溅射/锁链/脉冲/灼烧区)
 const FT_STYLE = {
-  dmg:        { color: ev => GEM_FLOAT[ev.el] || '#ffffff', fmt: ev => `-${ev.n}`, imp: 1, size: 16 },
-  splash:     { color: ev => GEM_FLOAT[ev.el] || '#ffffff', fmt: ev => `-${ev.n}`, imp: 0, size: 10 },
-  burn:       { color: () => GEM_FLOAT.fire, fmt: ev => `🔥${ev.n}`, imp: 0, size: 14 },
-  bindDot:    { color: ev => GEM_FLOAT[ev.el] || GEM_FLOAT.wood, fmt: ev => `🌿${ev.n}`, imp: 0, size: 14 },
-  leech:      { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 1, size: 16 },
-  aura:       { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 0, size: 14 },
-  shieldGain: { color: () => GEM_FLOAT.earth, fmt: ev => `🛡+${ev.n}`, imp: 1, size: 16 },
-  absorb:     { color: () => GEM_FLOAT.earth, fmt: ev => `🛡${ev.n}`, imp: 1, size: 16 },
-  hurt:       { color: () => '#ff8888', fmt: ev => `-${ev.n}`, imp: 1, size: 16 },
-  immune:     { color: () => '#ffd700', fmt: () => `免伤`, imp: 2, size: 20 },
-  kill:       { color: () => '#ffffff', fmt: () => `击破`, imp: 2, size: 20 },
-  slowMark:   { color: () => GEM_FLOAT.water, fmt: () => `❄减速`, imp: 0, size: 14 },
-  bindMark:   { color: () => GEM_FLOAT.wood, fmt: () => `🌿束缚`, imp: 1, size: 14 },
-  stunMark:   { color: () => GEM_FLOAT.earth, fmt: () => `💫眩晕`, imp: 1, size: 14 },
+  dmg:        { color: ev => GEM_FLOAT[ev.el] || '#ffffff', fmt: ev => `-${ev.n}`, imp: 1, size: 32 },
+  splash:     { color: ev => GEM_FLOAT[ev.el] || '#ffffff', fmt: ev => `-${ev.n}`, imp: 0, size: 20 },
+  burn:       { color: () => GEM_FLOAT.fire, fmt: ev => `🔥${ev.n}`, imp: 0, size: 28 },
+  bindDot:    { color: ev => GEM_FLOAT[ev.el] || GEM_FLOAT.wood, fmt: ev => `🌿${ev.n}`, imp: 0, size: 28 },
+  leech:      { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 1, size: 32 },
+  aura:       { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 0, size: 28 },
+  shieldGain: { color: () => GEM_FLOAT.earth, fmt: ev => `🛡+${ev.n}`, imp: 1, size: 32 },
+  absorb:     { color: () => GEM_FLOAT.earth, fmt: ev => `🛡${ev.n}`, imp: 1, size: 32 },
+  hurt:       { color: () => '#ff8888', fmt: ev => `-${ev.n}`, imp: 1, size: 32 },
+  immune:     { color: () => '#ffd700', fmt: () => `免伤`, imp: 2, size: 40 },
+  kill:       { color: () => '#ffffff', fmt: () => `击破`, imp: 2, size: 40 },
+  slowMark:   { color: () => GEM_FLOAT.water, fmt: () => `❄减速`, imp: 0, size: 28 },
+  bindMark:   { color: () => GEM_FLOAT.wood, fmt: () => `🌿束缚`, imp: 1, size: 28 },
+  stunMark:   { color: () => GEM_FLOAT.earth, fmt: () => `💫眩晕`, imp: 1, size: 28 },
 };
 const FT_LIFE = 1.2; // 寿命(原型 const.js FLOAT_TEXT_LIFE;03 文档 6.1)
 
@@ -147,15 +147,22 @@ export class FxLayer {
     }
     ctx.globalAlpha = 1;
     // 伤害冒字绘制(三段 scale:0.2→peak **弹跳**(easeOutBack 过冲,REQ-M7-01 F3)/ peak / 线性缩小;imp2 上移 12px)
+    // 黑色描边(2026-10-17 需求方反馈:先 strokeText 后 fillText,描边在外圈)
+    ctx.lineJoin = 'round'; // 描边圆角避免尖刺
     for (const c of this.combatTexts) {
       const p = c.t / c.life;
       const scale = p < 0.12
         ? 0.2 + (c.peak - 0.2) * easeOutBack(p / 0.12)
         : p < 0.3 ? c.peak : c.peak * Math.max(0, 1 - (p - 0.3) / 0.7);
       ctx.globalAlpha = p < 0.3 ? 1 : Math.max(0, 1 - (p - 0.3) / 0.7);
+      const font = Math.max(6, Math.round(c.size * scale));
+      ctx.font = `bold ${font}px 'Nunito','Noto Sans SC',sans-serif`;
+      const ty = c.y - (c.imp === 2 ? 12 : 0);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(3, Math.round(font / 8)); // 描边宽≈字号 1/8(随缩放)
+      ctx.strokeText(c.text, c.x, ty);
       ctx.fillStyle = c.color;
-      ctx.font = `bold ${Math.max(6, Math.round(c.size * scale))}px 'Nunito','Noto Sans SC',sans-serif`;
-      ctx.fillText(c.text, c.x, c.y - (c.imp === 2 ? 12 : 0));
+      ctx.fillText(c.text, c.x, ty);
     }
     ctx.globalAlpha = 1;
   }
