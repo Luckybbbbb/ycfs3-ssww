@@ -15,6 +15,7 @@ globalThis.Image = class {
 };
 const { render, UI } = await import('../scripts/ui/render.js');
 const { FxLayer } = await import('../scripts/ui/fx.js');
+const { attachInput } = await import('../scripts/core/input.js');
 
 // ---- 录制型 2D context 桩 ----
 function mkCtx() {
@@ -115,7 +116,8 @@ test('M11 道具图标:ITEM_IMG 6 张(items/<item>[_premium].png);道具格实�
 test('M11 开始界面:标题/开始冒险按钮/设置/关于/存档条绘制(有档文案=开始冒险)', () => {
   const r = mkCtx();
   render(r.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
-  assert.ok(r.rec.fillTexts.includes('言出法随之三生万物'), '主标题');
+  assert.ok(r.rec.fillTexts.includes('言出法随'), '主标题(M11-06:主标+副标两行)');
+  assert.ok(r.rec.fillTexts.some(t => t.replace(/ /g, '') === '三生万物'), '副标题「三生万物」');
   assert.ok(r.rec.fillTexts.some(t => t.includes('开 始 冒 险')), '有档主按钮=开始冒险');
   assert.ok(r.rec.fillTexts.some(t => t.includes('设 置') || t.includes('设 置'.slice(0, 2))), '设置按钮');
   assert.ok(r.rec.fillTexts.some(t => t.includes('关 于')), '关于按钮');
@@ -336,4 +338,84 @@ test('M11-02 F9 局界重置:resetBoard 清演出/缓冲/事件并重新生成�
   assert.ok(e.grid && e.grid.length === 8 && e.grid.every(row => row.every(c => c !== null)), '棋盘重新生成(双验证全满)');
   const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(mainSrc.includes('engine.resetBoard()'), 'startLevel/retryLevel 局界重置接线');
+});
+
+// ---- M11-06 主副标题+技能更换/长按 tips ----
+test('M11-06 备战交互:槽位更换按钮命中区/换装列表过滤已装配/门控;tips 与选择面板绘制', async () => {
+  const { uiSlotSwapBtn, uiSlotRect, uiPickRows, UI: UIC } = await import('../scripts/ui/render.js');
+  // 更换按钮:位于槽右上角,完整落在槽矩形内
+  for (let i = 0; i < 4; i++) {
+    const sr = uiSlotRect(i), sb = uiSlotSwapBtn(i);
+    assert.ok(sb.x >= sr.x && sb.x + sb.w <= sr.x + sr.w, `槽 ${i} 更换按钮横向在槽内`);
+    assert.ok(sb.y >= sr.y && sb.y + sb.h <= sr.y + sr.h, `槽 ${i} 更换按钮纵向在槽内`);
+    assert.ok(sb.x > sr.x + sr.w / 2 && sb.y < sr.y + sr.h / 2, `槽 ${i} 更换按钮在右上象限`);
+  }
+  // 换装列表:过滤已装配(4 装配 → 15-4=11 行);门控与技能库口径一致(unlockLevel+owned)
+  const loadout = ['fire_bolt', 'water_bolt', 'wood_bolt', 'earth_bolt'];
+  const rows = uiPickRows(loadout, ['fire_bolt', 'fire_dotzone'], 3);
+  assert.equal(rows.length, 11, '已装配 4 项不显示');
+  assert.ok(rows.every(r => !loadout.includes(r.sk.id)), '无已装配项');
+  const firePulse = rows.find(r => r.sk.id === 'fire_pulse');
+  assert.equal(firePulse.unlocked, false, 'Lv6 技能 Lv3 不可用');
+  const fireDot = rows.find(r => r.sk.id === 'fire_dotzone');
+  assert.equal(fireDot.unlocked, true, 'Lv3+已拥有 → 可用');
+  const waterBolt = rows.find(r => r.sk.id === 'metal_bolt');
+  assert.equal(waterBolt.unlocked, false, '未拥有 → 不可用');
+  // 行矩形:逐行下移、宽 600、在面板内
+  for (let i = 1; i < rows.length; i++) {
+    assert.equal(rows[i].rect.y, rows[i - 1].rect.y + UIC.loadout.pickRowH, `行 ${i} 逐行下移`);
+  }
+  // 绘制:skillPick 面板(标题+行+关闭)+skillTips 浮层(名称+档位数值+关闭提示)
+  const r1 = mkCtx();
+  render(r1.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout', loadout: () => ({ selLevel: 2, selSlot: 0, panel: 'skillPick', pickSlot: 1, tipsSlot: -1 }) }));
+  assert.ok(r1.rec.fillTexts.some(t => t.includes('选择技能 → 槽位 2')), 'pick 面板标题带目标槽位');
+  assert.ok(r1.rec.fillTexts.some(t => t.includes('关 闭')), 'pick 关闭按钮');
+  assert.ok(r1.rec.fillTexts.some(t => t.includes('未拥有')), '未拥有灰显标注');
+  assert.equal(r1.rec.fillTexts.filter(t => t === 'T1 伤害').length, 11, '列表 11 行(已装配 4 项过滤后)');
+  const r2 = mkCtx();
+  render(r2.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout', loadout: () => ({ selLevel: 2, selSlot: 0, panel: 'skillTips', pickSlot: -1, tipsSlot: 0 }) }));
+  assert.ok(r2.rec.fillTexts.some(t => t.includes('火弹')), 'tips 显示槽位技能名');
+  assert.ok(r2.rec.fillTexts.some(t => t.includes('档位数值')), 'tips 档位数值行');
+  assert.ok(r2.rec.fillTexts.some(t => t.includes('点按任意处关闭')), 'tips 关闭提示');
+});
+
+test('M11-06 长按:input.update ≥500ms 触发一次 onLongPress;位移取消;触发后松手不再 tap', () => {
+  // 本地 harness(input.test.mjs 的 mkHarness 在另一文件,不跨测试文件共享)
+  const listeners = {};
+  const canvas = {
+    getBoundingClientRect: () => ({ width: 720, height: 1280, left: 0, top: 0 }),
+    addEventListener(type, fn) { listeners[type] = fn; },
+  };
+  const calls = { tap: [], longPress: [] };
+  const input = attachInput(canvas, {
+    cellAt: (x, y) => (y >= 504 && x >= 0 && x < 720 && y < 504 + 720) ? { r: Math.floor((y - 504) / 90), c: Math.floor(x / 90) } : null,
+    onTap: (cell) => calls.tap.push(cell),
+    onLongPress: (p) => calls.longPress.push(p),
+  });
+  const ev = (type, x, y) => listeners[type]({ clientX: x, clientY: y, preventDefault() {} });
+  const realNow = performance.now.bind(performance);
+  let fake = realNow();
+  performance.now = () => fake; // 伪时钟(input 层长按计时用 performance.now)
+  try {
+    const px = 45, py = 504 + 225; // 格 (2,3) 中心
+    ev('mousedown', px, py);
+    input.update(0.016);
+    assert.equal(calls.longPress.length, 0, '未到时长不触发');
+    fake += 510;
+    input.update(0.016);
+    assert.equal(calls.longPress.length, 1, '≥500ms 触发');
+    input.update(0.016);
+    assert.equal(calls.longPress.length, 1, '同一手势不重复触发');
+    ev('mouseup', px, py);
+    assert.equal(calls.tap.length, 0, '长按后松手不触发点选');
+    // 位移取消:移动超 12px 后即使到时也不触发
+    calls.longPress.length = 0;
+    ev('mousedown', px, py);
+    ev('mousemove', px + 30, py); // moved
+    fake += 1000;
+    input.update(0.016);
+    assert.equal(calls.longPress.length, 0, '位移后不触发长按');
+  } finally {
+    performance.now = realNow;
+  }
 });

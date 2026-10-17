@@ -8,10 +8,13 @@
 
 export const DRAG_HALF_CELL = 45;  // 触发交换判定的位移阈值(半格)
 export const BOUNCE_MS = 160;      // 回弹动画时长(表现层,02 文档 2.2)
+export const LONGPRESS_MS = 500;   // 长按触发阈值(备战技能槽 tips;位移超 12px 视为拖拽取消)
 
 export function attachInput(canvas, handlers) {
   let downCell = null;   // 按下时的格子 {r,c}（棋盘坐标）
   let downXY = null;     // 按下逻辑坐标
+  let downT = 0;         // 按下时刻(长按计时)
+  let longPressFired = false; // 本次手势长按已触发(触发后松手不再当 tap)
   let moved = false;
   let curXY = null;      // 当前指针逻辑坐标(拖拽跟手用)
   let bounces = [];      // 回弹状态数组 [{r, c, fromX, fromY, t}](表现层;**分别保存**——A 回弹不影响 B 拖拽,F7)
@@ -55,7 +58,8 @@ export function attachInput(canvas, handlers) {
     const p = toLogical(pos(e));
     // 全屏弹层(胜负结算/选关)接管:所有按下都路由到 onBlankDown,不落到棋盘格
     if (handlers.interceptDown && handlers.interceptDown()) {
-      downCell = null; downXY = null; moved = false; curXY = null; gestureVoid = false;
+      downCell = null; downXY = p; downT = performance.now(); longPressFired = false;
+      moved = false; curXY = p; gestureVoid = false;
       if (handlers.onBlankDown) handlers.onBlankDown(p);
       e.preventDefault();
       return;
@@ -76,6 +80,8 @@ export function attachInput(canvas, handlers) {
     }
     downXY = p; curXY = p;
     downCell = cell;
+    downT = performance.now();
+    longPressFired = false;
     moved = false;
     gestureVoid = false;
     if (cell && handlers.onCellDown) handlers.onCellDown(cell, p);
@@ -112,7 +118,7 @@ export function attachInput(canvas, handlers) {
 
   function onUp(e) {
     // REQ-M6-06 F7:作废手势(忙态跨越)不得在松手/恢复 IDLE 后以点选形式重新生效
-    if (downCell && !moved && !gestureVoid) {
+    if (downCell && !moved && !gestureVoid && !longPressFired) {
       handlers.onTap(downCell);
     } else if (downCell && moved && curXY) {
       // 松手:无效拖拽回弹(表现层,160ms easeOutBack,渲染层经 dragState().bounces 消费);
@@ -139,6 +145,12 @@ export function attachInput(canvas, handlers) {
       // REQ-M6-07 F7 续审(M9 修订):忙态观察不依赖指针移动——手势存续期间引擎进入
       // **不可操作**忙态(瘫痪等)即作废手势;演出期可操作忙态不作废(由 trySwap 分支承接)
       if (downXY && handlers.busy && handlers.busy() && !(handlers.canActInBusy && handlers.canActInBusy())) gestureVoid = true;
+      // 长按(备战技能槽 tips):按住不动 ≥500ms 触发一次;位移超阈/已触发不再发
+      if (downXY && !moved && !gestureVoid && !longPressFired &&
+          handlers.onLongPress && performance.now() - downT >= LONGPRESS_MS) {
+        longPressFired = true;
+        handlers.onLongPress(curXY || downXY);
+      }
       for (const b of bounces) b.t -= dt * 1000;
       bounces = bounces.filter(b => b.t > 0);
     },

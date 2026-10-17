@@ -73,6 +73,8 @@ const SKILL_BRIEF = {
   bolt: '单体弹', dotzone: '灼烧区域', chain: '连锁弹', bind: '束缚+持续伤害', multi: '多发弹',
   shield: '护盾', pulse: '脉冲环', field: '减速领域', aura: '回复光环',
 };
+// M11-06:元素中文名(tips/换装列表)
+const ELEMENT_NAME = { fire: '火', water: '水', wood: '木', metal: '金', earth: '土' };
 // M11-03 F1:显式兜底入口(幂等)——把渲染消费的全部贴图按 manifest 同款路径自建加载。
 // 仅限单测/无 main 的演示环境显式调用;生产路径唯一入口=bindImages(preload Map)。
 export function ensureFallbackImages() {
@@ -690,6 +692,8 @@ export const UI = {
     libY: 715, libRowH: 38, libCols: [56, 376], libPerCol: 8, // F2 整改:两列 8 行(15 技能全可见;原 7 行漏第 15 个 NaN)
     libRowW: 288,
     fightBtn: { x: 160, y: 1115, w: 400, h: 100 },
+    // M11-06:换装列表面板(全屏遮罩+行卡列表)
+    pickTop: 96, pickRowH: 84, pickCloseBtn: { x: 590, y: 106, w: 110, h: 56 },
   },
   battle: {
     pauseBtn: { x: 24, y: 1232, w: 70, h: 40 },
@@ -738,6 +742,26 @@ export const uiCardBtn = (L) => ({
 export const uiSlotRect = (i) => ({
   x: 44 + i * (UI.loadout.slotSize + UI.loadout.slotGap),
   y: UI.loadout.slotsY, w: UI.loadout.slotSize, h: UI.loadout.slotSize,
+});
+// M11-06:槽右上角「更换」按钮(双环形箭头)命中区——先于槽选中判定
+export const uiSlotSwapBtn = (i) => {
+  const sr = uiSlotRect(i);
+  return { x: sr.x + UI.loadout.slotSize - 34, y: sr.y + 4, w: 30, h: 30 };
+};
+// M11-06:换装列表行(过滤已装配;渲染与 main 命中共用同一过滤与矩形)
+// 返回 [{sk, idx(全表索引), rect, unlocked}];ownedSkills/unlockLevel 门控与技能库口径一致
+export const uiPickRows = (loadout, ownedSkills, level) => {
+  const rows = [];
+  SKILL_LIBRARY.forEach((sk, idx) => {
+    if ((loadout || []).includes(sk.id)) return; // 已装配:不显示(需求口径)
+    const r = uiPickRowRect(rows.length);
+    rows.push({ sk, idx, rect: r, unlocked: sk.unlockLevel <= (level || 1) && (ownedSkills || []).includes(sk.id) });
+  });
+  return rows;
+};
+const uiPickRowRect = (row) => ({
+  x: 60, y: UI.loadout.pickTop + 84 + row * UI.loadout.pickRowH,
+  w: 600, h: UI.loadout.pickRowH - 8,
 });
 export const uiLibRect = (i) => {
   const col = Math.floor(i / UI.loadout.libPerCol), row = i % UI.loadout.libPerCol;
@@ -829,16 +853,21 @@ function drawStartScreen(ctx, hud) {
   ctx.moveTo(0, 584); ctx.lineTo(160, 470); ctx.lineTo(330, 584);
   ctx.lineTo(500, 455); ctx.lineTo(720, 584); ctx.lineTo(720, 620); ctx.lineTo(0, 620);
   ctx.fill();
-  // 标题(Claymorphism 厚描边字,浮动动画)
+  // 标题(Claymorphism 厚描边字,浮动动画;M11-06:主标「言出法随」+ 副标「三生万物」两行)
   const ty = 250 + Math.sin(worldT * 1.6) * 8;
   ctx.textAlign = 'center';
-  ctx.font = FONT(84, 'bold');
-  ctx.lineWidth = 14; ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(121,79,39,.9)'; ctx.strokeText('言出法随之三生万物', 360, ty);
-  ctx.fillStyle = '#19c8b9'; ctx.fillText('言出法随之三生万物', 360, ty);
+  ctx.font = FONT(104, 'bold');
+  ctx.lineWidth = 16; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(121,79,39,.9)'; ctx.strokeText('言出法随', 360, ty);
+  ctx.fillStyle = '#19c8b9'; ctx.fillText('言出法随', 360, ty);
+  ctx.font = FONT(46, 'bold');
+  ctx.lineWidth = 9;
+  ctx.strokeText('三 生 万 物', 360, ty + 78);
+  ctx.fillStyle = '#fff'; ctx.fillText('三 生 万 物', 360, ty + 78);
   ctx.font = FONT(28);
+  ctx.lineWidth = 0;
   ctx.fillStyle = '#794f27';
-  ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, ty + 56);
+  ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, ty + 140);
   // 主角立绘(player idle 序列帧,绘制 210×374)
   const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
   if (pf && pf.complete && pf.naturalWidth > 0) {
@@ -1073,6 +1102,8 @@ function drawLoadoutScreen(ctx, hud) {
       ctx.fillStyle = '#794f27';
       ctx.font = FONT(20, 'bold');
       ctx.fillText(sk.name, sx + 60, sy + 108);
+      // M11-06:右上角「更换」双环形箭头(点击打开换装列表)
+      drawSwapIcon(ctx, sx + UI.loadout.slotSize - 19, sy + 19);
     } else {
       ctx.fillStyle = '#c4b89e';
       ctx.font = FONT(22);
@@ -1118,6 +1149,160 @@ function drawLoadoutScreen(ctx, hud) {
   ctx.textAlign = 'center';
   // 出战按钮
   drawBtn(ctx, UI.loadout.fightBtn, '出 战', 'primary', 38);
+  // M11-06:换装面板/技能 tips 浮层(在主界面之上)
+  if (lo.panel === 'skillPick') drawPickPanel(ctx, hud, prof, lo);
+  else if (lo.panel === 'skillTips') drawSkillTips(ctx, prof, lo);
+}
+
+// M11-06:「更换」双环形箭头图标(两段弧+箭头,animal-island primary 色)
+function drawSwapIcon(ctx, cx, cy) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(230,249,246,.92)';
+  ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#19c8b9'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(cx, cy, 9, -Math.PI * 0.15, Math.PI * 0.75); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, 9, Math.PI * 0.85, Math.PI * 1.75); ctx.stroke();
+  // 两个箭头小三角(弧端切向)
+  ctx.fillStyle = '#19c8b9';
+  ctx.beginPath(); ctx.moveTo(cx + 8.6, cy + 3.6); ctx.lineTo(cx + 13.4, cy + 0.6); ctx.lineTo(cx + 10.4, cy + 8.4); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx - 8.6, cy - 3.6); ctx.lineTo(cx - 13.4, cy - 0.6); ctx.lineTo(cx - 10.4, cy - 8.4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// M11-06:技能伤害/效果数值行(按主角当前 ATK 与档位倍率;TIER_MULT=registry 单一定义源)
+function skillDmgText(sk, atk) {
+  const coef = sk.params?.dmgCoef ?? 0;
+  return TIER_MULT.map(m => Math.round(atk * coef * m)).join(' / ');
+}
+function skillDetailText(sk) {
+  const p = sk.params || {};
+  switch (sk.kind) {
+    case 'bolt': return '单体弹道直击,可暴击';
+    case 'dotzone': return `命中生成灼烧区 r${p.r},每秒 ATK×${p.dpsCoef},持续 ${p.duration}s`;
+    case 'chain': return `主目标+邻近敌人,各 ATK×${p.dmgCoef}`;
+    case 'bind': return `束缚最近敌 ${p.bindTime}s,每秒 ATK×${p.dpsCoef}`;
+    case 'multi': return `${p.count} 发弹各 ATK×${p.dmgCoef}`;
+    case 'shield': return `护盾 ATK×${p.dmgCoef},上限 30% 最大 HP`;
+    case 'pulse': return `脉冲环 r${p.r},ATK×${p.dmgCoef}${p.stunTime ? `+眩晕 ${p.stunTime}s` : ''}`;
+    case 'field': return `减速领域 r${p.r},减速 ${p.slowPct}%,持续 ${p.duration}s`;
+    case 'aura': return `每秒回复最大 HP 1%×档位倍率,持续 ${p.duration}s`;
+    default: return SKILL_BRIEF[sk.kind] || sk.kind;
+  }
+}
+
+// M11-06:技能 tips 浮层(长按槽位 500ms 触发)
+function drawSkillTips(ctx, prof, lo) {
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, 720, 1280);
+  const sk = skillById((prof.loadout || [])[lo.tipsSlot ?? 0]);
+  if (!sk) return;
+  const atk = atkText(prof.level);
+  const lv = prof.skillLevels?.[sk.id] || 1;
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, 90, 420, 540, 400, 24); ctx.fill();
+  ctx.strokeStyle = '#19c8b9'; ctx.lineWidth = 4;
+  roundRect(ctx, 90, 420, 540, 400, 24); ctx.stroke();
+  // 图标+名称/等级
+  const img = SKILL_IMG[sk.id];
+  ctx.fillStyle = '#f0e8d8';
+  roundRect(ctx, 118, 448, 110, 110, 16); ctx.fill();
+  if (img && img.complete && img.naturalWidth > 0) ctx.drawImage(img, 126, 456, 94, 94);
+  else {
+    ctx.fillStyle = GEM_SRC[sk.el];
+    ctx.beginPath(); ctx.arc(173, 503, 42, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(34, 'bold');
+  ctx.fillText(sk.name, 252, 492);
+  ctx.font = FONT(22);
+  ctx.fillStyle = '#9f927d';
+  ctx.fillText(`Lv.${lv} · ${ELEMENT_NAME[sk.el] || sk.el} · CD ${sk.cd}s · 槽位 ${lo.tipsSlot + 1}`, 252, 528);
+  // 效果描述
+  ctx.font = FONT(24);
+  ctx.fillStyle = '#5a4a32';
+  wrapText(ctx, skillDetailText(sk), 118, 606, 484, 34);
+  // 档位数值(T1~T5,按当前 ATK)
+  ctx.font = FONT(20);
+  ctx.fillStyle = '#9f927d';
+  ctx.fillText(`档位数值(ATK ${atk} × 档位倍率):`, 118, 682);
+  ctx.font = FONT(22, 'bold');
+  ctx.fillStyle = '#19c8b9';
+  ctx.fillText(skillDmgText(sk, atk), 118, 716);
+  ctx.font = FONT(19);
+  ctx.fillStyle = '#c4b89e';
+  ctx.textAlign = 'center';
+  ctx.fillText('点按任意处关闭', 360, 796);
+}
+
+// 简单宽度换行(中文按字宽近似)
+function wrapText(ctx, text, x, y, maxW, lineH) {
+  let line = '', yy = y;
+  for (const ch of text) {
+    if (ctx.measureText(line + ch).width > maxW) {
+      ctx.fillText(line, x, yy); line = ch; yy += lineH;
+    } else line += ch;
+  }
+  if (line) ctx.fillText(line, x, yy);
+}
+
+// M11-06:换装列表面板(槽位「更换」按钮打开;已装配技能不显示)
+function drawPickPanel(ctx, hud, prof, lo) {
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, 720, 1280);
+  ctx.fillStyle = '#f8f8f0';
+  roundRect(ctx, 40, UI.loadout.pickTop, 640, 1088, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3;
+  roundRect(ctx, 40, UI.loadout.pickTop, 640, 1088, 24); ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(32, 'bold');
+  ctx.fillText(`选择技能 → 槽位 ${(lo.pickSlot ?? 0) + 1}`, 64, UI.loadout.pickTop + 58);
+  ctx.font = FONT(19);
+  ctx.fillStyle = '#9f927d';
+  ctx.fillText('灰=不可用(等级/未拥有) · 已装配不显示', 64, UI.loadout.pickTop + 88);
+  // 关闭按钮
+  const cb = UI.loadout.pickCloseBtn;
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, cb.x, cb.y, cb.w, cb.h, 16); ctx.fill();
+  ctx.strokeStyle = '#19c8b9'; ctx.lineWidth = 3;
+  roundRect(ctx, cb.x, cb.y, cb.w, cb.h, 16); ctx.stroke();
+  ctx.fillStyle = '#19c8b9'; ctx.font = FONT(26, 'bold');
+  ctx.textAlign = 'center';
+  ctx.fillText('关 闭', cb.x + cb.w / 2, cb.y + 38);
+  const atk = atkText(prof.level);
+  const rows = uiPickRows(prof.loadout, prof.ownedSkills, prof.level);
+  rows.forEach(({ sk, rect, unlocked }) => {
+    ctx.fillStyle = unlocked ? '#fff' : '#f0ece2';
+    roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 16); ctx.fill();
+    ctx.strokeStyle = unlocked ? '#e8e2d6' : '#e8e2d6'; ctx.lineWidth = 2;
+    roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 16); ctx.stroke();
+    const img = SKILL_IMG[sk.id];
+    if (img && img.complete && img.naturalWidth > 0) {
+      if (!unlocked) ctx.globalAlpha = 0.45;
+      ctx.drawImage(img, rect.x + 12, rect.y + 10, 52, 52);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = GEM_SRC[sk.el];
+      ctx.beginPath(); ctx.arc(rect.x + 38, rect.y + 36, 24, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.textAlign = 'left';
+    ctx.fillStyle = unlocked ? '#794f27' : '#c4b89e';
+    ctx.font = FONT(24, 'bold');
+    ctx.fillText(sk.name, rect.x + 80, rect.y + 32);
+    ctx.font = FONT(17);
+    ctx.fillStyle = unlocked ? '#9f927d' : '#c4b89e';
+    const lvTxt = unlocked ? `Lv.${prof.skillLevels?.[sk.id] || 1}` : (prof.ownedSkills || []).includes(sk.id) ? `Lv.${sk.unlockLevel} 解锁` : '未拥有';
+    ctx.fillText(`${lvTxt} · ${ELEMENT_NAME[sk.el] || sk.el} · CD ${sk.cd}s · ${skillDetailText(sk)}`, rect.x + 80, rect.y + 60);
+    // 右侧:T1 档伤害(按当前 ATK)
+    ctx.textAlign = 'right';
+    ctx.font = FONT(22, 'bold');
+    ctx.fillStyle = unlocked ? '#19c8b9' : '#c4b89e';
+    ctx.fillText(`${Math.round(atk * (sk.params?.dmgCoef ?? 0) * TIER_MULT[0])}`, rect.x + rect.w - 20, rect.y + 38);
+    ctx.font = FONT(15);
+    ctx.fillStyle = '#9f927d';
+    ctx.fillText('T1 伤害', rect.x + rect.w - 20, rect.y + 62);
+    ctx.textAlign = 'left';
+  });
+  ctx.textAlign = 'center';
 }
 
 // HP/ATK 面板值(与 meta/exp.js 公式同源:HP=100+15×(Lv−1)、ATK=10+(Lv−1);避免循环依赖内联)

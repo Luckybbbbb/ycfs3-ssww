@@ -23,7 +23,7 @@ import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpC
 import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
 import { applyItem } from './board/items.js';
 import { skillById, SKILL_LIBRARY } from './skills/library.js';
-import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiLibRect, bindImages } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
+import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiLibRect, uiSlotSwapBtn, uiPickRows, bindImages } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
 fitCanvas(canvas);
@@ -38,6 +38,9 @@ let screen = 'start';         // M11 五屏:'start'(01 开始)| 'menu'(02 选关
 let selLevel = 1;             // 备战目标关(选关卡片 → 备战 → 出战)
 let selSlot = 0;              // 备战界面选中装配槽(技能库换装目标)
 let panel = null;             // 通用浮层:null | 'settings' | 'about'(开始/暂停共用)
+                              // M11-06:+ 'skillPick'(换装列表)| 'skillTips'(槽位长按 tips)(备战专用)
+let pickSlot = -1;            // M11-06:换装列表目标槽
+let tipsSlot = -1;            // M11-06:tips 浮层对应槽
 let paused = false;           // 战斗暂停(底栏 ⏸;M11)
 let maxChain = 0;             // 本局最高连锁(结算展示,startLevel/retryLevel 归零)
 let victoryHandled = false;
@@ -61,7 +64,7 @@ const parallax = new Parallax({ effects: profile.settings.effects !== false });
 const battle = new Battle({ atk: atkAt(profile.level), maxHp: maxHpAt(profile.level), rng: makeRng(20260601) });
 const hud = { toast: null, fx: new FxLayer(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress, cleared: () => clearedTotal, drag: null, growPanel: () => growPanel,
   // M11 五屏状态句柄(render 布局/UI 常量消费)
-  paused: () => paused, panel: () => panel, loadout: () => ({ selLevel, selSlot }),
+  paused: () => paused, panel: () => panel, loadout: () => ({ selLevel, selSlot, panel, pickSlot, tipsSlot }),
   maxChain: () => maxChain, sfxEnabled: () => sfx.enabled, fxEnabled: () => engine.fxEnabled };
 
 function showToast(text) { hud.toast = { text, t: 1.2 }; }
@@ -139,6 +142,7 @@ function retryLevel() {
 function openLoadout(L) {
   if (!canPlay(progress, L)) { showToast('关卡未解锁'); return; }
   selLevel = L; selSlot = 0; panel = null; growPanel = false;
+  pickSlot = -1; tipsSlot = -1; // M11-06:浮层状态随入口重置
   firstSel = null; // M11-03 F9:换装入口也清输入态(旧局点选不带入备战/新局)
   screen = 'loadout';
 }
@@ -215,6 +219,17 @@ function boot(images) {
     },
     // M11 五屏路由拦截:非战斗屏/胜负结算/暂停全屏接管
     interceptDown: () => screen !== 'playing' || battle.phase !== 'FIGHTING' || paused,
+    // M11-06:长按(≥500ms,位移取消)→ 备战技能槽 tips 浮层
+    onLongPress: (p) => {
+      if (screen !== 'loadout' || panel) return;
+      for (let i = 0; i < 4; i++) {
+        if (hit(p, slotRectOf(i))) {
+          if (!profile.loadout[i]) return; // 空槽无 tips
+          tipsSlot = i; panel = 'skillTips'; sfx.item();
+          return;
+        }
+      }
+    },
     cellAt: (x, y) => {
       if (y < BOARD_Y) return null;
       const c = Math.floor(x / CELL), r = Math.floor((y - BOARD_Y) / CELL);
@@ -256,7 +271,35 @@ function boot(images) {
       }
       // ---- 03 备战界面 ----
       if (screen === 'loadout') {
+        // M11-06:换装列表面板(槽位「更换」打开)——命中优先于主界面
+        if (panel === 'skillPick') {
+          if (hit(p, UI.loadout.pickCloseBtn)) { panel = null; sfx.item(); return; }
+          const rows = uiPickRows(profile.loadout, profile.ownedSkills, profile.level);
+          for (const { sk, rect, unlocked } of rows) {
+            if (!hit(p, rect)) continue;
+            if (!unlocked) {
+              showToast(profile.ownedSkills.includes(sk.id) ? `Lv.${sk.unlockLevel} 解锁` : '未拥有该技能(养成抽卡获取)');
+              sfx.invalid(); return;
+            }
+            caster.loadout[pickSlot] = sk.id;
+            persistProfile(); // 装配变更写档(D13)
+            panel = null;
+            selSlot = pickSlot;
+            showToast(`槽位 ${pickSlot + 1} 换装 → ${sk.name}(立即生效)`);
+            sfx.item();
+            return;
+          }
+          return; // 面板外点击不穿透
+        }
+        // M11-06:技能 tips 浮层(长按槽位打开)——点按任意处关闭
+        if (panel === 'skillTips') { panel = null; sfx.item(); return; }
         if (hit(p, UI.loadout.backBtn)) { screen = 'menu'; sfx.item(); return; }
+        // M11-06:槽右上角「更换」按钮 → 打开换装列表(先于槽选中判定)
+        for (let i = 0; i < 4; i++) {
+          if (hit(p, uiSlotSwapBtn(i)) && profile.loadout[i]) {
+            pickSlot = i; panel = 'skillPick'; sfx.item(); return;
+          }
+        }
         for (let i = 0; i < 4; i++) {
           if (hit(p, slotRectOf(i))) { selSlot = i; sfx.item(); return; }
         }
@@ -418,7 +461,8 @@ function boot(images) {
         input.update(dt);
         return;
       }
-      if (screen !== 'playing') { parallax.update(dt); return; } // 非战斗屏只推背景动效
+      // M11-06:非战斗屏也推输入层(备战技能槽长按计时;手势作废观察无害)
+      if (screen !== 'playing') { input.update(dt); parallax.update(dt); return; } // 非战斗屏只推背景动效
       // FR-3.3 局界契约(REQ-M6-05 F3):引擎推进/事件入池/技能释放以 FIGHTING 为门控;
       // **帧内终局**(battle.update 本帧转 DEFEAT/VICTORY)后不再消费事件/建预约/释放——
       // 以 battle.update 之后的实时相位为准;终局即时清空与棋盘收口见下方结算分支
