@@ -31,7 +31,8 @@ const ITEM_IMG = {};
 // 历史缺陷:本模块在求值期自建全部 Image(上方与下方各表),绕过 loader 的重试/并发上限——
 // 预载 125/125 成功后,渲染层自建实例仍可能加载失败(弱网下独立失败),高级图标回退 emoji 且
 // main 丢弃 preload 返回 Map,预载成果没有被消费。
-// 修复:保留懒加载自建为兜底(单测/未接 main 的演示环境),新增 bindImages(map)——main 预载
+// 修复:模块求值期零加载(各表初始全空,自建加载仅发生在显式调用 ensureFallbackImages 时——
+// 单测/未接 main 的演示环境);新增 bindImages(map)——main 预载
 // 成功后以 **preload 返回的同一 Image 实例** 替换各表项,保证「预载成功 ⇒ 绘制资源就绪」。
 export function bindImages(map) {
   if (!map || typeof map.get !== 'function') return 0;
@@ -642,6 +643,14 @@ function drawFlipH(ctx, img, x, y, w, h) {
   ctx.restore();
 }
 
+// 文本超宽截断(换装列表行描述,给右侧数值列留宽)
+function fitText(ctx, text, maxW) {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let s = text;
+  while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
+  return s + '…';
+}
+
 function drawEnemy(ctx, e, t, scale) {
   // M11-04:表空(单测/兜底路径未 bindImages)→ 走椭圆兜底,不再让 seqFrame 吃 undefined
   const frames = ENEMY_FRAMES[e.name] || ENEMY_FRAMES.slime;
@@ -764,7 +773,8 @@ export const uiPickRows = (loadout, ownedSkills, level) => {
   return rows;
 };
 const uiPickRowRect = (row) => ({
-  x: 60, y: UI.loadout.pickTop + 84 + row * UI.loadout.pickRowH,
+  // F7 残留整改:首行 180→200——面板说明基线 184(pickTop+88),修复前首行 180 与说明重叠
+  x: 60, y: UI.loadout.pickTop + 104 + row * UI.loadout.pickRowH,
   w: 600, h: UI.loadout.pickRowH - 8,
 });
 export const uiLibRect = (i) => {
@@ -1079,7 +1089,8 @@ function drawLoadoutScreen(ctx, hud) {
   ctx.fillText('技能装配', 56, UI.loadout.panelY + 40);
   ctx.font = FONT(19);
   ctx.fillStyle = '#9f927d';
-  ctx.fillText('点击槽位选中 → 在下方技能库点技能换装(立即生效)', 150, UI.loadout.panelY + 40);
+  // F7 残留整改:说明起点 150→175——「技能装配」26px bold 实宽 ~108px(尾≈164),修复前与说明同基线重叠
+  ctx.fillText('点击槽位选中 → 在下方技能库点技能换装(立即生效)', 175, UI.loadout.panelY + 40);
   ctx.textAlign = 'center';
   for (let i = 0; i < 4; i++) {
     const sr = uiSlotRect(i);
@@ -1173,10 +1184,15 @@ function drawSwapIcon(ctx, cx, cy) {
   ctx.restore();
 }
 
-// M11-06:技能伤害/效果数值行(按主角当前 ATK 与档位倍率;TIER_MULT=registry 单一定义源)
-function skillDmgText(sk, atk) {
-  const coef = sk.params?.dmgCoef ?? 0;
-  return TIER_MULT.map(m => Math.round(atk * coef * m)).join(' / ');
+// M11-04(F13 整改):技能档位数值行——系数缺省 1(与 library.js tiered 同源:atk×(dmgCoef??1)×TIER_MULT),
+// 修复前基础弹 dmgCoef 缺省按 0 显示全 0;非伤害技能明确口径:aura=每秒回复(maxHp×1%×档)、
+// field=减速固定值(behaviors.js 慢区不乘档)、shield=护盾值(ATK×dmgCoef×档)
+function skillValueLine(sk, atk, maxHp) {
+  if (sk.kind === 'aura') return { label: '每秒回复', text: TIER_MULT.map(m => Math.round(maxHp * 0.01 * m)).join(' / ') };
+  if (sk.kind === 'field') return { label: '减速效果', text: `-${sk.params.slowPct}% · 各档相同 · 持续 ${sk.params.duration}s` };
+  const coef = sk.params?.dmgCoef ?? 1;
+  const label = sk.kind === 'shield' ? '护盾值' : sk.kind === 'dotzone' ? '直击伤害' : '伤害';
+  return { label, text: TIER_MULT.map(m => Math.round(atk * coef * m)).join(' / ') };
 }
 function skillDetailText(sk) {
   const p = sk.params || {};
@@ -1225,13 +1241,14 @@ function drawSkillTips(ctx, prof, lo) {
   ctx.font = FONT(24);
   ctx.fillStyle = '#5a4a32';
   wrapText(ctx, skillDetailText(sk), 118, 606, 484, 34);
-  // 档位数值(T1~T5,按当前 ATK)
+  // 档位数值(T1~T5,按当前 ATK;F13 整改:按技能类型口径,基础弹=ATK×档)
+  const vline = skillValueLine(sk, atk, maxHpText(prof.level));
   ctx.font = FONT(20);
   ctx.fillStyle = '#9f927d';
-  ctx.fillText(`档位数值(ATK ${atk} × 档位倍率):`, 118, 682);
+  ctx.fillText(`${vline.label}(ATK ${atk} × 档位倍率):`, 118, 682);
   ctx.font = FONT(22, 'bold');
   ctx.fillStyle = '#19c8b9';
-  ctx.fillText(skillDmgText(sk, atk), 118, 716);
+  ctx.fillText(vline.text, 118, 716);
   ctx.font = FONT(19);
   ctx.fillStyle = '#c4b89e';
   ctx.textAlign = 'center';
@@ -1295,15 +1312,17 @@ function drawPickPanel(ctx, hud, prof, lo) {
     ctx.font = FONT(17);
     ctx.fillStyle = unlocked ? '#9f927d' : '#c4b89e';
     const lvTxt = unlocked ? `Lv.${prof.skillLevels?.[sk.id] || 1}` : (prof.ownedSkills || []).includes(sk.id) ? `Lv.${sk.unlockLevel} 解锁` : '未拥有';
-    ctx.fillText(`${lvTxt} · ${ELEMENT_NAME[sk.el] || sk.el} · CD ${sk.cd}s · ${skillDetailText(sk)}`, rect.x + 80, rect.y + 60);
-    // 右侧:T1 档伤害(按当前 ATK)
+    // F7 残留整改:描述给右侧数值列留宽(≤400px 超宽截断)
+    ctx.fillText(fitText(ctx, `${lvTxt} · ${ELEMENT_NAME[sk.el] || sk.el} · CD ${sk.cd}s · ${skillDetailText(sk)}`, 400), rect.x + 80, rect.y + 60);
+    // 右侧:首档数值(F13 整改:按技能类型口径+标签)
+    const vline = skillValueLine(sk, atk, maxHpText(prof.level));
     ctx.textAlign = 'right';
     ctx.font = FONT(22, 'bold');
     ctx.fillStyle = unlocked ? '#19c8b9' : '#c4b89e';
-    ctx.fillText(`${Math.round(atk * (sk.params?.dmgCoef ?? 0) * TIER_MULT[0])}`, rect.x + rect.w - 20, rect.y + 38);
+    ctx.fillText(vline.text.split(' / ')[0], rect.x + rect.w - 20, rect.y + 38);
     ctx.font = FONT(15);
     ctx.fillStyle = '#9f927d';
-    ctx.fillText('T1 伤害', rect.x + rect.w - 20, rect.y + 62);
+    ctx.fillText(vline.label, rect.x + rect.w - 20, rect.y + 62);
     ctx.textAlign = 'left';
   });
   ctx.textAlign = 'center';

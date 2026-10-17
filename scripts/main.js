@@ -200,8 +200,11 @@ function boot(images) {
   const input = attachInput(canvas, {
     // 忙态丢弃整次手势(F7 续审;M9 修订):演出期可操作忙态放行(RESOLVING/FALLING 并行交换
     // 由 engine.trySwap 即时受理),仅瘫痪/暂停等不可操作忙态仍丢弃
-    busy: () => engine.state !== 'IDLE' || engine.paralyzed,
-    canActInBusy: () => !engine.paralyzed && engine.state !== 'IDLE',
+    // M11-04 F14 整改:忙态门控仅在战斗屏生效——修复前旧局棋盘 PARALYZED(战败未重置)残留,
+    // input.update 在备战屏把手势作废 → 长按 tips 永不触发;非战斗屏 busy=false(局外输入不受
+    // 已结束战斗的棋盘状态控制),战斗屏口径不变
+    busy: () => screen === 'playing' && (engine.state !== 'IDLE' || engine.paralyzed),
+    canActInBusy: () => screen === 'playing' && !engine.paralyzed && engine.state !== 'IDLE',
     // 果冻拖拽预判定(02 文档 2.3;REQ-M6-04 F7;M9 修订):仅 IDLE 预判成消(RESOLVING/FALLING
     // 交给引擎——M11 任意相邻非空对即时受理,槽满转预输入缓冲;无效 IDLE 拖拽仍预判拒绝跟手);
     // 含道具格走引擎换位分支
