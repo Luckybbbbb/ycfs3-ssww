@@ -15,12 +15,22 @@ import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
+// 棋子贴图(M10 接入:codex 生图 animal-island 风格五行宝石,assets/icons/elements/<el>.png 144×144;
+// 替换原型期纯色圆 gems/;缺图走矢量兜底,预载校验见 assets/manifest.js fullManifest)
 const GEM_IMG = {};
-const GEM_DIR = new URL('../../assets/sprites/gems/', import.meta.url);
+const GEM_DIR = new URL('../../assets/icons/elements/', import.meta.url);
 for (const el of ELEMENTS) {
   const img = new Image();
   img.src = new URL(`${el}.png`, GEM_DIR).href;
   GEM_IMG[el] = img;
+}
+// 技能图标贴图(M10 接入:assets/icons/skills/<skillId>.png 144×144,15 张 id 与 library 一致;
+// 段③④消除演出使用;未加载时回退为文字[原样式])
+const SKILL_IMG = {};
+for (const s of SKILL_LIBRARY) {
+  const img = new Image();
+  img.src = new URL(`../../assets/icons/skills/${s.id}.png`, import.meta.url).href;
+  SKILL_IMG[s.id] = img;
 }
 
 // 序列帧预载(帧清单见 scripts/assets/manifest.js;此处按同清单懒加载,缺图走矢量兜底)
@@ -354,10 +364,20 @@ export function render(ctx, engine, hud) {
           ctx.translate(gx, gy + yOff);
           ctx.scale(iconScale, iconScale);
           ctx.globalAlpha = iconAlpha;
-          ctx.fillStyle = '#ffb02e';
-          ctx.font = "bold 24px 'Nunito','Noto Sans SC',sans-serif";
-          ctx.textAlign = 'center';
-          ctx.fillText(stars > 0 ? `${label} ${'★'.repeat(stars)}` : label, 0, 0);
+          // M10:技能图标贴图(56px 居中偏上)+下方技能名+档位星;缺图回退纯文字(原样式)
+          const skillImg = SKILL_IMG[stamp?.skillId || ''];
+          if (skillImg && skillImg.complete && skillImg.naturalWidth > 0) {
+            ctx.drawImage(skillImg, -28, -46, 56, 56);
+            ctx.fillStyle = '#7a4f27';
+            ctx.font = "bold 18px 'Nunito','Noto Sans SC',sans-serif";
+            ctx.textAlign = 'center';
+            ctx.fillText(stars > 0 ? `${label} ${'★'.repeat(stars)}` : label, 0, 28);
+          } else {
+            ctx.fillStyle = '#ffb02e';
+            ctx.font = "bold 24px 'Nunito','Noto Sans SC',sans-serif";
+            ctx.textAlign = 'center';
+            ctx.fillText(stars > 0 ? `${label} ${'★'.repeat(stars)}` : label, 0, 0);
+          }
           if (stage >= 4) {
             // 碎裂:4 片碎片沿对角方向飞散
             ctx.strokeStyle = '#ffb02e';
