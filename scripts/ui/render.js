@@ -1060,22 +1060,31 @@ function drawLoadoutScreen(ctx, hud) {
   ctx.fillText('出战信息', 482, 184);
   ctx.font = FONT(19);
   ctx.fillStyle = '#5a4a32';
-  // M11-03 F7 残留整改:wave.js 真权重表+按宽度换行(信息卡内区宽 ~190px,一行放不下高关卡 5 键)
-  const enemiesAll = Object.keys(levelWeights(L));
-  const enemiesL1 = enemiesAll.slice(0, 3).join(' / ');
-  const enemiesL2 = enemiesAll.slice(3).join(' / ');
   ctx.fillText(`关卡:第 ${L} 关 ${meta.name}`, 482, 222);
   ctx.fillText(`波次:${WAVES_PER_LEVEL} 波`, 482, 252);
   ctx.fillText(`第 ${WAVES_PER_LEVEL} 波为关底 Boss`, 482, 278);
-  if (enemiesL2) {
-    ctx.fillText(`敌人:${enemiesL1} /`, 482, 308);
-    ctx.fillText(enemiesL2, 500, 334);
-    ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, 364);
-  } else {
-    ctx.fillText(`敌人:${enemiesL1}`, 482, 308);
-    ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, 338);
+  // M11-06 F7 残留整改:按**实际字体测量**换行(修复前固定前 3 个一行——第 4 关
+  // "敌人:slime / fox / zombie /" 19px 实宽 ~226px 越出卡右缘 688,像素实测到 x=707);
+  // 卡内区 482~668(可用 ~186px),逐名累加测量、超宽即换行(续行缩进 18px),行数不定
+  const names = Object.keys(levelWeights(L));
+  const innerW = 668 - 482;
+  const wrapLines = [];
+  let cur = '敌人:';
+  for (const n of names) {
+    const cand = cur + (cur.endsWith(':') ? ' ' : '') + n + ' /';
+    if (ctx.measureText(cand).width > innerW && !cur.endsWith(':')) {
+      wrapLines.push(cur);
+      cur = '  ' + n + ' /';
+    } else {
+      cur = cand;
+    }
   }
-  const warnY = enemiesL2 ? 392 : 366;
+  wrapLines.push(cur);
+  let lineY = 308;
+  for (const ln of wrapLines) { ctx.fillText(ln, 482, lineY); lineY += 26; }
+  const metaY = lineY; // 建议等级随实际行数下移
+  ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, metaY);
+  const warnY = metaY + 28;
   if (prof.level < meta.suggest) {
     ctx.fillStyle = '#fff';
     roundRect(ctx, 482, warnY - 26, 184, 40, 20); ctx.fill();
