@@ -42,7 +42,7 @@ export function applyChain(ctx, skill, tier) {
     picked.push(e);
   }
   for (const e of picked) {
-    const r = e.hurt(dmg);
+    const r = e.hurt(dmg, { flash: true }); // M8 受击反馈:锁链直击白闪+卡肉(不暴击,暴击仅 applyHit)
     // 伤害冒字(03 文档 6.5:锁链直呼 e.hurt 不经 applyHit——行为内核产事件;元素来源=skill.el)
     // 方向=中心敌→被击敌;中心自身方向缺省(向上)
     ctx.floatEvent({
@@ -120,7 +120,7 @@ export function applyPulse(ctx, skill, tier) {
     if (!e.alive) continue;
     const dx = e.x - center.x, dy = e.y - center.y;
     if (dx * dx + dy * dy <= skill.params.r * skill.params.r) {
-      const r = e.hurt(dmg);
+      const r = e.hurt(dmg, { flash: true }); // M8 受击反馈:脉冲直击白闪+卡肉(不暴击)
       // 伤害冒字(6.5:脉冲直呼 e.hurt 不经 applyHit;元素来源=skill.el;方向=中心→被击敌)
       ctx.floatEvent({
         kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: skill.el,

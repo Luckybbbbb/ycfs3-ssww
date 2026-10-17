@@ -13,6 +13,8 @@ import { FxLayer } from '../scripts/ui/fx.js';
 import { applyChain, applyPulse, applyShieldSpell, applyBind, markSlow, tickZones, tickAura } from '../scripts/skills/behaviors.js';
 import { SKILL_LIBRARY } from '../scripts/skills/library.js';
 import { GEM_COLORS } from '../scripts/ui/draw_util.js';
+import { critChance } from '../scripts/skills/registry.js';
+import { Enemy } from '../scripts/battle/enemy.js';
 
 // ---- 桩 ----
 const mkEnemy = (hp = 100, x = 300, y = 200) => ({
@@ -207,23 +209,36 @@ test('M7 同领域持续 120 帧仅首次提示一次(裁决 F1 测试项)', () 
   assert.equal(b.floatTexts.filter(x => x.kind === 'slowMark').length, 1, '主动重放(gen+1)再冒 1 条');
 });
 
-// ---- fx 层:三段运动/防重叠/上限/文案颜色 ----
-test('M7 fx 三段运动(6.1):喷出段位移=6×speed×t 沿方向;寿命 1.2s;imp 分级 speed', () => {
+// ---- fx 层:A+E 运动模型(M8)/防重叠/上限/文案颜色 ----
+test('M8 fx A 模型(6.1):初速=speed×4±8% 沿方向;指数阻力+微重力;寿命 0.85s;imp 分级初速', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'dmg', x: 300, y: 200, n: 10, el: 'fire', fromAngle: 0, jitter: 0, importance: 1 });
   const c = fx.combatTexts[0];
-  assert.equal(c.text, '-10');
-  assert.equal(c.color, '#ff4444', '直击色=受弹元素色(GEM_SRC fire)');
-  assert.equal(c.speed, 90, 'imp1 speed=50+1×40');
+  assert.equal(c.text, '-10', '整条一体:「-10」一条文本,不逐位拆分');
+  assert.equal(c.color, '#e05a5a', '直击色=受弹元素色(GEM_COLORS fire=珊瑚红 #e05a5a)');
+  assert.ok(c.vx >= 360 * 0.92 - 1e-9 && c.vx <= 360 * 1.08 + 1e-9, `imp1 初速=90×4±8%(实得 ${c.vx.toFixed(1)})`);
   assert.equal(c.peak, 1.2, 'imp1 peak=0.9+0.3');
-  fx.update(0.072); // p=0.06(段①)
-  assert.ok(Math.abs(c.x - (300 + 0.072 * 6 * 90)) < 1e-6, `喷出段位移=6×speed×t(实得 ${c.x})`);
-  assert.ok(Math.abs(c.y - 200) < 1e-9, '方向 0rad → y 不变');
-  for (let i = 0; i < 200; i++) fx.update(0.016); // 超寿命
-  assert.equal(fx.combatTexts.length, 0, '1.2s 后消亡');
+  assert.ok(Math.abs(c.life - 0.85) < 1e-9, 'A 模型基础寿命 0.85s');
+  const x0 = c.x, y0 = c.y, vx0 = c.vx;
+  fx.update(0.016);
+  const drag = Math.exp(-3.2 * 0.016);
+  assert.ok(Math.abs(c.x - (x0 + vx0 * drag * 0.016)) < 1e-6, '首帧位移=v0·e^(-3.2·dt)·dt(指数阻力)');
+  assert.ok(Math.abs(c.y - (y0 + 90 * 0.016 * 0.016)) < 1e-6, '微重力首帧下垂=(g·dt)·dt');
+  for (let i = 0; i < 200; i++) fx.update(0.016);
+  assert.equal(fx.combatTexts.length, 0, '0.85s 后整条消亡');
 });
 
-test('M7 fx 文案映射(6.2a):🔥2/🌿3/🛡+5/+2/免伤/击破/❄减速', () => {
+test('M8 fx 寿命分级(6.1):imp2(免伤/击破)1.1s;暴击事件 1.25s', () => {
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'kill', x: 0, y: 0 });
+  fx.combatFloat({ kind: 'dmg', x: 0, y: 60, n: 1, el: 'fire', jitter: 0, crit: true });
+  const kill = fx.combatTexts.find(c => c.text === '击破');
+  const crit = fx.combatTexts.find(c => c.seq === 2);
+  assert.ok(Math.abs(kill.life - 1.1) < 1e-9, 'imp2 寿命 1.1s');
+  assert.ok(Math.abs(crit.life - 1.25) < 1e-9, '暴击寿命 1.25s');
+});
+
+test('M7 fx 文案映射(6.2a):🔥2/🌿3/🛡+5/+2/免伤/击破/❄减速(整条一体,一事件一条)', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'burn', x: 0, y: 0, n: 2 });
   fx.combatFloat({ kind: 'bindDot', x: 0, y: 40, n: 3, el: 'wood' });
@@ -232,34 +247,37 @@ test('M7 fx 文案映射(6.2a):🔥2/🌿3/🛡+5/+2/免伤/击破/❄减速', (
   fx.combatFloat({ kind: 'immune', x: 0, y: 160 });
   fx.combatFloat({ kind: 'kill', x: 0, y: 200 });
   fx.combatFloat({ kind: 'slowMark', x: 0, y: 240 });
-  assert.deepEqual(fx.combatTexts.map(c => c.text), ['🔥2', '🌿3', '🛡+5', '+2', '免伤', '击破', '❄减速']);
-  assert.equal(fx.combatTexts[1].color, '#44ff44', '束缚跳伤木色(bindEl)');
-  assert.equal(fx.combatTexts[4].imp, 2, '免伤 importance 2');
+  const joined = fx.combatTexts.map(c => c.text).join('');
+  assert.equal(joined, '🔥2🌿3🛡+5+2免伤击破❄减速');
+  assert.equal(fx.combatTexts[3].color, GEM_COLORS.wood, '束缚跳伤木色(bindEl)');
+  assert.equal(fx.combatTexts.find(c => c.text === '免伤').imp, 2, '免伤 importance 2');
 });
 
-test('M7 fx 防重叠(6.1):同位置 ±24px 向上推 min(fy, ft.y - size×1.1)', () => {
+test('M7 fx 防重叠(6.1):同位置 ±24px 向上推 min(fy, ft.y - size×1.1);整条一条(不拆位)', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'dmg', x: 300, y: 200, n: 5, el: 'fire', jitter: 0 });
   const first = fx.combatTexts[0];
+  assert.equal(fx.combatTexts.length, 1, '「-5」整条一条(不逐位拆分)');
   fx.combatFloat({ kind: 'dmg', x: 310, y: 205, n: 6, el: 'fire', jitter: 0 });
-  const second = fx.combatTexts[1];
+  const second = fx.combatTexts[1]; // 第二事件首条
   assert.ok(second.y <= first.y - first.size * 1.1 + 1e-9, `第二条上推(实得 ${second.y} vs ${first.y})`);
   // 不同位置(>24px)不推
   fx.combatFloat({ kind: 'dmg', x: 400, y: 200, n: 7, el: 'fire', jitter: 0 });
   assert.equal(fx.combatTexts[2].y, 200, '距离外不推');
 });
 
-test('M7 fx 上限 64(6.1):超出丢弃 importance 最低、最早', () => {
+test('M7 fx 上限 64(6.1,M8 字符位口径):超出丢弃 importance 最低、最早(整条)', () => {
   const fx = new FxLayer();
-  for (let i = 0; i < 63; i++) fx.combatFloat({ kind: 'dmg', x: i * 30, y: 100, n: 1, el: 'fire', jitter: 0, importance: 1 });
-  fx.combatFloat({ kind: 'burn', x: 2000, y: 100, n: 1 }); // imp0(最低),t 最大?后进 t=0……
-  // 构造:64 条已满(63 imp1 + 1 imp0),再进 1 条 imp2 → 丢 imp0
-  assert.equal(fx.combatTexts.length, 64);
+  const totalChars = () => fx.combatTexts.reduce((a, c) => a + c.charN, 0);
+  for (let i = 0; i < 31; i++) fx.combatFloat({ kind: 'dmg', x: i * 30, y: 100, n: 1, el: 'fire', jitter: 0, importance: 1 }); // 31×2 字符=62
+  fx.combatFloat({ kind: 'burn', x: 2000, y: 100, n: 1 }); // 🔥1 2 字符 → 64 满
+  assert.equal(totalChars(), 64);
+  assert.equal(fx.combatTexts.length, 32, '整条口径:32 条事件(每条一事件)');
   assert.ok(fx.combatTexts.some(c => c.imp === 0), 'imp0 在列');
-  fx.combatFloat({ kind: 'kill', x: 2500, y: 100 }); // imp2 → 满员,丢 imp0(最低)
-  assert.equal(fx.combatTexts.length, 64);
+  fx.combatFloat({ kind: 'kill', x: 2500, y: 100 }); // imp2(击破 2 字符)→ 逐出 imp0 整条
+  assert.equal(totalChars(), 64);
   assert.ok(!fx.combatTexts.some(c => c.imp === 0), 'imp0 被丢弃');
-  assert.ok(fx.combatTexts.some(c => c.text === '击破'), '新 imp2 进入');
+  assert.ok(fx.combatTexts.some(c => c.text === '击破'), '新 imp2 整条进入');
 });
 
 // ---- 单向解耦(6.5/自查) ----
@@ -304,42 +322,45 @@ test('M7 F1 溅射方向=爆炸中心→被溅射敌(裁决例:(560,200)→(570,
   assert.equal(sp.importance, 0);
 });
 
-test('M7 F3 淘汰含新事件:64 条 imp2 后进 imp0 → 丢弃新事件(保留 64 imp2)', () => {
+test('M7 F3 淘汰含新事件(M8 字符位口径):64 字符 imp2 后进 imp0 → 整条丢弃新事件(保留 64 字符 imp2)', () => {
   const fx = new FxLayer();
-  for (let i = 0; i < 64; i++) fx.combatFloat({ kind: 'kill', x: i * 30, y: 100, importance: 2 });
-  assert.equal(fx.combatTexts.length, 64);
+  for (let i = 0; i < 32; i++) fx.combatFloat({ kind: 'kill', x: i * 30, y: 100, importance: 2 }); // 32×2 字符=64
+  assert.equal(fx.combatTexts.reduce((a, c) => a + c.charN, 0), 64);
   fx.combatFloat({ kind: 'burn', x: 2500, y: 100, n: 1 }); // imp0 最低
-  assert.equal(fx.combatTexts.length, 64);
-  assert.ok(fx.combatTexts.every(c => c.imp === 2), '全部 imp2 保留(新 imp0 被弃)');
+  assert.equal(fx.combatTexts.reduce((a, c) => a + c.charN, 0), 64);
+  assert.ok(fx.combatTexts.every(c => c.imp === 2), '全部 imp2 保留(新 imp0 整条被弃)');
   assert.ok(!fx.combatTexts.some(c => c.text === '🔥1'), '新事件未入队');
 });
 
-test('M7 F3 同帧同重要度淘汰先后:不 update 连续 65 条同 imp → 保留第 2~65 条(丢最早)', () => {
+test('M7 F3 同帧同重要度淘汰先后(M8 字符位口径):连续超限 → 按整条弃最早(seq 最小)', () => {
   const fx = new FxLayer();
-  for (let i = 1; i <= 65; i++) fx.combatFloat({ kind: 'dmg', x: i * 30, y: 100, n: i, el: 'fire', jitter: 0, importance: 1 }); // 连续加入,期间不 update(t 全 0)
-  assert.equal(fx.combatTexts.length, 64);
-  assert.ok(!fx.combatTexts.some(c => c.text === '-1'), '最早(-1)被淘汰');
-  assert.ok(fx.combatTexts.some(c => c.text === '-2') && fx.combatTexts.some(c => c.text === '-65'), '保留第 2~65 条(裁决断言)');
+  for (let i = 1; i <= 65; i++) fx.combatFloat({ kind: 'dmg', x: i * 30, y: 100, n: i, el: 'fire', jitter: 0, importance: 1 }); // n=1..9 两位/n≥10 三位,共 186 字符 → 超限整条淘汰
+  const texts = fx.combatTexts.map(c => c.text);
+  assert.ok(!texts.includes('-1'), '最早组(-1)整条淘汰');
+  assert.ok(texts.includes('-65'), '最后事件完整保留(裁决断言口径)');
+  assert.ok(fx.combatTexts.every(c => c.charN === [...c.text].length), '整条粒度:一事件一条完整文本(原子性天然成立)');
+  assert.ok(fx.combatTexts.reduce((a, c) => a + c.charN, 0) <= 64, '上限 64 字符位');
 });
 
 test('M7 F3 同 imp 淘汰先后(update 后):满员再进同 imp → 弃最早入队(seq 最小)', () => {
   const fx = new FxLayer();
-  for (let i = 0; i < 64; i++) fx.combatFloat({ kind: 'dmg', x: i * 30, y: 100, n: 1, el: 'fire', jitter: 0, importance: 1 });
+  for (let i = 0; i < 32; i++) fx.combatFloat({ kind: 'dmg', x: i * 30, y: 100, n: 1, el: 'fire', jitter: 0, importance: 1 }); // 64 字符满
+  assert.equal(fx.combatTexts.length, 32, '整条口径:32 条事件');
   fx.update(0.1);
-  const oldest = fx.combatTexts.reduce((a, c) => (c.seq < a.seq ? c : a), fx.combatTexts[0]);
-  const newX = 3000;
-  fx.combatFloat({ kind: 'dmg', x: newX, y: 100, n: 9, el: 'fire', jitter: 0, importance: 1 });
-  assert.equal(fx.combatTexts.length, 64);
-  assert.ok(!fx.combatTexts.includes(oldest), '最早入队(seq 最小)被淘汰');
-  assert.ok(fx.combatTexts.some(c => c.x === newX), '新事件入队');
+  const oldestSeq = Math.min(...fx.combatTexts.map(c => c.seq));
+  fx.combatFloat({ kind: 'dmg', x: 3000, y: 100, n: 9, el: 'fire', jitter: 0, importance: 1 }); // seq=33
+  assert.equal(fx.combatTexts.length, 32, '淘汰 1 条旧事件、新事件 1 条入队(2 字符换 2 字符)');
+  assert.ok(!fx.combatTexts.some(c => c.seq === oldestSeq), '最早入队(seq 最小)整条被淘汰');
+  assert.ok(fx.combatTexts.some(c => c.seq === 33), '新事件入队');
 });
 
-test('M7 F3 弹跳缩放(easeOutBack):经**实际 draw** 验证过冲与回落(REQ-M7-02 F7)', () => {
+test('M8 pop 过冲→回落(easeOutBack):经**实际 draw** 验证过冲、回落 peak、settled=基础字号', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 1, el: 'fire', jitter: 0, importance: 1 });
   const c = fx.combatTexts[0];
-  // 录制型 ctx:记录 draw 实际设置的 font 字号
+  // 录制型 ctx:记录 draw 实际设置的 font 字号;dn=每次 draw 的读取游标(drawn 跨调用累积)
   const drawn = [];
+  let dn = 0;
   const ctx = {
     set font(v) { this._f = v; }, get font() { return this._f; },
     set globalAlpha(v) {}, set fillStyle(v) {}, set textAlign(v) {},
@@ -347,32 +368,39 @@ test('M7 F3 弹跳缩放(easeOutBack):经**实际 draw** 验证过冲与回落(R
     fillText(text) { drawn.push({ text, font: this._f }); },
     strokeText() {}, // 描边(黑色描边调整后 draw 会调用)
   };
-  fx.update(0.144 * 0.5); // 段①中点(p=0.06)
+  fx.update(0.07); // pop 窗口(0.14s)中点
   fx.draw(ctx);
-  const midFont = drawn.at(-1).font;
+  const midFont = drawn[dn].font; // 整条一条,t=0.07 处于 pop 中段
+  dn = drawn.length;
   const midSize = parseInt(String(midFont).match(/(\d+)px/)?.[1] || '0', 10);
-  assert.ok(midSize > Math.round(c.size * 1.2), `段①中段过冲(font ${midFont} ${midSize}px > peak 字号 ${Math.round(c.size * 1.2)}px)——弹跳`);
-  fx.update(0.144 * 0.5); // 段①末(p≈0.12)
+  assert.ok(midSize > Math.round(c.size * 1.2), `pop 中段过冲(font ${midFont} ${midSize}px > peak 字号 ${Math.round(c.size * 1.2)}px)——弹跳`);
+  fx.update(0.07); // t=0.14=peak
   fx.draw(ctx);
-  const endSize = parseInt(String(drawn.at(-1).font).match(/(\d+)px/)?.[1] || '0', 10);
-  assert.ok(Math.abs(endSize - c.size * 1.2) <= 1, `段①末回落 peak(${endSize}px ≈ ${c.size * 1.2}px)`);
+  const endSize = parseInt(String(drawn[dn].font).match(/(\d+)px/)?.[1] || '0', 10);
+  dn = drawn.length;
+  assert.ok(Math.abs(endSize - c.size * 1.2) <= 1, `pop 末回落 peak(${endSize}px ≈ ${c.size * 1.2}px)`);
+  fx.update(0.12); // settle 窗口(0.12s)走完
+  fx.draw(ctx);
+  const settled = parseInt(String(drawn[dn].font).match(/(\d+)px/)?.[1] || '0', 10);
+  dn = drawn.length;
+  assert.equal(settled, c.size, `settled=基础字号(${settled}px=${c.size}px)——M8 不缩小消失,保持可读`);
   // 线性缩放实现会使中段无过冲——本用例可捕获退回线性(裁决 F7 指认)
 });
 
-test('M7 F3 段②③位置采样:段②末位移=∫(6→1)×speed;段③缓升 y 递减 x 不变', () => {
+test('M8 A 物理采样:指数阻力衰减(位移≈v0/3.2·(1−e^−3.2t))+重力持续下垂', () => {
   const fx = new FxLayer();
-  fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 1, el: 'fire', fromAngle: 0, jitter: 0, importance: 1 }); // speed=90
+  fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 1, el: 'fire', fromAngle: 0, jitter: 0, importance: 1 }); // v0≈360
   const c = fx.combatTexts[0];
-  // 段①+段②:t=0.36s(p=0.3) 位移=∫0→0.144 540dt + ∫0.144→0.36 (540→90)dt = 77.76 + 68.04 = 145.8
-  for (let i = 0; i < 22; i++) fx.update(0.016); // ~0.352s
-  for (let i = 0; i < 1; i++) fx.update(0.008);
-  const t2 = c.t;
-  const expect = 540 * 0.144 + 90 * (0.36 - 0.144) + 0.5 * (540 - 90) * (0.36 - 0.144);
-  assert.ok(Math.abs(c.x - expect) < 12, `段②末位移≈145.8(实得 ${c.x.toFixed(2)},t=${t2.toFixed(3)})`);
-  const xAtP3 = c.x, yAtP3 = c.y;
-  for (let i = 0; i < 30; i++) fx.update(0.016); // 段③
-  assert.ok(Math.abs(c.x - xAtP3) < 1e-6, '段③ x 不再位移');
-  assert.ok(c.y < yAtP3, '段③缓升(y 递减)');
+  const v0 = c.vx, x0 = c.x, y0 = c.y;
+  for (let i = 0; i < 22; i++) fx.update(0.016);
+  fx.update(0.008); // t=0.36s
+  const expect = x0 + (v0 / 3.2) * (1 - Math.exp(-3.2 * 0.36));
+  assert.ok(Math.abs(c.x - expect) < 6, `阻力衰减位移≈${expect.toFixed(1)}(实得 ${c.x.toFixed(2)})`);
+  assert.ok(c.vx < v0 * 0.4, `末速<初速 40%(实得 ${(c.vx / v0 * 100).toFixed(1)}%)——液体阻力急减速`);
+  const x1 = c.x, y1 = c.y;
+  for (let i = 0; i < 30; i++) fx.update(0.016);
+  assert.ok(c.x > x1, '仍沿方向减速漂移(不急停)');
+  assert.ok(c.y > y1, '重力持续下垂(A 模型无旧段③缓升)');
 });
 
 test('M7 F4 领域到期后重放恰提示一次(裁决复算例:clock≈6.0167 旧区已删 slowT 残余)', () => {
@@ -410,7 +438,7 @@ import * as behaviors_mod_ns from '../scripts/skills/behaviors.js';
 function behaviors_mod() { return behaviors_mod_ns; }
 
 // ---- REQ-M7-02 裁决整改:F6 颜色联动 + 状态生命周期事件断言 ----
-test('M7 F6 全 kind 颜色联动:五行语义色全部引用 GEM_COLORS(共享表改值即联动)', () => {
+test('M7 F6 全 kind 颜色联动:五行语义色全部引用 GEM_COLORS(共享表改值即联动;M8 方案一色值)', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'burn', x: 0, y: 0, n: 1 });
   fx.combatFloat({ kind: 'bindDot', x: 0, y: 30, n: 2, el: 'wood' });
@@ -421,7 +449,7 @@ test('M7 F6 全 kind 颜色联动:五行语义色全部引用 GEM_COLORS(共享�
   fx.combatFloat({ kind: 'slowMark', x: 0, y: 180 });
   fx.combatFloat({ kind: 'bindMark', x: 0, y: 210 });
   fx.combatFloat({ kind: 'stunMark', x: 0, y: 240 });
-  const byText = Object.fromEntries(fx.combatTexts.map(c => [c.text, c.color]));
+  const byText = Object.fromEntries(fx.combatTexts.map(c => [c.text, c.color])); // 整条一体:一事件一条
   assert.equal(byText['🔥1'], GEM_COLORS.fire, '灼烧=fire 色引用共享表');
   assert.equal(byText['🌿2'], GEM_COLORS.wood, '束缚跳伤=wood(el 引用)');
   assert.equal(byText['+3'], GEM_COLORS.wood, '吸血=wood');
@@ -435,6 +463,12 @@ test('M7 F6 全 kind 颜色联动:五行语义色全部引用 GEM_COLORS(共享�
   const fx2 = new FxLayer();
   fx2.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 1, el: 'fire' });
   assert.equal(fx2.combatTexts[0].color, GEM_COLORS.fire, '直击=受弹元素色(共享表)');
+});
+
+test('M8 五行配色方案一(M8 需求):GEM_COLORS=animal-island 主题 token 五色', () => {
+  assert.deepEqual(GEM_COLORS, {
+    metal: '#f5c31c', wood: '#6fba2c', water: '#4aa8cc', fire: '#e05a5a', earth: '#794f27',
+  });
 });
 
 test('M7 状态生命周期事件(6.2b):减速自然归零后重入再冒;束缚重施再冒;灼烧/束缚到期静默', () => {
@@ -555,18 +589,20 @@ test('M7 F7 终局同帧:唯一敌击杀的 kill 与 victory 同一次 update(�
   assert.equal(kinds(b.floatTexts).filter(k => k === 'kill').length, 1, '击破事件在终局帧事件队列');
 });
 
-// ---- 需求方反馈调整(2026-10-17):冒字字号 ×2 + 黑色描边 ----
+// ---- 需求方反馈调整(2026-10-17):冒字字号 ×2 + 黑色描边 + 整条一体(不逐位拆分) ----
 test('M7 冒字字号翻倍(需求反馈):FT_STYLE 全部 size ×2(直击 32/击破 40/溅射 20)', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 1, el: 'fire', jitter: 0 });
   fx.combatFloat({ kind: 'kill', x: 0, y: 60 });
   fx.combatFloat({ kind: 'splash', x: 0, y: 120, n: 2, el: 'fire' });
-  assert.deepEqual(fx.combatTexts.map(c => c.size), [32, 40, 20], '直击 32/击破 40/溅射 20(原 16/20/10 的 2 倍)');
+  const sizes = fx.combatTexts.map(c => { assert.ok(c.charN > 1, '多字符整条(不拆位)'); return c.size; });
+  assert.deepEqual(sizes, [32, 40, 20], '直击 32/击破 40/溅射 20(原 16/20/10 的 2 倍)');
 });
 
-test('M7 黑色描边(需求反馈):draw 先 strokeText(#000)后 fillText,描边宽≈字号/8', () => {
+test('M7 黑色描边(需求反馈):draw 先 strokeText(#000)后 fillText,描边宽≈字号/8(M8 珊瑚红填充)', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 9, el: 'fire', jitter: 0 });
+  fx.update(0.1); // 先推进(整条一体:t=0 起跳,无未起跳位)
   const calls = [];
   const ctx = {
     set font(v) { this._f = v; }, get font() { return this._f; },
@@ -577,12 +613,149 @@ test('M7 黑色描边(需求反馈):draw 先 strokeText(#000)后 fillText,描边
   };
   fx.draw(ctx);
   const d = fx.combatTexts[0];
-  const expectFont = Math.round(d.size); // p=0 时 scale=easeOutBack(0)=0.2→font=round(32×0.2)=6?
   const strokeIdx = calls.findIndex(c => c.op === 'stroke' && c.t === '-9');
   const fillIdx = calls.findIndex(c => c.op === 'fill' && c.t === '-9');
-  assert.ok(strokeIdx !== -1 && fillIdx !== -1, 'strokeText 与 fillText 均调用');
+  assert.ok(strokeIdx !== -1 && fillIdx !== -1, 'strokeText 与 fillText 均调用(整条一次描边+填充)');
   assert.ok(strokeIdx < fillIdx, '描边先于填充(外圈不遮字)');
   assert.equal(calls[strokeIdx].stroke, '#000', '描边黑色');
   assert.ok(calls[strokeIdx].lw >= 3, `描边宽≥3(实得 ${calls[strokeIdx].lw})`);
-  assert.equal(calls[fillIdx].fill, '#ff4444', '填充仍为元素色');
+  assert.equal(calls[fillIdx].fill, '#e05a5a', '填充仍为元素色(GEM_COLORS fire)');
+});
+
+// ---- M8 新增:暴击(6.2d)/整条一体(需求方 2026-10-17 口径)/受击反馈(6.7) ----
+test('M8 暴击(6.2d):critChance=t1 9%~t5 25%;直击 roll 命中 → dmg×1.5+事件 crit;溅射不 roll', () => {
+  assert.deepEqual([1, 2, 3, 4, 5].map(critChance).map(x => Math.round(x * 100) / 100), [0.09, 0.13, 0.17, 0.21, 0.25], '5%+档位×4%');
+  let ret = 0.01, calls = 0;
+  const rngSpy = () => { calls++; return ret; };
+  const b = new Battle({ atk: 10, maxHp: 100, rng: rngSpy });
+  const e = mkEnemy(100, 560, 200);
+  b.enemies = [e];
+  b.applyHit(mkBolt('fire', 2, 16, null, { x: 400, y: 200 }), e, 1);
+  assert.equal(calls, 1, '直击恰 1 次 roll');
+  assert.equal(e.hp, 100 - Math.round(16 * 1.5), '暴击 dmg=round(16×1.5)=24(N 仍=实际 applied)');
+  const ev = b.floatTexts.find(x => x.kind === 'dmg');
+  assert.equal(ev.crit, true, '冒字事件带 crit 标记');
+  assert.equal(b.log.at(-1).crit, true, 'hit 日志带 crit');
+  // 非暴击
+  ret = 0.99; calls = 0;
+  const b2 = new Battle({ atk: 10, maxHp: 100, rng: rngSpy });
+  const e2 = mkEnemy(100, 560, 200);
+  b2.enemies = [e2];
+  b2.applyHit(mkBolt('fire', 2, 16, null, { x: 400, y: 200 }), e2, 1);
+  assert.equal(calls, 1);
+  assert.equal(e2.hp, 84, 'roll≥chance 不暴击(16 伤)');
+  assert.equal(b2.floatTexts[0].crit, false);
+  // 溅射不 roll 不暴击
+  calls = 0;
+  const b3 = new Battle({ atk: 10, maxHp: 100, rng: rngSpy });
+  const cand = mkEnemy(100, 560, 200), near = mkEnemy(100, 570, 230);
+  b3.enemies = [cand, near];
+  const sb = mkBolt('fire', 3, 24, null, { splash: { r: 60, mult: 0.5 }, x: 560, y: 200 });
+  sb.hitSet.add(cand);
+  b3.applyHit(sb, near, 0.5, cand);
+  assert.equal(calls, 0, '溅射不消耗 roll(不暴击)');
+  assert.equal(near.hp, 100 - Math.round(24 * 0.5), '溅射 12 伤无暴击加成');
+  assert.equal(b3.floatTexts.find(x => x.kind === 'splash').crit, false);
+});
+
+test('M8 暴击冒字:金色 #ffd700/字号 ×1.4=45/peak 1.38/寿命 1.25s', () => {
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 12, el: 'fire', fromAngle: 0, jitter: 0, crit: true });
+  assert.ok(fx.combatTexts.length === 1, "「-12」整条一条(不拆位)");
+  assert.ok(fx.combatTexts.every(c => c.color === '#ffd700'), '暴击金(非五行语义色)');
+  assert.ok(fx.combatTexts.every(c => c.size === 45), 'round(32×1.4)=45');
+  assert.ok(fx.combatTexts.every(c => Math.abs(c.peak - 1.38) < 1e-9), 'peak 1.38');
+  assert.ok(fx.combatTexts.every(c => Math.abs(c.life - 1.25) < 1e-9), '寿命 1.25s');
+});
+
+test('M8 整条一体(需求方 2026-10-17 口径,替代方案 E 逐位):「击破」/数值整串同帧起跳同步运动', () => {
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'dmg', x: 300, y: 200, n: 12, el: 'fire', jitter: 0 });
+  assert.deepEqual(fx.combatTexts.map(c => c.text), ['-12'], '数值整串一条,不逐位拆分');
+  assert.equal(fx.combatTexts[0].t, 0, '无逐位延迟,整串同帧起跳');
+  assert.equal(fx.combatTexts[0].x, 300, '整条以 ev.x 居中(绘制层 textAlign=center)');
+  fx.combatFloat({ kind: 'kill', x: 300, y: 240 }); // 「击破」两字同串
+  assert.equal(fx.combatTexts[1].text, '击破', '两字文本一条(不拆「击」「破」)');
+  const y1 = fx.combatTexts[0].y;
+  fx.update(0.05);
+  assert.ok(fx.combatTexts[0].y < y1, '0.05s 后整条同步位移(无未起跳位;缺省向上喷出)');
+});
+
+test('M8 受击反馈(6.7):直击白闪 0.10+卡肉 0.05;暴击 0.16/0.09;卡肉冻结移动;DOT 不闪', () => {
+  const e = new Enemy({ name: 'slime', hp: 100, x: 640, y: 200, spd: 60 }); // x>stopX=560,恢复后向左移动
+  e.hurt(10, { flash: true });
+  assert.ok(Math.abs(e.hitFlashT - 0.10) < 1e-9 && Math.abs(e.hitStopT - 0.05) < 1e-9, '直击白闪/卡肉时长');
+  const x0 = e.x;
+  let frames = 0;
+  while (e.x === x0 && frames < 10) { e.update(1 / 60, 110, 280); frames++; }
+  assert.ok(frames >= 3 && frames <= 5, `卡肉冻结 ${frames} 帧(0.05s@60fps=3 帧,计时归零帧后恢复)`);
+  assert.ok(e.x < x0, '卡肉结束恢复移动');
+  const e2 = new Enemy({ name: 'slime', hp: 100, x: 560, y: 200 });
+  e2.hurt(10, { flash: true, crit: true });
+  assert.ok(Math.abs(e2.hitFlashT - 0.16) < 1e-9 && Math.abs(e2.hitStopT - 0.09) < 1e-9, '暴击加长(0.16/0.09)');
+  const e3 = new Enemy({ name: 'slime', hp: 100, x: 560, y: 200 });
+  e3.burn = { dpsFloat: 2, until: 10 };
+  e3.tickBurn(0, 1);
+  assert.equal(e3.hitFlashT, 0, 'DOT(灼烧跳伤)不触发白闪');
+  assert.equal(e3.hitStopT, 0, 'DOT 不触发卡肉');
+});
+
+// ---- M8-01 裁决整改回归(F1~F5) ----
+test('M8-F1 待机动画时钟:构造即初始化;卡肉期 animClock 不推进(待机帧定格),恢复后继续;render 用它选帧', () => {
+  const e = new Enemy({ name: 'slime', hp: 100, x: 640, y: 200, spd: 60 });
+  assert.equal(e.animClock, 0, '构造即初始化 animClock=0(M8-02 F1:首次 update 前受击,render 也不回退 worldT)');
+  e.hurt(10, { flash: true });
+  e.update(0.02, 110, 280); // 卡肉帧
+  assert.equal(e.animClock, 0, '卡肉期待机时钟不推进(动画定格;严格断言不用 || 0 掩盖未初始化)');
+  e.update(0.05, 110, 280); // 计时归零帧(仍冻结)
+  e.update(0.05, 110, 280);
+  assert.ok(e.animClock > 0, '恢复后待机时钟推进');
+  const src = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(src.includes('e.animClock'), 'render drawEnemy 待机帧使用 e.animClock(取代全局 worldT,REQ-M8-01 F1)');
+  assert.ok(!src.includes('e.animClock != null'), '回退分支已随构造初始化移除(固定使用 animClock)');
+});
+
+test('M8-F2 致死白闪到期:死敌反馈计时被 battle 衰减;结算定格期(VICTORY)同样到期', () => {
+  const b = new Battle({ atk: 10, maxHp: 100, level: 1 });
+  const e = new Enemy({ name: 'slime', hp: 8, x: 560, y: 200 });
+  b.enemies = [e];
+  b.applyHit(mkBolt('fire', 1, 10, null, { x: 400, y: 200 }), e, 1); // 10>8 致死
+  assert.equal(e.alive, false, '致死一击');
+  assert.ok(e.hitFlashT > 0, '致死一击有白闪');
+  b.update(0.05); // FIGHTING(无存活敌不切相位,registerKill 不触发 VICTORY——M2 演出口径)
+  assert.ok(e.hitFlashT < 0.10, '死敌反馈计时被 battle 衰减(e.update 已不调用)');
+  b.update(0.2);
+  assert.equal(e.hitFlashT, 0, '致死白闪到期(不常驻)');
+  assert.equal(e.hitStopT, 0, '致死卡肉到期');
+  // 结算定格期:phase 非 FIGHTING 时 update 提前 return,反馈计时仍衰减
+  b.phase = 'VICTORY';
+  const e2 = new Enemy({ name: 'slime', hp: 8, x: 560, y: 200 });
+  b.enemies = [e2];
+  b.applyHit(mkBolt('fire', 1, 10, null, { x: 400, y: 200 }), e2, 1);
+  assert.ok(e2.hitFlashT > 0);
+  b.update(0.2);
+  assert.equal(e2.hitFlashT, 0, '结算定格期反馈计时到期(M8-F2)');
+});
+
+test('M8-F3 卡肉不延长控制:束缚/眩晕时长按现实时间衰减(冻结帧照常倒计)', () => {
+  const e = new Enemy({ name: 'slime', hp: 100, x: 560, y: 200 });
+  e.hurt(10, { flash: true }); // 卡肉 0.05s
+  e.stunT = 0.5;
+  e.bindT = 1.0;
+  for (let i = 0; i < 10; i++) e.update(0.05, 110, 280); // 共 0.5s(含冻结帧)
+  assert.ok(e.stunT <= 1e-9, `眩晕 0.5s 按现实时间到期(修复前被卡肉延长;残差 ${e.stunT})`);
+  assert.ok(Math.abs(e.bindT - 0.5) <= 1e-9, `束缚同步衰减(实得 ${e.bindT})`);
+});
+
+// M8-F4(逐位跨零积分)随整条一体口径失效:无负 t 延迟位,单步离散期望已由「M8 fx A 模型」首帧断言覆盖
+
+test('M8-F5 混合重要度淘汰:候选含新事件——62 字符 imp2+2 字符 imp0 后进 4 字符 imp1 → 弃 imp0、新组整条不入队', () => {
+  const fx = new FxLayer();
+  for (let i = 0; i < 31; i++) fx.combatFloat({ kind: 'kill', x: i * 30, y: 100, importance: 2 }); // 31×2=62 字符 imp2
+  fx.combatFloat({ kind: 'burn', x: 2000, y: 100, n: 1 }); // 2 字符 imp0 → 64
+  fx.combatFloat({ kind: 'dmg', x: 3000, y: 100, n: 123, el: 'fire', jitter: 0, importance: 1 }); // '-123' 4 字符 imp1
+  assert.equal(fx.combatTexts.reduce((a, c) => a + c.charN, 0), 62, 'imp2 62 字符不变(修复前 62→60 且保留 imp1)');
+  assert.ok(fx.combatTexts.every(c => c.imp === 2), '仅 imp2 保留');
+  assert.ok(!fx.combatTexts.some(c => c.imp === 1), '新 imp1 组未入队(候选含新事件口径,M8-F5)');
+  assert.ok(!fx.combatTexts.some(c => c.imp === 0), 'imp0 整条被弃');
 });

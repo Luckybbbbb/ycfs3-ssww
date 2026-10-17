@@ -14,6 +14,13 @@ export const PLAYER_Y = 280;         // 主角判定中心(站位 x=110 由 regi
 export const ATTACK_RANGE = 500;     // 开火射程(04 文档第 2 节:进射程才攻击)
 export const MIN_QUEUE_GAP = 110;    // X 轴队列最小中心距(需求方增补:只横向堆叠,草案值 M5 校准)
 
+// M8 受击反馈(2026-10-17 需求;03 文档 6.7;调研口径:卡肉 2~5 帧@60fps=33~83ms、
+// 只冻结受击者自身、白闪数帧+冻结期微抖,过长会有卡顿感)
+export const HIT_FLASH = 0.10;       // 白闪时长(直击)
+export const HIT_FLASH_CRIT = 0.16;  // 白闪时长(暴击)
+export const HIT_STOP = 0.05;        // 卡肉时长(直击;约 3 帧@60fps)
+export const HIT_STOP_CRIT = 0.09;   // 卡肉时长(暴击;约 5 帧)
+
 export class Enemy {
   // 兼容 M2 演示 API:new Enemy({hp, x, y}) → 静态停位靶(spd=0 不移动不攻击)
   // M3 波次实体:new Enemy(spec) 由 wave/battle 传入完整数值(wave.js 公式计算结果)
@@ -46,6 +53,10 @@ export class Enemy {
     this.bindT = 0;            // M4 藤蔓束缚剩余秒(behaviors.applyBind;停止移动/攻击)
     this.stunT = 0;            // M4 裂地眩晕剩余秒(behaviors.applyPulse 附加;停止攻击)
     this.attackAnimT = 0;      // 攻击动画剩余秒(开火时置满,单次播放)
+    this.hitFlashT = 0;        // 受击白闪剩余秒(M8 受击反馈;仅直击类伤害触发,DOT 不闪)
+    this.hitStopT = 0;         // 受击卡肉剩余秒(M8;冻结自身移动/攻击/动画,弹幕与冒字不受影响)
+    this.animClock = 0;        // 待机动画时钟(M8-F1:构造即初始化——首次 update 前受击也有定格语义;
+                               // render drawEnemy 用它取代全局 worldT 选待机帧,卡肉期不推进)
     const t = ENEMY_TYPES[name];
     // 攻击动画时长 = 帧数 / (fps×2)(开火时序列帧加速单次播放;待机仍按原 fps 循环)
     this.animDur = t ? t.frames.length / (t.fps * 2) : 0;
@@ -59,10 +70,21 @@ export class Enemy {
   // 需求方增补(04 文档第 2 节增补):只沿 X 轴排队(最小中心距 MIN_QUEUE_GAP,槽位由 battle 分配),
   // 慢速逼近主角,进开火射程(ATTACK_RANGE)才累计攻击计时;超距时计时钳制在间隔×0.5(对标 enemy.gd)。
   update(dt, px, py) {
+    this.hitFlashT = Math.max(0, this.hitFlashT - dt); // 白闪按现实时间衰减(死敌/卡肉期均到期,M8-F2)
     if (!this.alive) return [];
-    if (this.attackAnimT > 0) this.attackAnimT = Math.max(0, this.attackAnimT - dt);
+    // 控制状态时长按现实时间衰减(M8-F3:卡肉只冻结自身行动,不延长束缚/眩晕控制时长);
+    // slowT 在 battle 层衰减,不受卡肉影响
     if (this.bindT > 0) this.bindT = Math.max(0, this.bindT - dt);   // M4 藤蔓束缚:停止移动/攻击
     if (this.stunT > 0) this.stunT = Math.max(0, this.stunT - dt);   // M4 裂地眩晕:停止攻击
+    // M8 受击卡肉(调研口径:2~5 帧@60fps=33~83ms,只冻结受击者自身,弹幕/UI/冒字照常):
+    // 冻结期间移动/攻击计时/待机与攻击动画全部暂停(动画定格正是冻结的表现),白闪/控制时长照常衰减;
+    // max(0,·) 钳制浮点残差(0.05−0.02−0.03≠0 会永久滞留冻结)
+    if (this.hitStopT > 0) {
+      this.hitStopT = Math.max(0, this.hitStopT - dt);
+      return [];
+    }
+    this.animClock = (this.animClock || 0) + dt; // M8-F1:待机动画时钟(卡肉期不推进→待机帧定格;render 用它取代全局 worldT 选帧)
+    if (this.attackAnimT > 0) this.attackAnimT = Math.max(0, this.attackAnimT - dt);
     let fired = [];
     const disabled = (this.bindT > 0) || (this.stunT > 0);
     const target = this.slotX ?? this.stopX;
@@ -111,11 +133,17 @@ export class Enemy {
   }
 
   // 伤害入账(4.4:round 后的整值);返回 {applied, killed}——killed 仅在本次伤害致死后为真
-  hurt(dmg) {
+  // 受击(dmg 伤害额;opts.flash=直击类触发白闪+卡肉,opts.crit=暴击加长——03 文档 6.7 受击反馈)
+  hurt(dmg, opts = {}) {
     if (!this.alive) return { applied: 0, killed: false };
     const d = Math.min(this.hp, dmg);
     this.hp -= d;
     if (this.hp <= 0) { this.hp = 0; this.alive = false; }
+    if (opts.flash) {
+      // 白闪 0.10s(暴击 0.16s)+卡肉 0.05s(暴击 0.09s);同帧多段取 max 不叠长
+      this.hitFlashT = Math.max(this.hitFlashT, opts.crit ? HIT_FLASH_CRIT : HIT_FLASH);
+      this.hitStopT = Math.max(this.hitStopT, opts.crit ? HIT_STOP_CRIT : HIT_STOP);
+    }
     return { applied: d, killed: !this.alive };
   }
 

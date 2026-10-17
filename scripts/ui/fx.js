@@ -6,7 +6,9 @@
 import { CELL, ELEMENTS } from '../board/grid.js';
 import { GEM_COLORS as GEM_FLOAT } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 
-const GEM_RGB = { metal: [200, 200, 255], wood: [80, 200, 90], water: [70, 140, 255], fire: [255, 90, 70], earth: [220, 150, 70] };
+// 粒子 RGB 由 GEM_COLORS 派生(hex→rgb;M8 配色整改后随单一定义源联动,不再独立硬编码)
+const hexRgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const GEM_RGB = Object.fromEntries(Object.entries(GEM_FLOAT).map(([k, v]) => [k, hexRgb(v)]));
 
 // 伤害冒字样式表(03 文档 6.2a/6.2b;**全部五行语义色引用 draw_util GEM_COLORS 单一定义源**,
 // REQ-M7-02 F6:灼烧/吸血/光环/护盾/状态标记不再硬编码;非五行语义色[免伤/受击/击破]为独立字面值)
@@ -27,9 +29,25 @@ const FT_STYLE = {
   bindMark:   { color: () => GEM_FLOAT.wood, fmt: () => `🌿束缚`, imp: 1, size: 28 },
   stunMark:   { color: () => GEM_FLOAT.earth, fmt: () => `💫眩晕`, imp: 1, size: 28 },
 };
-const FT_LIFE = 1.2; // 寿命(原型 const.js FLOAT_TEXT_LIFE;03 文档 6.1)
 
-// easeOutBack 弹跳缓动(段① scale 0.2→peak 过冲回落,对标原型弹跳;REQ-M7-01 F3)
+// ===== M8 冒字运动参数(2026-10-17 需求方选定「方案 A 喷射衰减+暴击」;同日追加口径:整条一体)=====
+// A 物理:高初速沿受击方向喷出 → 指数阻力急减速(液体阻力感)+ 微重力下垂;
+// pop 过冲弹出后回落到 1.0 保持可读(**不缩小消失**,调研雷点规避);淡出集中末 30% 短窗口。
+// 整条一体(替代原方案 E 逐位):「击破」/数值等多字文本**不拆位**,整串同帧起跳同步运动。
+const FT_LIFE = 0.85;      // 基础寿命(秒)
+const FT_LIFE_IMP2 = 1.1;  // imp2(免伤/击破,里程碑)寿命延长
+const FT_POP_T = 0.14;     // pop 过冲窗口(scale 0.3→peak,easeOutBack)
+const FT_SETTLE_T = 0.12;  // peak→1 回落窗口(无跳变)
+const FT_DRAG = 3.2;       // 指数阻力系数(v ×= e^(-3.2·dt))
+const FT_GRAV = 90;        // 微重力(px/s²,血滴下垂感)
+const FT_FADE_FROM = 0.7;  // 生命进度 ≥0.7 开始淡出(末 30%)
+const FT_V0_MULT = 4;      // 初速=speed×4(imp0 200/imp1 360/imp2 520 px/s)
+const CRIT_COLOR = '#ffd700';   // 暴击金(非五行语义,与免伤同金)
+const CRIT_SIZE_MULT = 1.4;     // 暴击字号放大
+const CRIT_PEAK = 1.38;         // 暴击 pop 过冲更强
+const CRIT_LIFE = 1.25;         // 暴击存在时间延长(调研:暴击应延长存在)
+
+// easeOutBack 弹跳缓动(段 pop 过冲回落;REQ-M7-01 F3 沿用)
 function easeOutBack(x) {
   const c1 = 1.70158, c3 = c1 + 1;
   return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
@@ -39,7 +57,7 @@ export class FxLayer {
   constructor() {
     this.particles = []; // {x,y,vx,vy,t,life,size,rgb}
     this.floaters = [];  // {x,y,text,t,life,size,color}
-    this.combatTexts = []; // v0.3 伤害冒字(上限 64;三段运动/重要度/防重叠,03 文档 6.1)
+    this.combatTexts = []; // v0.3 伤害冒字(上限 64 字符位;M8 A 整条一体运动/暴击,03 文档 6.1)
   }
 
   // 消除粒子爆裂:cx/cy 格中心(逻辑坐标),el 元素名,count 消除数(越多越密);
@@ -63,43 +81,51 @@ export class FxLayer {
     this.floaters.push({ x, y, text, t: 0, life, size, color });
   }
 
-  // ===== v0.3 伤害冒字(03 文档 6.1/6.2;main 每帧转发 battle.drainFloatTexts 事件)=====
-  // ev={kind,x,y,n?,el?,fromAngle?,jitter?,importance?}:颜色/文案/重要度按 FT_STYLE 映射;
-  // 三段运动(寿命 1.2s):①p<0.12 爆发喷出(速度×6,scale 0.2→peak)②p<0.3 减速外漂(6×→1× 线性衰减)
-  // ③其后缓升(-20px/s)+缩小淡出;方向缺省=向上;fromAngle 加 ±jitter 抖动(弹道 0.7/跳伤 0.8,6.3)。
+  // ===== v0.3 伤害冒字(M8 A 运动模型;main 每帧转发 battle.drainFloatTexts 事件)=====
+  // ev={kind,x,y,n?,el?,fromAngle?,jitter?,importance?,crit?}:
+  // - 颜色/文案/重要度按 FT_STYLE 映射;crit=true(6.2d 暴击)→ 金色/字号×1.4/过冲更强/寿命 1.25s;
+  // - 运动(A):初速=speed×4 沿 fromAngle(缺省向上)±jitter 抖动(弹道 0.7/跳伤 0.8),指数阻力 3.2
+  //   + 微重力 90;pop 0.14s 过冲(easeOutBack 0.3→peak)后 0.12s 回落 1.0;末 30% 淡出;
+  // - 整条一体(2026-10-17 需求方口径变更,替代原方案 E 逐位):「击破」/数值等多字文本**不拆位**,
+  //   整串同帧起跳同步运动,一条文本即一条冒字(绘制层 textAlign=center 以 ev.x 居中)。
   combatFloat(ev) {
     const st = FT_STYLE[ev.kind];
     if (!st) return;
     const imp = ev.importance ?? st.imp;
-    const size = st.size;
-    const speed = 50 + imp * 40;      // 重要度分级(6.1:50/90/130)
-    const peak = 0.9 + imp * 0.3;     // peakScale(0.9/1.2/1.5)
+    const crit = !!ev.crit;
+    const size = crit ? Math.round(st.size * CRIT_SIZE_MULT) : st.size;
+    const speed = 50 + imp * 40;                    // 重要度分级(6.1:50/90/130)→初速 ×4
+    const peak = crit ? CRIT_PEAK : 0.9 + imp * 0.3; // peakScale(0.9/1.2/1.5;暴击 1.38)
+    const life = crit ? CRIT_LIFE : (imp === 2 ? FT_LIFE_IMP2 : FT_LIFE);
+    const color = crit ? CRIT_COLOR : st.color(ev);
     const jitter = ev.jitter ?? (ev.fromAngle != null ? 0.7 : 0.8);
     const base = ev.fromAngle != null ? ev.fromAngle : -Math.PI / 2; // 缺省向上
-    const a = base + (Math.random() - 0.5) * 2 * jitter;
+    const text = st.fmt(ev);
+    const charN = [...text].length; // 字符数(上限 64 仍按"位"计数口径,6.1)
     // 防重叠(6.1):同位置(±24px)已有冒字则向上推 min(fy, ft.y - size×1.1)
     let y = ev.y;
     for (const t of this.combatTexts) {
       if (Math.abs(t.x - ev.x) < 24 && Math.abs(t.y - y) < 24) y = Math.min(y, t.y - size * 1.1);
     }
-    // 上限 64(REQ-M7-02 F3 修正):候选=现有条目+新事件,弃 importance 最低、**最早入队**者;
-    // 先后用单调入队序号 seq(同帧连续加入 t 均为 0,无法区分先后——seq 恒可区分);
-    // 若新事件本身最差→不入队(64 条 imp2 后进 imp0 → 保留 64 条 imp2)
+    // 上限 64(REQ-M7-02 F3;M8 整组原子口径,计数单位=字符位):候选=现有整条+本事件;
+    // 新事件 importance 低于全部存量 → 整条丢弃(REQ-M7-01 F3);否则弃 importance 最低、
+    // 最早入队整条(一条文本一条记录,天然原子,无残缺半组问题)
     this._seq = (this._seq || 0) + 1;
-    if (this.combatTexts.length >= 64) {
-      const cand = { imp, seq: this._seq };
-      let worst = -1; // -1=新事件
-      for (let i = 0; i < this.combatTexts.length; i++) {
-        const c = this.combatTexts[i];
-        const w = worst < 0 ? cand : this.combatTexts[worst];
-        if (c.imp < w.imp || (c.imp === w.imp && c.seq < w.seq)) worst = i; // 同 imp:seq 最小=最早入队
+    const totalChars = () => this.combatTexts.reduce((a, c) => a + c.charN, 0);
+    while (totalChars() + charN > 64) {
+      let wImp = Infinity, wSeq = Infinity; // 现有最差组
+      for (const c of this.combatTexts) {
+        if (c.imp < wImp || (c.imp === wImp && c.seq < wSeq)) { wImp = c.imp; wSeq = c.seq; }
       }
-      if (worst < 0) return; // 新事件 importance 最低且最新 → 丢弃新事件
-      this.combatTexts.splice(worst, 1);
+      if (this.combatTexts.length === 0 || imp < wImp) return; // 新组最差 → 整条丢弃
+      this.combatTexts = this.combatTexts.filter(c => !(c.imp === wImp && c.seq === wSeq));
     }
+    const a = base + (Math.random() - 0.5) * 2 * jitter;
+    const v0 = speed * FT_V0_MULT * (0.92 + Math.random() * 0.16); // 初速 ±8% 自然散布
     this.combatTexts.push({
-      x: ev.x, y, text: st.fmt(ev), color: st.color(ev), size, imp, seq: this._seq, t: 0, life: FT_LIFE,
-      dx: Math.cos(a), dy: Math.sin(a), speed, peak,
+      x: ev.x, y, text, color, size, imp, seq: this._seq, charN,
+      t: 0, life,
+      vx: Math.cos(a) * v0, vy: Math.sin(a) * v0, peak,
     });
   }
 
@@ -112,19 +138,24 @@ export class FxLayer {
     this.particles = this.particles.filter(p => p.t < p.life);
     for (const f of this.floaters) f.t += dt;
     this.floaters = this.floaters.filter(f => f.t < f.life);
-    // 伤害冒字三段运动(增量式位移;段③缓升 20px/s)
+    // M8 A 物理:指数阻力(液体阻力感)+ 微重力下垂(整条一体,单步离散积分)
     for (const c of this.combatTexts) {
       c.t += dt;
-      const p = c.t / c.life;
-      let v; // 段① 6×speed 恒速喷出;段② 6×speed→speed 线性衰减;段③ 0(改缓升)
-      if (p < 0.12) v = c.speed * 6;
-      else if (p < 0.3) { const k = (p - 0.12) / 0.18; v = c.speed * (6 - 5 * k); }
-      else v = 0;
-      c.x += c.dx * v * dt;
-      c.y += c.dy * v * dt;
-      if (p >= 0.3) c.y -= 20 * dt;
+      const drag = Math.exp(-FT_DRAG * dt);
+      c.vx *= drag; c.vy *= drag;
+      c.vy += FT_GRAV * dt;
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
     }
     this.combatTexts = this.combatTexts.filter(c => c.t < c.life);
+  }
+
+  // pop→回落→恒定 scale(M8:过冲后回落 1.0 保持基础字号可读,不再缩小消失)
+  _scale(c) {
+    const ct = Math.max(0, c.t);
+    if (ct < FT_POP_T) return 0.3 + (c.peak - 0.3) * easeOutBack(ct / FT_POP_T);
+    if (ct < FT_POP_T + FT_SETTLE_T) return c.peak + (1 - c.peak) * ((ct - FT_POP_T) / FT_SETTLE_T);
+    return 1;
   }
 
   draw(ctx) {
@@ -146,15 +177,12 @@ export class FxLayer {
       ctx.fillText(f.text, f.x, f.y - 40 * k);
     }
     ctx.globalAlpha = 1;
-    // 伤害冒字绘制(三段 scale:0.2→peak **弹跳**(easeOutBack 过冲,REQ-M7-01 F3)/ peak / 线性缩小;imp2 上移 12px)
-    // 黑色描边(2026-10-17 需求方反馈:先 strokeText 后 fillText,描边在外圈)
+    // 伤害冒字绘制(M8 A:pop 过冲→回落 1.0;末 30% 淡出;黑色描边在外圈;整条一体居中)
     ctx.lineJoin = 'round'; // 描边圆角避免尖刺
     for (const c of this.combatTexts) {
       const p = c.t / c.life;
-      const scale = p < 0.12
-        ? 0.2 + (c.peak - 0.2) * easeOutBack(p / 0.12)
-        : p < 0.3 ? c.peak : c.peak * Math.max(0, 1 - (p - 0.3) / 0.7);
-      ctx.globalAlpha = p < 0.3 ? 1 : Math.max(0, 1 - (p - 0.3) / 0.7);
+      const scale = this._scale(c);
+      ctx.globalAlpha = p < FT_FADE_FROM ? 1 : Math.max(0, 1 - (p - FT_FADE_FROM) / (1 - FT_FADE_FROM));
       const font = Math.max(6, Math.round(c.size * scale));
       ctx.font = `bold ${font}px 'Nunito','Noto Sans SC',sans-serif`;
       const ty = c.y - (c.imp === 2 ? 12 : 0);

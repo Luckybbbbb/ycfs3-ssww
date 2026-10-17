@@ -82,11 +82,12 @@ export function render(ctx, engine, hud) {
       roundRect(ctx, bx - 2, by - 2, bw + 4, 10, 5); ctx.fill();
       ctx.fillStyle = '#e5484d';
       roundRect(ctx, bx, by, Math.max(0, bw * e.hp / e.maxHp), 6, 3); ctx.fill();
-      // 状态标记(03 文档 6.2b:4 种——灼烧🔥/减速❄/束缚🌿/眩晕💫;字段非零显示、清零消失)
-      if (e.burn) { ctx.fillStyle = '#ff7744'; ctx.font = '16px sans-serif'; ctx.fillText('🔥', e.x + 30, e.y - t.srcH * t.scale / 2 - 24); }
-      if (e.slowT > 0) { ctx.fillStyle = '#88ccff'; ctx.font = '16px sans-serif'; ctx.fillText('❄', e.x - 38, e.y - t.srcH * t.scale / 2 - 24); }
-      if (e.bindT > 0) { ctx.fillStyle = '#88dd88'; ctx.font = '16px sans-serif'; ctx.fillText('🌿', e.x - 57, e.y - t.srcH * t.scale / 2 - 24); }
-      if (e.stunT > 0) { ctx.fillStyle = '#eecc88'; ctx.font = '16px sans-serif'; ctx.fillText('💫', e.x - 19, e.y - t.srcH * t.scale / 2 - 24); }
+      // 状态标记(03 文档 6.2b:4 种——灼烧🔥/减速❄/束缚🌿/眩晕💫;字段非零显示、清零消失;
+      // M8 配色整改:颜色引用 GEM_SRC 单一定义源,与元素语义一致)
+      if (e.burn) { ctx.fillStyle = GEM_SRC.fire; ctx.font = '16px sans-serif'; ctx.fillText('🔥', e.x + 30, e.y - t.srcH * t.scale / 2 - 24); }
+      if (e.slowT > 0) { ctx.fillStyle = GEM_SRC.water; ctx.font = '16px sans-serif'; ctx.fillText('❄', e.x - 38, e.y - t.srcH * t.scale / 2 - 24); }
+      if (e.bindT > 0) { ctx.fillStyle = GEM_SRC.wood; ctx.font = '16px sans-serif'; ctx.fillText('🌿', e.x - 57, e.y - t.srcH * t.scale / 2 - 24); }
+      if (e.stunT > 0) { ctx.fillStyle = GEM_SRC.earth; ctx.font = '16px sans-serif'; ctx.fillText('💫', e.x - 19, e.y - t.srcH * t.scale / 2 - 24); }
     }
     // ===== 敌方弹幕(暗红光点,FR-1.2) =====
     for (const b of battle.ebolts) {
@@ -590,14 +591,22 @@ function drawEnemy(ctx, e, t, scale) {
     const p = 1 - e.attackAnimT / e.animDur;
     f = frames[Math.min(frames.length - 1, Math.floor(p * frames.length))];
   } else {
-    f = seqFrame(frames, worldT + e.y, t.fps);
+    // M8-F1:待机帧用受击者自身动画时钟 e.animClock(enemy 构造初始化、update 非冻结帧累积,
+    // 卡肉期不推进→待机帧定格;取代全局 worldT——REQ-M8-02 F1:构造即初始化,无回退分支)
+    f = seqFrame(frames, e.animClock + e.y, t.fps);
   }
   const w = t.srcW * t.scale * scale, h = t.srcH * t.scale * scale;
+  // M8 受击反馈(03 文档 6.7):白闪=贴图白色剪影(filter 亮度归零反相)+ 冻结期水平微抖(SF/DNF 口径)
+  const flashing = e.hitFlashT > 0;
+  const shake = e.hitStopT > 0 ? Math.sin((e.hitFlashT + e.hitStopT) * 90) * 3 : 0;
+  const ex = e.x + shake;
   if (f && f.complete && f.naturalWidth > 0) {
-    ctx.drawImage(f, e.x - w / 2, e.y - h / 2, w, h);
+    if (flashing) { ctx.save(); ctx.filter = 'brightness(0) invert(1)'; }
+    ctx.drawImage(f, ex - w / 2, e.y - h / 2, w, h);
+    if (flashing) ctx.restore();
   } else {
-    ctx.fillStyle = '#5fae5f';
-    ctx.beginPath(); ctx.ellipse(e.x, e.y, (t.radius || 45) * scale, (t.radius || 45) * 1.4 * scale, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = flashing ? '#ffffff' : '#5fae5f';
+    ctx.beginPath(); ctx.ellipse(ex, e.y, (t.radius || 45) * scale, (t.radius || 45) * 1.4 * scale, 0, 0, Math.PI * 2); ctx.fill();
   }
 }
 

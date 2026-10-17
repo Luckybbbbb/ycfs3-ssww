@@ -7,7 +7,7 @@
 
 import { Enemy, ENEMY_SPAWN_X, MIN_QUEUE_GAP } from './enemy.js';
 import { advanceBolt, findHitTargets, advanceEnemyBolt, enemyBoltHitsPlayer } from './projectile.js';
-import { PLAYER_X, BOLT_SPEED, boltDamage, BURN_COEFF, LEECH_PCT, SHIELD_ATK, SLOW_PCT } from '../skills/registry.js';
+import { PLAYER_X, BOLT_SPEED, boltDamage, BURN_COEFF, LEECH_PCT, SHIELD_ATK, SLOW_PCT, critChance, CRIT_MULT } from '../skills/registry.js';
 import { buildWave, ENEMY_TYPES,
          enemyHp, enemyDmg, barrageDmg, enemySpd, attackInterval, barrageCount, fanAngle, barrageSpeed } from './wave.js';
 import { ENEMY_STOP_X } from '../skills/registry.js';
@@ -92,6 +92,11 @@ export class Battle {
   _fallbackRng() {
     this._rngFallback = (this._rngFallback * 1103515245 + 12345) % 2147483648;
     return this._rngFallback / 2147483648;
+  }
+
+  // 统一随机源入口(暴击 roll 等战斗内随机;注入 rng 时可复现,否则走 LCG 兜底)
+  roll() {
+    return this.rng ? this.rng() : this._fallbackRng();
   }
 
   // 潮汐刷怪:同屏 ≤5(每潮 ≤5 只);上一潮清空后刷下一潮。
@@ -233,15 +238,22 @@ export class Battle {
   // center:范围/溅射形态的爆炸中心(REQ-M7-01 F1:溅射与 tier4/5 范围伤害的方向=中心→被击敌,
   // 不用帧末弹位置——帧末弹已越过命中点,方向失真);直击缺省用弹速方向
   applyHit(b, e, mult = 1, center = null) {
-    const dmg = Math.round(b.rawDmg * mult);
-    const r = e.hurt(dmg);
-    this.log.push({ t: this.clock, ev: 'hit', el: b.el, tier: b.tier, dmg, mult, hpAfter: e.hp, killed: r.killed, target: this.enemies.indexOf(e) });
+    // 暴击(2026-10-17 M8;03 文档 6.2d):仅弹道直击(mult=1,溅射/多段系数不暴击);
+    // 率=critChance(b.tier)=5%+档位×4%,倍率 CRIT_MULT=1.5,先乘后结算(N 仍=实际 applied)
+    const isSplash = mult !== 1 && b.splash;
+    let dmg = Math.round(b.rawDmg * mult);
+    let crit = false;
+    if (!isSplash) {
+      crit = this.roll() < critChance(b.tier);
+      if (crit) dmg = Math.round(dmg * CRIT_MULT);
+    }
+    const r = e.hurt(dmg, { flash: true, crit });
+    this.log.push({ t: this.clock, ev: 'hit', el: b.el, tier: b.tier, dmg, mult, crit, hpAfter: e.hp, killed: r.killed, target: this.enemies.indexOf(e) });
     if (r.killed) this.registerKill(e);
     // 伤害冒字(v0.3 6.2a/6.4):N=本次结算实际 applied(致死溢出受剩余 HP 限制,enemy.hurt min(hp,dmg));
     // 方向(6.3,REQ-M7-01 F1):溅射/范围=爆炸中心→被击敌;直击=弹速方向(makeBolt vx/vy 真实弹速)
-    const isSplash = mult !== 1 && b.splash;
     this.floatEvent({
-      kind: isSplash ? 'splash' : 'dmg', x: e.x, y: e.y, n: r.applied, el: b.el,
+      kind: isSplash ? 'splash' : 'dmg', x: e.x, y: e.y, n: r.applied, el: b.el, crit,
       fromAngle: center
         ? Math.atan2(e.y - center.y, e.x - center.x)
         : (typeof b.vx === 'number' || typeof b.vy === 'number' ? Math.atan2(b.vy || 0, b.vx == null ? -1 : b.vx) : null),
@@ -336,6 +348,14 @@ export class Battle {
     if (this.shakeT > 0) this.shakeT -= dt;
     if (this.playerAttackT > 0) this.playerAttackT -= dt;
     if (this.invincibleT > 0) this.invincibleT -= dt; // 无敌按现实时间衰减(道具效果,02 第 6 节)
+    // M8-F2:敌人受击反馈计时按现实时间衰减——死敌(update 不再调用)与结算定格期(VICTORY/DEFEAT
+    // 提前 return)也要到期,否则最后一杀的白闪/卡肉常驻结算画面
+    const m8Fighting = this.phase === PHASE.FIGHTING;
+    for (const e of this.enemies) {
+      if (m8Fighting && e.alive) continue; // 活敌在 FIGHTING 内由 e.update 衰减(避免双计)
+      e.hitFlashT = Math.max(0, (e.hitFlashT || 0) - dt);
+      e.hitStopT = Math.max(0, (e.hitStopT || 0) - dt);
+    }
     if (this.phase !== PHASE.FIGHTING) return; // 结算后冻结(胜负弹层接管,FR-1.4)
     const prevClock = this.clock;
     this.clock += dt;

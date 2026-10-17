@@ -17,6 +17,12 @@ export const BOLT_SPEED = 600;
 export const PLAYER_X = 110;   // FR-1.1 站位
 export const ENEMY_STOP_X = 560; // 停位(距主角 450px)
 
+// 暴击(2026-10-17 M8 需求;03 文档 6.2d):仅弹道直击(mult=1 的 applyHit 路径,溅射不暴击)
+export const CRIT_BASE = 0.05;     // 基础暴击率
+export const CRIT_PER_TIER = 0.04; // 每档位 +4%(t1 9% / t2 13% / t3 17% / t4 21% / t5 25%)
+export const CRIT_MULT = 1.5;      // 暴击伤害倍率
+export function critChance(tier) { return CRIT_BASE + CRIT_PER_TIER * tier; }
+
 // 初始装配(4 槽,D6):火/水/木/金;土行不装配 → 消除仅积档位不释放(FR-3.3 验收对照)
 export const DEFAULT_LOADOUT = ['fire', 'water', 'wood', 'metal'];
 
