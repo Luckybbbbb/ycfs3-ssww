@@ -190,7 +190,9 @@ export function render(ctx, engine, hud) {
       pf = seqFrame(PLAYER_FRAMES, worldT, 8);
     }
     if (pf && pf.complete && pf.naturalWidth > 0) {
-      ctx.drawImage(pf, PLAYER_X - 90, 448 - 320, 180, 320);
+      // M11-05:待机 idle 帧水平镜像(素材面左);攻击帧 walk_start 朝向正确,保持原样不翻
+      if (battle.playerAttackT > 0) ctx.drawImage(pf, PLAYER_X - 90, 448 - 320, 180, 320);
+      else drawFlipH(ctx, pf, PLAYER_X - 90, 448 - 320, 180, 320);
     } else {
       ctx.fillStyle = '#3f6fb5';
       roundRect(ctx, PLAYER_X - 40, 448 - 220, 80, 220, 24); ctx.fill();
@@ -628,6 +630,16 @@ function drawFlatBackdrop(ctx) {
   ctx.fillRect(0, 396, 720, 52);
 }
 
+// M11-05 朝向整改:素材帧默认朝向与站位需求相反——主角 idle 面左(需面右)、敌人面右(需面左),
+// 仅攻击帧 walk_start 朝向正确;统一用水平镜像绘制修正
+function drawFlipH(ctx, img, x, y, w, h) {
+  ctx.save();
+  ctx.translate(x + w / 2, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(img, -w / 2, y, w, h);
+  ctx.restore();
+}
+
 function drawEnemy(ctx, e, t, scale) {
   const frames = ENEMY_FRAMES[e.name] || ENEMY_FRAMES.slime;
   // 攻击动画:开火后 animDur 内按 2×fps 单次正播;其余时间按原 fps 慢速循环(待机)
@@ -647,7 +659,7 @@ function drawEnemy(ctx, e, t, scale) {
   const ex = e.x + shake;
   if (f && f.complete && f.naturalWidth > 0) {
     if (flashing) { ctx.save(); ctx.filter = 'brightness(0) invert(1)'; }
-    ctx.drawImage(f, ex - w / 2, e.y - h / 2, w, h);
+    drawFlipH(ctx, f, ex - w / 2, e.y - h / 2, w, h); // M11-05:敌人帧整体水平镜像(面左向主角)
     if (flashing) ctx.restore();
   } else {
     ctx.fillStyle = flashing ? '#ffffff' : '#5fae5f';
@@ -830,7 +842,7 @@ function drawStartScreen(ctx, hud) {
   // 主角立绘(player idle 序列帧,绘制 210×374)
   const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
   if (pf && pf.complete && pf.naturalWidth > 0) {
-    ctx.drawImage(pf, 255, 420, 210, 374);
+    drawFlipH(ctx, pf, 255, 420, 210, 374); // M11-05:idle 立绘水平镜像(面右)
   } else {
     ctx.fillStyle = '#3f6fb5';
     roundRect(ctx, 285, 440, 150, 340, 30); ctx.fill();
@@ -892,7 +904,7 @@ function drawMenuScreen(ctx, hud) {
     } else if (bossImg && bossImg.complete && bossImg.naturalWidth > 0) {
       ctx.save();
       roundRect(ctx, tx, tyy, th, th, 16); ctx.clip();
-      ctx.drawImage(bossImg, tx + 5, tyy + 5, th - 10, th - 10);
+      drawFlipH(ctx, bossImg, tx + 5, tyy + 5, th - 10, th - 10); // M11-05:与战斗中敌人朝向一致(面左)
       ctx.restore();
     } else {
       ctx.fillStyle = '#9f927d'; ctx.font = FONT(20);
@@ -970,7 +982,7 @@ function drawLoadoutScreen(ctx, hud) {
   roundRect(ctx, 52, 160, 160, 290, 16); ctx.fill();
   if (pf && pf.complete && pf.naturalWidth > 0) {
     ctx.save(); roundRect(ctx, 52, 160, 160, 290, 16); ctx.clip();
-    ctx.drawImage(pf, 72, 170, 120, 214);
+    drawFlipH(ctx, pf, 72, 170, 120, 214); // M11-05:idle 立绘水平镜像(面右)
     ctx.restore();
   }
   ctx.textAlign = 'left';
