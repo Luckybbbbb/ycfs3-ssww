@@ -372,8 +372,12 @@ test('M11-06 备战交互:槽位更换按钮命中区/换装列表过滤已装�
   assert.ok(r1.rec.fillTexts.some(t => t.includes('关 闭')), 'pick 关闭按钮');
   assert.ok(r1.rec.fillTexts.some(t => t.includes('未拥有')), '未拥有灰显标注');
   // F13 整改:数值列按技能类型口径——ATK=10/Lv3(mkHud 档):基础弹(伤害)T1=10、盾 20、火弹已装配不在列
-  assert.equal(r1.rec.fillTexts.filter(t => ['伤害', '护盾值', '直击伤害', '每秒回复', '减速效果'].includes(t)).length, 11, '列表 11 行(已装配 4 项过滤后)各带类型化数值标签(F13)');
+  assert.equal(r1.rec.fillTexts.filter(t => ['伤害', '护盾值', '直击伤害', '每秒回复', '减速效果', '每秒伤害'].includes(t)).length, 11, '列表 11 行(已装配 4 项过滤后)各带类型化数值标签(F13)');
   assert.ok(r1.rec.fillTexts.includes('12'), '基础弹 T1 伤害=ATK12×1.0=12(F13 修复前 dmgCoef 缺省按 0 显示 0)');
+  // F13 残留整改:bind(藤蔓束缚)=每秒 ATK×0.3×档(ATK=12)——首档 4(修复前误按 dmgCoef=1 显示 12)
+  assert.ok(r1.rec.fillTexts.includes('每秒伤害'), 'bind 行类型化标签=每秒伤害');
+  assert.ok(r1.rec.fillTexts.includes('4'), '藤蔓束缚 T1 每秒伤害=12×0.3×1.0→4(F13 残留修复前显示 12)');
+  assert.ok(r1.rec.fillTexts.some(t => t.includes('每秒 ATK×0.3')), 'bind 描述含每秒系数');
   const r2 = mkCtx();
   render(r2.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout', loadout: () => ({ selLevel: 2, selSlot: 0, panel: 'skillTips', pickSlot: -1, tipsSlot: 0 }) }));
   assert.ok(r2.rec.fillTexts.some(t => t.includes('火弹')), 'tips 显示槽位技能名');

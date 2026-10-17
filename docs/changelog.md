@@ -293,5 +293,11 @@
   4. **F14(P2) 旧棋盘瘫痪态使备战长按失效**:busy/canActInBusy 读棋盘状态而非屏态——战败棋盘 PARALYZED 残留时非战斗屏手势被作废。整改:**busy 门控加 screen==='playing' 条件**(局外输入不受已结束战斗的棋盘状态控制,战斗口径不变);CDP 产品入口回归(瘫痪残留+DEFEAT→去备战→长按 tips 弹出)。
   5. **F7 残留(P2) 布局重叠与证据缺口**:①「技能装配」说明起点 150→175(标题实宽 ~108px 尾≈164,修复前同基线重叠);②换装面板首行 y 180→200(说明基线 184,修复前重叠);③行描述超宽截断 fitText(≤400px,给右列数值留宽);④三态卡片截图补造档步骤(lastLevelCleared=3,1~3 重打/4 当前/5 锁定同屏 m11-05-11);⑤视口证据改 00 文档口径 360×640/1440×2560 战斗双区布局(m11-05-viewport-battle-*,断言 canvas 等比 letterbox 居中)。
   6. **F10 残留(P2) 第二轮 manifest 也被改写,如实补充披露**:m11-02-manifest.json 当前 SHA=5334eda84849…,与 02 轮有效裁决记录的原件 SHA=ceb7026f699dea3… 不符——该文件在 M11-03 轮被同名重写(候选/证据路径改指 03 轮内容,request_id 字段仍为 02),**原件无法恢复,如实披露,不重造**(TDD 标准「旧失败证据保留原样,不删改」;首轮 m11-manifest.json 披露口径同理适用于本轮)。
-  7. 注释/文档更正:render.js:34「保留懒加载自建为兜底」→「自建加载仅发生在显式调用 ensureFallbackImages 时」;changelog PRIOR_RULING 表述对齐失败 receipt 与 04 轮封套;03 轮 manifest generated_by 自述「依赖 30 项」实为 **29 项**(deps 列表重复项去重后,冻结证据不改字节,口径以本条为准)。
-  验证:全量单测 **258/258**+returncode 0 配对;CDP **48/48 exit 0**(m11-05-cdp.json;截图 14 张含 pick/tips/三态/战斗视口)。候选重新冻结,以 REQ-SSWW-M11-v0.1-05 同链 ycfs3-m11-v0.1 续审。
+  7. 注释/文档更正:render.js:34「保留懒加载自建为兜底」→「自建加载仅发生在显式调用 ensureFallbackImages 时」;changelog PRIOR_RULING 表述对齐失败 receipt 与 04 轮封套;03 轮 manifest 依赖计数勘误(M11-05 裁决):第三轮 manifest 实有 **30 项不同依赖键**,M11-05 轮曾更正为「实为 29 项」不成立,以本条为准。
+  验证:全量单测 **258/258**+returncode 0 配对;CDP **48/48 exit 0**(m11-05-cdp.json;绑定截图 **15 张**含 pick/tips/三态/战斗视口;证据 21 项)。候选重新冻结,以 REQ-SSWW-M11-v0.1-05 同链 ycfs3-m11-v0.1 续审。
+- REQ-SSWW-M11-v0.1-05 裁决 **RULING=REJECTED**(receipt validation=PASS/cli_exit_code=0 已校验;F11/F12/F14 闭合,F10 披露接受;剩 F13 残留+F7 布局/造档证据),逐项整改:
+  1. **F13 残留(P2) 藤蔓束缚数值错误+公式标签不实**:render skillValueLine 未处理 bind——误按 dmgCoef=1 显示普通伤害(12/19/29/41/55),实际 behaviors.js:63 每秒 ATK×0.3×档。整改:**bind 分支=每秒伤害(ATK×dpsCoef×档,ATK=12 → 4/6/9/12/17)**;**formula 标签随类型生成**(伤害=ATK×coef×档/束缚=每秒 ATK×0.3×档/光环=最大HP×1%×档/领域=固定效果),不再统一写「ATK×档位倍率」;单测补 bind 行标签+首档=4 断言。
+  2. **F7 残留(P2) 已通关卡片/战斗底栏/警告 chip 重叠**:①「已通关」chip 380/y+30 → **560/y-14**(与「当前进度」chip 同位互斥,修复前压住关卡名称 30px 字尾);②底栏统计改**左对齐 x=104/17px**(止于 ~434),资产右对齐 620(起 ~470)——修复前统计居中(160~560)与资产同基线重叠;③备战警告 chip 文字**居中对齐**(修复前继承 left 却从 chip 中心 574 起绘溢出)。
+  3. **F7 造档证据与申报不符**:写入 localStorage 后仅切 screen 未重读。整改:**造档后 reload+轮询就绪**,先断言 `lastLevelCleared=3`/`unlockedLevel=4` 再采集三态截图;补**高关卡(第 4 关)备战截图**(m11-05-12-loadout-l4.png)。
+  4. 文档/计数更正:05 轮绑定截图实为 **15 张**/证据 **21 项**(generated_by 误写 14/18,冻结件不改字节,以本条为准);第三轮 manifest 依赖实为 **30 项不同键**(前轮「实为 29」更正不成立,已撤);02 文档 §2.2「FALLING 等忙态输入整体忽略」同步为 M11 输入策略修订口径(演出期接收输入/瘫痪作废)。
+  验证:全量单测 **258/258**+returncode 0 配对;CDP **51/51 exit 0**(m11-06-cdp.json;截图 17 张)。候选重新冻结,以 REQ-SSWW-M11-v0.1-06 同链 ycfs3-m11-v0.1 续审。

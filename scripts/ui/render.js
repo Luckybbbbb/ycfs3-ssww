@@ -475,11 +475,15 @@ export function render(ctx, engine, hud) {
   ctx.strokeStyle = '#dcd8d1';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(0, 1224); ctx.lineTo(720, 1224); ctx.stroke();
+  // M11-05 F7 整改:统计左对齐 x=104/字号 17(⏸ 按钮右侧起,宽 ~330 止于 ~434),资产右对齐
+  // 620(宽 ~150 起 ~470)——修复前统计居中 360(160~560)与资产(470~620)同基线重叠
   ctx.fillStyle = '#9f927d';
-  ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.font = "17px 'Nunito','Noto Sans SC',sans-serif";
   const st = engine.paralyzed ? '棋盘瘫痪 · 等待恢复'
     : `第 ${battle ? battle.level : 1} 关 ${LEVEL_META[(battle ? battle.level : 1) - 1]?.name || ''} · 击杀 ${battle ? battle.kills : 0} · 消除 ${hud.cleared ? hud.cleared() : 0}`;
-  ctx.fillText(st, 360, 1258);
+  ctx.textAlign = 'left';
+  ctx.fillText(st, 104, 1258);
+  ctx.textAlign = 'center';
   // M11 底栏操作按钮(UI 设计稿 04:⏸ 暂停 / ⚙ 设置)
   drawIconBtn(ctx, UI.battle.pauseBtn, '⏸');
   drawIconBtn(ctx, UI.battle.settingsBtn, '⚙');
@@ -488,7 +492,7 @@ export function render(ctx, engine, hud) {
   if (prof0) {
     ctx.textAlign = 'right';
     ctx.fillStyle = '#ffe9b8';
-    ctx.font = "18px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.font = "17px 'Nunito','Noto Sans SC',sans-serif";
     ctx.fillText(`💰 ${prof0.coins ?? 0}  ⛏ ${prof0.materials ?? 0}`, 620, 1258);
     ctx.textAlign = 'center';
   }
@@ -982,7 +986,9 @@ function drawMenuScreen(ctx, hud) {
     ctx.textAlign = 'center';
     // 状态 chip + 按钮(右列;M11-03 F7:按钮区 x≥510 与 chips 左列完全错开)
     if (cleared) {
-      chip(ctx, 370, y + 30, '已通关', '#e6f9f6', '#0e7a70');
+      // M11-05 F7 整改:「已通关」chip 380/y+30 → 560/y-14(修复前压住关卡名称 30px 字尾 210~480);
+      // 与「当前进度」chip 同位互斥(cleared/current 两态不同时绘制),按钮区 y+45 起不相碰
+      chip(ctx, 560, y - 14, '已通关', '#e6f9f6', '#0e7a70');
       drawBtn(ctx, uiCardBtn(i), '重打', 'ghost', 26);
     } else if (current) {
       chip(ctx, 560, y - 14, '当前进度', '#fff', '#794f27');
@@ -1075,7 +1081,10 @@ function drawLoadoutScreen(ctx, hud) {
     roundRect(ctx, 482, warnY - 26, 184, 40, 20); ctx.fill();
     ctx.strokeStyle = '#e05a5a'; ctx.lineWidth = 2; roundRect(ctx, 482, warnY - 26, 184, 40, 20); ctx.stroke();
     ctx.fillStyle = '#e05a5a'; ctx.font = FONT(19, 'bold');
+    // M11-05 F7 整改:chip 内文字居中(修复前继承 left 对齐却从 chip 中心 x=574 起绘,溢出右缘)
+    ctx.textAlign = 'center';
     ctx.fillText('⚠ 等级低于建议', 574, warnY);
+    ctx.textAlign = 'left';
   }
   ctx.textAlign = 'center';
   // 技能装配 4 槽(M11 设计稿:120×120 图标+技能名;点击选中→技能库换装;
@@ -1184,15 +1193,21 @@ function drawSwapIcon(ctx, cx, cy) {
   ctx.restore();
 }
 
-// M11-04(F13 整改):技能档位数值行——系数缺省 1(与 library.js tiered 同源:atk×(dmgCoef??1)×TIER_MULT),
-// 修复前基础弹 dmgCoef 缺省按 0 显示全 0;非伤害技能明确口径:aura=每秒回复(maxHp×1%×档)、
-// field=减速固定值(behaviors.js 慢区不乘档)、shield=护盾值(ATK×dmgCoef×档)
+// M11-05(F13 残留整改):技能档位数值行——口径与 behaviors.js 各内核逐一同源:
+//   伤害类(bolt/chain/multi/pulse/dotzone 直击)=ATK×(dmgCoef??1)×TIER_MULT(library.js tiered 同源);
+//   bind(藤蔓束缚)=每秒 ATK×dpsCoef(0.3)×档(behaviors.js:63,修复前误按 dmgCoef=1 显示普通伤害);
+//   shield=护盾值 ATK×dmgCoef×档;aura=每秒回复 maxHp×1%×档(behaviors.js:213,依据最大 HP);
+//   field=减速固定值(behaviors.js:155 慢区不乘档)。formula 标签随类型生成,不再统一写「ATK×档位倍率」
 function skillValueLine(sk, atk, maxHp) {
-  if (sk.kind === 'aura') return { label: '每秒回复', text: TIER_MULT.map(m => Math.round(maxHp * 0.01 * m)).join(' / ') };
-  if (sk.kind === 'field') return { label: '减速效果', text: `-${sk.params.slowPct}% · 各档相同 · 持续 ${sk.params.duration}s` };
+  if (sk.kind === 'bind') {
+    const dps = sk.params.dpsCoef ?? 0.3;
+    return { label: '每秒伤害', formula: `每秒 ATK ${atk} × ${dps} × 档位倍率`, text: TIER_MULT.map(m => Math.round(atk * dps * m)).join(' / ') };
+  }
+  if (sk.kind === 'aura') return { label: '每秒回复', formula: `每秒 最大HP ${maxHp} × 1% × 档位倍率`, text: TIER_MULT.map(m => Math.round(maxHp * 0.01 * m)).join(' / ') };
+  if (sk.kind === 'field') return { label: '减速效果', formula: '固定效果 · 各档相同', text: `-${sk.params.slowPct}% · 持续 ${sk.params.duration}s` };
   const coef = sk.params?.dmgCoef ?? 1;
   const label = sk.kind === 'shield' ? '护盾值' : sk.kind === 'dotzone' ? '直击伤害' : '伤害';
-  return { label, text: TIER_MULT.map(m => Math.round(atk * coef * m)).join(' / ') };
+  return { label, formula: `ATK ${atk} × ${coef === 1 ? '1' : coef} × 档位倍率`, text: TIER_MULT.map(m => Math.round(atk * coef * m)).join(' / ') };
 }
 function skillDetailText(sk) {
   const p = sk.params || {};
@@ -1241,11 +1256,11 @@ function drawSkillTips(ctx, prof, lo) {
   ctx.font = FONT(24);
   ctx.fillStyle = '#5a4a32';
   wrapText(ctx, skillDetailText(sk), 118, 606, 484, 34);
-  // 档位数值(T1~T5,按当前 ATK;F13 整改:按技能类型口径,基础弹=ATK×档)
+  // 档位数值(T1~T5;F13 残留整改:公式标签随技能类型生成——伤害=ATK/束缚=每秒ATK×dps/光环=最大HP/领域=固定)
   const vline = skillValueLine(sk, atk, maxHpText(prof.level));
   ctx.font = FONT(20);
   ctx.fillStyle = '#9f927d';
-  ctx.fillText(`${vline.label}(ATK ${atk} × 档位倍率):`, 118, 682);
+  ctx.fillText(`${vline.label}(${vline.formula}):`, 118, 682);
   ctx.font = FONT(22, 'bold');
   ctx.fillStyle = '#19c8b9';
   ctx.fillText(vline.text, 118, 716);
