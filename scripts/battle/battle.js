@@ -12,6 +12,7 @@ import { buildWave, ENEMY_TYPES,
          enemyHp, enemyDmg, barrageDmg, enemySpd, attackInterval, barrageCount, fanAngle, barrageSpeed } from './wave.js';
 import { ENEMY_STOP_X } from '../skills/registry.js';
 import { tickZones, tickAura, tickBind } from '../skills/behaviors.js';
+import { killReward } from '../meta/economy.js';
 
 export const PHASE = { FIGHTING: 'FIGHTING', VICTORY: 'VICTORY', DEFEAT: 'DEFEAT' };
 
@@ -27,7 +28,9 @@ export class Battle {
     this.ebolts = [];     // 敌方弹幕(FR-1.2)
     this.clock = 0;
     this.kills = 0;
-    this.expGained = 0;
+    this.expGained = 0;      // M2 演示口径保留(单测依赖);v0.2 局内产出如下
+    this.coinsGained = 0;    // M6 v0.2 击杀产出(货币 2+w_global,Boss ×20;03 文档 2.2)
+    this.matsGained = 0;     // M6 v0.2 击杀产出(材料普通 1/Boss 20)
     this.expPerKill = expPerKill;
     this.log = [];            // 数字例复核用事件流水
     // M3 波次状态(FR-4)
@@ -65,6 +68,12 @@ export class Battle {
     this.ebolts = [];     // 清上一局敌方弹(F7:审核复算例——残留 19 伤弹带入次关)
     this.zones = [];      // 清行为区域
     this.aura = null;     // 清光环
+    this.shield = 0;      // 清上一局护盾(REQ-M4-03 F7 续审:石甲术盾不带入次关)
+    this.invincibleT = 0; // 清上一局无敌(道具免伤不跨局)
+    this.hurtT = 0;       // 清受击闪白
+    this.shakeT = 0;      // 清受击震动
+    this.coinsGained = 0; // 清本局经济产出累计(新局重计)
+    this.matsGained = 0;
     this.phase = PHASE.FIGHTING;
     this.nextWave();
   }
@@ -146,6 +155,9 @@ export class Battle {
     e._killRegistered = true;
     this.kills++;
     this.expGained += this.expFor(e);
+    const rw = killReward(e.w || this.wGlobal, !!e.isBoss); // M6 v0.2 经济产出(幂等同 kills)
+    this.coinsGained += rw.coins;
+    this.matsGained += rw.mats;
     this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss });
     return true;
   }
@@ -158,16 +170,20 @@ export class Battle {
   }
 
   // 释放判定后由 main/测试调用:按档位形态生成弹与作用(4.2 表)
+  // skill_mult 烘焙(REQ-M6-04 F5):乘数随 castResult.mult 传入,发射时快照
+  // effAtk=atk×mult 入弹(b.atkEff)——命中时刻的灼烧/土盾(applyHit)同乘,不读已恢复的 this.atk
   launch(castResult) {
     const target = this.nearestAlive();
     if (!target) return null;
     this.playerAttackT = 0.18; // 主角攻击动画(walk_start 3 帧 @16.7fps,对标 player.tscn startup)
     const el = castResult.element, tier = castResult.tier;
-    const raw = boltDamage(this.atk, el, tier); // 浮点,入账时 round(4.4)
-    this.log.push({ t: this.clock, ev: 'launch', el, tier });
+    const mult = castResult.mult || 1;
+    const effAtk = this.atk * mult;
+    const raw = boltDamage(effAtk, el, tier); // 浮点,入账时 round(4.4)
+    this.log.push({ t: this.clock, ev: 'launch', el, tier, mult });
     if (tier >= 4) {
       // 范围形态:单弹飞向最近敌,命中后以命中点为圆心 r90/tier4、r140/tier5 全额
-      const b = this.makeBolt(el, tier, raw, target);
+      const b = this.makeBolt(el, tier, raw, target, effAtk);
       b.blastR = tier === 5 ? 140 : 90;
       b.aoeAll = true;
       this.bolts.push(b);
@@ -178,7 +194,7 @@ export class Battle {
         const e = this.nearestAlive(picked);
         if (!e) break;
         picked.push(e);
-        const b = this.makeBolt(el, tier, raw, e);
+        const b = this.makeBolt(el, tier, raw, e, effAtk);
         b.splash = tier >= 3 ? { r: 60, mult: 0.5 } : null;
         this.bolts.push(b);
       }
@@ -186,11 +202,12 @@ export class Battle {
     return true;
   }
 
-  makeBolt(el, tier, raw, target) {
+  makeBolt(el, tier, raw, target, atkEff = null) {
     // target 仅决定弹道 y 与初始朝向;命中归属按路径先后(projectile.findHitTargets x 升序),
     // 不再按发射时距离冻结 flyTime(REQ-M3-03 整改 1:移动目标下原逻辑会穿过前排误中后排)
+    // atkEff:发射时刻有效攻击(atk×skill_mult,REQ-M6-04 F5);null(行为内核造弹)时命中按 this.atk
     return {
-      el, tier, rawDmg: raw, x: PLAYER_X, y: target.y,
+      el, tier, rawDmg: raw, atkEff, x: PLAYER_X, y: target.y,
       t: 0, target, lastDt: 0,
       hitSet: new Set(), done: false, blastR: 0, aoeAll: false, splash: null, blasted: false,
     };
@@ -203,8 +220,10 @@ export class Battle {
     this.log.push({ t: this.clock, ev: 'hit', el: b.el, tier: b.tier, dmg, mult, hpAfter: e.hp, killed: r.killed, target: this.enemies.indexOf(e) });
     if (r.killed) this.registerKill(e);
     // 元素能力(4.3;灼烧刷新=覆盖 dpsFloat 并只延长 until,不重置跳伤时钟——4.4)
+    // 有效攻击取发射时刻快照 b.atkEff(REQ-M6-04 F5:技能等级乘数覆盖命中时刻计算)
+    const atkEff = b.atkEff ?? this.atk;
     if (b.el === 'fire') {
-      const dps = this.atk * BURN_COEFF[b.tier - 1];
+      const dps = atkEff * BURN_COEFF[b.tier - 1];
       const until = this.clock + 3;
       if (e.burn) { e.burn.dpsFloat = dps; e.burn.until = until; }
       else e.burn = { dpsFloat: dps, until };
@@ -219,7 +238,7 @@ export class Battle {
       this.log.push({ t: this.clock, ev: 'leech', heal });
     }
     if (b.el === 'earth') {
-      const add = Math.round(this.atk * SHIELD_ATK[b.tier - 1]);
+      const add = Math.round(atkEff * SHIELD_ATK[b.tier - 1]);
       const cap = Math.round(this.maxHp * 0.3);
       this.shield = Math.min(cap, this.shield + add);
       this.log.push({ t: this.clock, ev: 'shield', add, shield: this.shield, cap });

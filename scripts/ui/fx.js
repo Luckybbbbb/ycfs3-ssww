@@ -13,10 +13,11 @@ export class FxLayer {
     this.floaters = [];  // {x,y,text,t,life,size,color}
   }
 
-  // 消除粒子爆裂:cx/cy 格中心(逻辑坐标),el 元素名,count 消除数(越多越密)
-  burst(cx, cy, el, count) {
+  // 消除粒子爆裂:cx/cy 格中心(逻辑坐标),el 元素名,count 消除数(越多越密);
+  // cap 粒子上限(段②合成闪光 ≤8、段④径向光效 ≤12,02 文档 3.1)
+  burst(cx, cy, el, count, cap = 12) {
     const rgb = GEM_RGB[el] || [255, 255, 255];
-    const n = Math.min(12, 6 + count);
+    const n = Math.min(cap, 6 + count);
     for (let i = 0; i < n && this.particles.length < 200; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 120 + Math.random() * 180;
@@ -75,4 +76,6 @@ export class FxLayer {
     }
     void chainMax; void ELEMENTS;
   }
+  // (段③技能图标与段④图标碎裂改由 render 状态驱动逐帧绘制,REQ-M6-06 F8;
+  //  原 showIcon 一次性浮字无法反映认领回写与新建预约,已移除)
 }

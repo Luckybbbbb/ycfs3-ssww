@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { expNeed, cumThreshold, maxHpAt, atkAt, levelFromExp, applyExp } from '../scripts/meta/exp.js';
-import { initialProgress, canPlay, onVictory, wGlobal, WAVES_PER_LEVEL } from '../scripts/meta/levels.js';
+import { initialProgress, canPlay, onVictory, wGlobal, WAVES_PER_LEVEL, mergeRunResult } from '../scripts/meta/levels.js';
 import { defaultProfile, loadProfile, saveProfile, loadProgress, saveProgress, clearAll } from '../scripts/meta/save.js';
 import { createApi } from '../scripts/api/api.js';
 
@@ -94,16 +94,23 @@ test('FR-6 难度映射:w_global=(L−1)×10+w_local;每关 10 波', () => {
 });
 
 // ---- FR-8 存档(D13 键位/新档流程/损坏回落) ----
-test('FR-8 profile 往返:保存后读回一致;默认档=Lv1/解锁 1/初始装配', () => {
+test('FR-8 profile 往返(M6 v0.2):保存后读回一致;默认档=schemaVer2/经济零/初始 5 弹', () => {
   const s = memStorage();
   const p = loadProfile(s);
   assert.deepEqual(p, defaultProfile());
-  p.level = 7; p.expTotal = 300; p.unlockedLevel = 3; p.loadout = ['metal', 'fire', 'water', 'wood'];
+  assert.equal(p.schemaVer, 2);
+  p.level = 7; p.coins = 1316; p.materials = 158; p.unlockedLevel = 3;
+  p.loadout = ['metal_bolt', 'fire_bolt', 'water_bolt', 'wood_bolt'];
+  p.ownedSkills = [...p.ownedSkills, 'fire_dotzone'];
+  p.skillLevels.fire_dotzone = 3;
   saveProfile(s, p);
   const back = loadProfile(s);
   assert.equal(back.level, 7);
-  assert.equal(back.expTotal, 300);
-  assert.deepEqual(back.loadout, ['metal', 'fire', 'water', 'wood']);
+  assert.equal(back.coins, 1316);
+  assert.equal(back.materials, 158);
+  assert.deepEqual(back.loadout, ['metal_bolt', 'fire_bolt', 'water_bolt', 'wood_bolt']);
+  assert.ok(back.ownedSkills.includes('fire_dotzone'), '拥有表往返');
+  assert.equal(back.skillLevels.fire_dotzone, 3, '技能等级往返');
 });
 
 test('FR-8 损坏/清空回落新档:非 JSON、非对象、缺 loadout 均不抛错', () => {
@@ -114,11 +121,32 @@ test('FR-8 损坏/清空回落新档:非 JSON、非对象、缺 loadout 均不�
   assert.deepEqual(loadProfile(s).level, 1);
   s.setItem('ssww.profile', JSON.stringify({ level: 5, loadout: 'bad' }));
   const p = loadProfile(s);
-  assert.equal(p.level, 5, '合法字段保留');
-  assert.equal(p.loadout.length, 4, 'loadout 非法回落默认');
+  assert.equal(p.level, 1, '无 schemaVer 的旧档(裁决 F6)整档作废回落新档,不迁移');
+  assert.equal(p.loadout.length, 4, '回落默认装配');
+  // schemaVer=2 但字段损坏:逐字段回落
+  s.setItem('ssww.profile', JSON.stringify({ schemaVer: 2, level: 5, loadout: 'bad', coins: -9, ownedSkills: 'x' }));
+  const p2 = loadProfile(s);
+  assert.equal(p2.level, 5, 'schemaVer=2 合法字段保留');
+  assert.equal(p2.coins, 0, '负数货币回落 0');
+  assert.equal(p2.ownedSkills.length, 5, 'ownedSkills 非法回落初始 5 弹');
+  assert.equal(p2.loadout.length, 4, 'loadout 非法回落默认');
   clearAll(s);
   assert.equal(s.getItem('ssww.profile'), null);
   assert.deepEqual(loadProfile(s), defaultProfile(), '清 localStorage 重开走新档流程');
+});
+
+test('F10(M6 整改):存储读取抛错不阻断启动(getItem 异常回落默认档)', () => {
+  // 隐私模式/被拒的存储:任意方法抛错(REQ-M6-04 F10——此前 getItem 在 try 外,沿 getProfile 阻断启动)
+  const denied = {
+    getItem() { throw new Error('SecurityError'); },
+    setItem() { throw new Error('SecurityError'); },
+    removeItem() { throw new Error('SecurityError'); },
+  };
+  const p = loadProfile(denied);
+  assert.deepEqual(p, defaultProfile(), 'getItem 抛错 → 默认新档,不抛出');
+  const g = loadProgress(denied);
+  assert.equal(g.unlockedLevel, 1, 'progress 同口径回落');
+  assert.doesNotThrow(() => saveProfile(denied, defaultProfile()), '写入抛错静默(既有口径回归保护)');
 });
 
 test('FR-8 progress 往返与 submitRun 通关写档', () => {
@@ -416,4 +444,79 @@ test('M4 接线:技能 CD 按技能独立;槽位序先选就绪者;子弹类经 
   const r2 = caster.tryCast('fire', true, b);
   assert.equal(r2.kind, 'pulse', 'fire_bolt CD 中 → 落到同行的 fire_pulse(5.1 同行只触发一个)');
   assert.equal(b.bolts.length, 1, '脉冲不产生弹');
+});
+
+// ---- REQ-M4-03 续审整改回归(F5/F6/F7/F9) ----
+test('F6 续审:区域末跳与帧步长无关——ATK10 一档灼烧区 HP9 敌在 dt=0.001/0.047/0.05 下均 t=3 击杀(经验 2+w)', () => {
+  for (const dt of [0.001, 0.047, 0.05]) {
+    const ctx = makeCtx(10);
+    const [e] = row(ctx, [560], 9);
+    pushZone(ctx, skillById('fire_dotzone'), 1, { x: 560, y: 240 }); // dpsFloat=10×0.25×1.0=2.5 → 每跳 round=3
+    let prev = 0, guard = 0;
+    while (e.alive && prev < 6 && guard < 100000) {
+      const next = prev + dt;
+      tickZones(ctx.zones, prev, next, ctx.enemies, ctx); // 跨过 until=3 的帧仍须完成 t=3 末跳
+      prev = next; guard++;
+    }
+    assert.equal(e.hp, 0, `dt=${dt} 应在 t=3 末跳击杀(HP9=3跳×3)`);
+    assert.equal(ctx.kills, 1, `dt=${dt} 击杀登记一次`);
+    assert.equal(ctx.expGained, 3, `dt=${dt} 经验=2+w(1)=3`);
+    // 击杀后再推进一小段:浮点累积可能让死亡帧恰好停在 until−ε,下一帧到期移除
+    for (let k = 0; k < 10 && ctx.zones.length; k++) {
+      tickZones(ctx.zones, prev, prev + dt, ctx.enemies, ctx);
+      prev += dt;
+    }
+    assert.equal(ctx.zones.length, 0, `dt=${dt} 到期区域已移除`);
+  }
+});
+
+test('F9 续审(M6 v0.2):Infinity/负数/错误类型回落,不卡死不锁关;旧档作废', () => {
+  const s = memStorage();
+  // 原始 JSON 写入(1e309 无法经 stringify 构造);无 schemaVer → 整档作废回落新档(裁决 F6)
+  s.setItem('ssww.profile', '{"level":1e309,"expTotal":-5,"unlockedLevel":"x"}');
+  const p = loadProfile(s);
+  assert.equal(p.level, 1, '旧档作废回落 Lv1');
+  assert.equal(p.coins, 0); assert.equal(p.materials, 0);
+  // schemaVer=2 的损坏字段:逐字段回落
+  s.setItem('ssww.profile', '{"schemaVer":2,"level":1e309,"coins":-5,"materials":1.5,"unlockedLevel":"x"}');
+  const p2 = loadProfile(s);
+  assert.equal(p2.level, 1, 'Infinity 回落 Lv1');
+  assert.equal(p2.coins, 0, '负数回落 0');
+  assert.equal(p2.materials, 0, '非整数回落 0');
+  assert.equal(p2.unlockedLevel, 1, '非整数回落 1');
+  s.setItem('ssww.progress', '{"lastLevelCleared":"bad","unlockedLevel":null,"bestChains":1.5}');
+  const g = loadProgress(s);
+  assert.deepEqual(g, { unlockedLevel: 1, lastLevelCleared: 0, bestChains: 0 });
+  assert.equal(canPlay(g, 1), true, '损坏 progress 回落后第 1 关仍可进');
+});
+
+test('F5 异步回归:mergeRunResult 乱序回包不回退——第 4 关响应先回、第 3 关迟到,lastLevelCleared 保持 4', () => {
+  // 产品序列:onVictory 同步解锁 → submitRun 回包异步确认
+  let progress = onVictory(onVictory({ unlockedLevel: 3, lastLevelCleared: 2 }, 3).progress, 4).progress;
+  assert.deepEqual(progress, { unlockedLevel: 5, lastLevelCleared: 4 });
+  progress = mergeRunResult(progress, { progress: { lastLevelCleared: 4 } }); // 第 4 关响应先返回
+  assert.equal(progress.lastLevelCleared, 4);
+  progress = mergeRunResult(progress, { progress: { lastLevelCleared: 3 } }); // 第 3 关响应迟到
+  assert.equal(progress.lastLevelCleared, 4, '迟到回包不得覆盖较新记录');
+  assert.equal(progress.unlockedLevel, 5, 'unlockedLevel 不受回包影响');
+  // 防御:非法/缺失载荷原样返回
+  assert.equal(mergeRunResult(progress, null), progress);
+  assert.equal(mergeRunResult(progress, {}), progress);
+  assert.equal(mergeRunResult(progress, { progress: { lastLevelCleared: 'bad' } }), progress);
+});
+
+test('F7 续审:跨局临时状态清零——startLevel 清护盾/无敌/闪白/震动,resetTempState 清 CD 加速', () => {
+  const b = new Battle({ atk: 10, maxHp: 100, rng: makeRng(5) });
+  b.startLevel(1);
+  b.shield = 30; b.invincibleT = 3; b.hurtT = 0.1; b.shakeT = 0.12;
+  b.startLevel(2);
+  assert.equal(b.shield, 0, '护盾不带入次关');
+  assert.equal(b.invincibleT, 0, '无敌不带入次关');
+  assert.equal(b.hurtT, 0); assert.equal(b.shakeT, 0);
+  const charge = new Charge();
+  const caster = new Caster(charge, ['fire_bolt'], 1);
+  caster.setCdBoost(4, 2);
+  caster.resetTempState();
+  assert.equal(caster.cdBoostT, 0, 'CD 加速剩余秒清零');
+  assert.equal(caster.cdBoostRate, 1, 'CD 流速恢复 1');
 });

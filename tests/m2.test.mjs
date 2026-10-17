@@ -26,22 +26,28 @@ const runTo = (b, from, to) => {
 const events = (b, type) => b.log.filter(l => l.ev === type);
 
 // ---- FR-3.1 tier_gain(02 文档 5.3 表逐行) ----
-test('tier_gain 数字例:3/4/5/6 连与连锁(02 文档 5.3)', () => {
+test('tier_gain 数字例:v0.2 锚点 3/6/9/12+(02 文档 5.3 REQ-06 过审版;M6)', () => {
   const cases = [
-    ['metal', 3, 1, 1], ['water', 4, 1, 2], ['wood', 5, 1, 3], ['fire', 6, 1, 3],
-    ['earth', 3, 2, 2], ['metal', 3, 4, 3], ['water', 5, 3, 5],
+    // [el, count, chain, want]:tier_of=min(1+⌊(count−3)/3⌋,5)
+    ['metal', 3, 1, 1], ['water', 4, 1, 1], ['wood', 5, 1, 1], ['fire', 6, 1, 2],
+    ['earth', 8, 1, 2], ['metal', 9, 1, 3], ['water', 12, 1, 4], ['wood', 15, 1, 5],
+    ['fire', 64, 1, 5], ['earth', 3, 2, 2], ['metal', 3, 4, 3], ['water', 15, 3, 5],
   ];
   for (const [el, count, chain, want] of cases) {
     assert.equal(Charge.tierGain(count, chain), want, `${el} count=${count} chain=${chain}`);
   }
 });
 
-test('FR-3.1 行内累加封顶 5:4 连再 5 连(同元素未释放)→ 5 截断;溢出无补偿', () => {
+test('FR-3.1 行内累加封顶 5:v0.2 各档累加再 15 连直达满档截断;溢出无补偿(M6)', () => {
   const c = new Charge();
-  c.feed(ev('fire', 4, 1)); // +2
-  c.feed(ev('fire', 5, 1)); // +3 → 5
+  c.feed(ev('fire', 4, 1)); // +1(档1)
+  c.feed(ev('fire', 5, 1)); // +1 → 2
+  assert.equal(c.tiers.fire, 2);
+  c.feed(ev('fire', 6, 1)); // +2 → 4
+  assert.equal(c.tiers.fire, 4);
+  c.feed(ev('fire', 15, 3)); // +5 → min(4+5,5)=5 截断
   assert.equal(c.tiers.fire, 5);
-  c.feed(ev('fire', 5, 3)); // gain=5 但已封顶
+  c.feed(ev('fire', 15, 3)); // 已封顶,溢出无补偿
   assert.equal(c.tiers.fire, 5);
 });
 
@@ -57,8 +63,8 @@ test('FR-3.2:CD 未就绪档位累加至 5 截断;CD 就绪一次释放 5 档并
   assert.ok(r && r.element === 'fire' && r.tier === 1, 't=0 释放 tier1');
   assert.equal(charge.tiers.fire, 0, '释放后清零');
   caster.update(0.5); // t=0.5,CD 剩 1.5s
-  charge.feed(ev('fire', 5, 1)); // +3
-  charge.feed(ev('fire', 5, 3)); // +3 → 累加至 5 封顶(CD 未就绪保留)
+  charge.feed(ev('fire', 15, 1)); // +5
+  charge.feed(ev('fire', 15, 3)); // +5 → 累加至 5 封顶(CD 未就绪保留;v0.2 15 连直达满档)
   assert.ok(caster.cds.fire > 0, 'CD 未就绪');
   assert.equal(charge.tiers.fire, 5);
   r = caster.tryCast('fire', true);
@@ -80,11 +86,11 @@ test('FR-3.2 对照(03 文档 4.6):CD 就绪但档位 0 → 不发射', () => {
 test('FR-3.3:earth 未在 4 槽装配 → 消除积档位但不释放', () => {
   const charge = new Charge();
   const caster = new Caster(charge, ['fire', 'water', 'wood', 'metal']);
-  charge.feed(ev('earth', 5, 1));
-  assert.equal(charge.tiers.earth, 3);
+  charge.feed(ev('earth', 15, 1)); // v0.2:15 连直达满档 5
+  assert.equal(charge.tiers.earth, 5);
   caster.update(10);
   assert.equal(caster.tryCast('earth', true), null, '未装配行不释放');
-  assert.equal(charge.tiers.earth, 3, '档位保留');
+  assert.equal(charge.tiers.earth, 5, '档位保留');
 });
 
 test('FR-3.3:无敌人时不消耗(档位与 CD 保留,03 文档 5.3)', () => {
@@ -382,7 +388,7 @@ test('经验基数:w_global=1 → exp_kill=3(04 文档 exp_kill=2+w_global)', ()
 test('FR-3.3 换装立即生效:cycleSlot 后新行立即可释放(REQ-M2-01 整改 5)', () => {
   const charge = new Charge();
   const caster = new Caster(charge, ['fire', 'water', 'wood', 'metal']);
-  charge.feed(ev('earth', 5, 1)); // earth 档 3
+  charge.feed(ev('earth', 9, 1)); // earth 档 3(v0.2:9 连 → tier3)
   caster.update(10);
   assert.equal(caster.tryCast('earth', true), null, '未装配不释放');
   const old = caster.loadout[3]; // metal 槽
@@ -400,8 +406,8 @@ test('复合回归(公开入口):消除事件→充能→门控→发射→命�
   const b = new Battle({ atk: 10, maxHp: 100, expPerKill: 3 });
   b.spawnWave(1, 30);
   const tick = (dt) => { caster.update(dt); b.update(dt); };
-  // t=0 消除火行 5 连 → tier 3 → 门控放行 → 发射
-  charge.feed(ev('fire', 5, 1));
+  // t=0 消除火行 9 连 → tier 3(v0.2 锚点 9)→ 门控放行 → 发射
+  charge.feed(ev('fire', 9, 1));
   caster.update(0);
   const r = caster.tryCast('fire', b.aliveEnemies().length > 0);
   assert.ok(r && r.tier === 3);

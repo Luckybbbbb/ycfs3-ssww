@@ -24,3 +24,12 @@ export function onVictory(progress, L) {
 
 // 难度映射(04 文档第 4 节):w_global = (L−1)×10 + w_local
 export const wGlobal = (L, wLocal) => (L - 1) * WAVES_PER_LEVEL + wLocal;
+
+// submitRun 回写(REQ-M4-03 F5 异步回归):只接受比当前更「新」的通关记录,
+// 乱序迟到回包(如第 3 关响应晚于第 4 关返回)不回退 lastLevelCleared。
+export function mergeRunResult(progress, res) {
+  if (!res || !res.progress) return progress;
+  const v = res.progress.lastLevelCleared;
+  if (!Number.isInteger(v) || v <= progress.lastLevelCleared) return progress;
+  return { ...progress, lastLevelCleared: v };
+}

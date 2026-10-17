@@ -30,15 +30,41 @@ export function emptyGrid() {
 export function isPiece(cell) { return cell && cell.el !== undefined; }
 export function isItem(cell) { return cell && cell.item !== undefined; }
 
-// 单格放置时避免与左二/上二成三连（02 文档 FR-2.1 生成规则；下落补位同用，第 4 节）
+// 单格放置时避免参与匹配(M6/v0.2 口径,02 文档 FR-2.1+第 4 节):
+// ①与左二/上二成横/竖三连(原规则);②放置后与已放置同色邻格形成的连通块 ≥4(REQ-M6 批次 A:
+// 仅防 3 连时补位子高频并入 ≥4 连通块,连锁 RESOLVING↔FALLING 无法终止)。理论不可满足时
+// (options 空)回落任意色,由引擎连锁上限兜底(见 engine.js MAX_CHAIN)。
 export function safePickRefill(rng, grid, r, c) {
   const banned = new Set();
-  if (c >= 2 && isPiece(grid[r][c-1]) && isPiece(grid[r][c-2]) &&
-      grid[r][c-1].el === grid[r][c-2].el) banned.add(grid[r][c-1].el);
-  if (r >= 2 && isPiece(grid[r-1][c]) && isPiece(grid[r-2][c]) &&
-      grid[r-1][c].el === grid[r-2][c].el) banned.add(grid[r-1][c].el);
+  for (const x of [0, 1, 2, 3, 4]) {
+    if (c >= 2 && isPiece(grid[r][c-1]) && isPiece(grid[r][c-2]) &&
+        grid[r][c-1].el === x && grid[r][c-2].el === x) { banned.add(x); continue; }
+    if (r >= 2 && isPiece(grid[r-1][c]) && isPiece(grid[r-2][c]) &&
+        grid[r-1][c].el === x && grid[r-2][c].el === x) { banned.add(x); continue; }
+    if (_wouldFormBlock4(grid, r, c, x)) banned.add(x);
+  }
   const options = ELEMENTS.map((_, i) => i).filter(i => !banned.has(i));
-  return options[Math.floor(rng() * options.length)];
+  const pool = options.length ? options : ELEMENTS.map((_, i) => i);
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+// 试放 el=x 于 (r,c),局部 flood fill 判定其所在同色连通块是否 ≥4(≥4 即满足消除条件 2)
+function _wouldFormBlock4(grid, r, c, x) {
+  const seen = new Set([r * COLS + c]);
+  const stack = [[r, c]];
+  let n = 0;
+  while (stack.length) {
+    const [cr, cc] = stack.pop();
+    n++;
+    if (n >= 4) return true; // 提前退出:≥4 即命中
+    for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+      const nr = cr + dr, nc = cc + dc;
+      const key = nr * COLS + nc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || seen.has(key)) continue;
+      if (isPiece(grid[nr][nc]) && grid[nr][nc].el === x) { seen.add(key); stack.push([nr, nc]); }
+    }
+  }
+  return false;
 }
 
 // 生成新盘（无初始三连）
@@ -54,62 +80,38 @@ export function generateGrid(rng, reservedCells = []) {
   return grid;
 }
 
-// 找出全部匹配连通块（横/竖 ≥3 同元素；交叉 L/T 由并查合并为一块）
+// 找出全部匹配连通块(M6/v0.2 规则:同色正交连通块,含横/竖 ≥3 连线 或 块 ≥4 格即整块消除)
+// flood fill 天然合并交叉形(L/T/十字),不再需要 run 扫描+并查;道具格不参与。
 // 返回: [{el, cells: [{r,c},...]}]
 export function findMatchBlocks(grid) {
-  const marks = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
-  const groups = [];
-  // 横向
-  for (let r = 0; r < ROWS; r++) {
-    let run = 1;
-    for (let c = 1; c <= COLS; c++) {
-      const same = c < COLS && isPiece(grid[r][c]) && isPiece(grid[r][c-1]) &&
-                   grid[r][c].el === grid[r][c-1].el;
-      if (same) { run++; continue; }
-      if (run >= 3) {
-        const cells = [];
-        for (let k = c - run; k < c; k++) { marks[r][k] = true; cells.push({r, c: k}); }
-        groups.push({ el: grid[r][c-1].el, cells, dir: 'h' });
+  const seen = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const blocks = [];
+  for (let r0 = 0; r0 < ROWS; r0++) {
+    for (let c0 = 0; c0 < COLS; c0++) {
+      if (seen[r0][c0] || !isPiece(grid[r0][c0])) continue;
+      const el = grid[r0][c0].el;
+      // BFS 收集同色正交连通块
+      const cells = [];
+      const stack = [[r0, c0]];
+      seen[r0][c0] = true;
+      while (stack.length) {
+        const [cr, cc] = stack.pop();
+        cells.push({ r: cr, c: cc });
+        if (cr > 0 && !seen[cr-1][cc] && isPiece(grid[cr-1][cc]) && grid[cr-1][cc].el === el) { seen[cr-1][cc] = true; stack.push([cr-1, cc]); }
+        if (cr < ROWS-1 && !seen[cr+1][cc] && isPiece(grid[cr+1][cc]) && grid[cr+1][cc].el === el) { seen[cr+1][cc] = true; stack.push([cr+1, cc]); }
+        if (cc > 0 && !seen[cr][cc-1] && isPiece(grid[cr][cc-1]) && grid[cr][cc-1].el === el) { seen[cr][cc-1] = true; stack.push([cr, cc-1]); }
+        if (cc < COLS-1 && !seen[cr][cc+1] && isPiece(grid[cr][cc+1]) && grid[cr][cc+1].el === el) { seen[cr][cc+1] = true; stack.push([cr, cc+1]); }
       }
-      run = 1;
+      // 保留条件(02 文档第 3 节):块内含横/竖 ≥3 连线 或 块大小 ≥4。
+      // 每条 3 连线取其最左/最上格检查向右/向下延伸两格,即可覆盖块内全部 3 连线。
+      const inBlock = new Set(cells.map(k => k.r * COLS + k.c));
+      const hasLine3 = cells.some(({ r, c }) =>
+        (inBlock.has(r * COLS + c + 1) && inBlock.has(r * COLS + c + 2)) ||
+        (inBlock.has((r + 1) * COLS + c) && inBlock.has((r + 2) * COLS + c)));
+      if (hasLine3 || cells.length >= 4) blocks.push({ el, cells });
     }
   }
-  // 纵向
-  for (let c = 0; c < COLS; c++) {
-    let run = 1;
-    for (let r = 1; r <= ROWS; r++) {
-      const same = r < ROWS && isPiece(grid[r][c]) && isPiece(grid[r-1][c]) &&
-                   grid[r][c].el === grid[r-1][c].el;
-      if (same) { run++; continue; }
-      if (run >= 3) {
-        const cells = [];
-        for (let k = r - run; k < r; k++) { marks[k][c] = true; cells.push({r: k, c}); }
-        groups.push({ el: grid[r-1][c].el, cells, dir: 'v' });
-      }
-      run = 1;
-    }
-  }
-  if (!groups.length) return [];
-  // 交叉合并：共享格子的横竖组并查合并为一个连通块（count = 参与格数，02 文档第 3 节）
-  const parent = groups.map((_, i) => i);
-  function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
-  function union(a, b) { parent[find(a)] = find(b); }
-  const cellGroups = new Map(); // cellKey -> [groupIdx...]
-  groups.forEach((g, i) => g.cells.forEach(k => {
-    const key = k.r * COLS + k.c;
-    if (cellGroups.has(key)) union(i, cellGroups.get(key)[0]);
-    (cellGroups.get(key) || cellGroups.set(key, []).get(key)).push(i);
-  }));
-  const merged = new Map(); // root -> {el, Set<cellKey>}
-  groups.forEach((g, i) => {
-    const root = find(i);
-    if (!merged.has(root)) merged.set(root, { el: g.el, cells: new Set() });
-    for (const k of g.cells) merged.get(root).cells.add(k.r * COLS + k.c);
-  });
-  return [...merged.values()].map(m => ({
-    el: m.el,
-    cells: [...m.cells].map(k => ({ r: Math.floor(k / COLS), c: k % COLS })),
-  }));
+  return blocks;
 }
 
 // 无现成匹配？（合法终态条件 a，02 文档第 8 节）

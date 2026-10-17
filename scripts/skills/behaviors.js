@@ -120,7 +120,10 @@ export function tickZones(zones, prevClock, clock, enemies, ctx = null) {
   let slowed = 0;
   for (let zi = zones.length - 1; zi >= 0; zi--) {
     const z = zones[zi];
-    if (clock > z.until + 1e-9) { zones.splice(zi, 1); continue; } // 到期移除(F6:区域持续期=until)
+    // 先结算本帧效果、后删到期区域(REQ-M4-03 F6 续审:跨过 until 的帧仍须完成
+    // min(floor(clock),floor(until)) 内的最后一跳;dt=0.047 跨帧反例见 m4 回归)。
+    // to 已按 until 截断,不产生超时跳伤;到期帧仅跳过 slow 刷新(避免删除后残留减速)。
+    const expired = clock > z.until + 1e-9;
     const inR = enemies.filter(e => {
       if (!e.alive) return false;
       const dx = e.x - z.x, dy = e.y - z.y;
@@ -136,21 +139,23 @@ export function tickZones(zones, prevClock, clock, enemies, ctx = null) {
           if (r.killed && ctx?.registerKill) ctx.registerKill(e); // 击杀登记(F2)
         }
       }
-    } else if (z.kind === 'slow') {
+    } else if (z.kind === 'slow' && !expired) {
       for (const e of inR) {
         e.slowT = Math.max(e.slowT || 0, 0.1); // 区内持续减速;离开后自然到期
         e.slowPct = z.slowPct;
         slowed++;
       }
     }
+    if (expired) zones.splice(zi, 1); // 到期移除(F6:先跳后清,与 tickBind/tickAura 同口径)
   }
   return { dotDamage, slowed: zones.some(z => z.kind === 'slow') ? slowed : 0 };
 }
 
 // ---- 生机光环(wood_aura):主角光环,每秒回 maxHP×1%×档位倍率,持续 6s;重复释放刷新(4.4) ----
-export function applyAura(ctx, skill, tier) {
+// skill_mult 接入(REQ-M6-04 F5):healFloat 一式乘入技能等级乘数,浮点入账逐跳 round
+export function applyAura(ctx, skill, tier, mult = 1) {
   ctx.aura = {
-    healFloat: ctx.maxHp * 0.01 * TM(tier), // 4.4 例:Lv12(265) tier1=2.65→3/s,tier5=12.19→12/s
+    healFloat: ctx.maxHp * 0.01 * TM(tier) * mult, // 4.4 例:Lv12(265) tier1=2.65→3/s,tier5=12.19→12/s
     until: ctx.clock + skill.params.duration,
   };
   return ctx.aura;
@@ -171,7 +176,9 @@ export function tickAura(aura, prevClock, clock, ctx) {
 }
 
 // ---- 行为分发(cast.js 调用):kind → 内核;区域类中心=最近敌人(03 文档 5.3) ----
-export function dispatch(ctx, skill, tier) {
+// mult=技能等级乘数(REQ-M6-04 F5):atk 基内核经 cast.withSkillMult 的 ctx.atk 生效;
+// maxHp 基内核(光环)不读 atk,单独透传乘数。
+export function dispatch(ctx, skill, tier, mult = 1) {
   switch (skill.kind) {
     case 'chain': return applyChain(ctx, skill, tier);
     case 'bind': return applyBind(ctx, skill, tier);
@@ -182,7 +189,7 @@ export function dispatch(ctx, skill, tier) {
       const center = ctx.nearestAlive();
       return center ? pushZone(ctx, skill, tier, center) : 0;
     }
-    case 'aura': return applyAura(ctx, skill, tier);
+    case 'aura': return applyAura(ctx, skill, tier, mult);
     default: return null;
   }
 }

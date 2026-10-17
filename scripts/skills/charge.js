@@ -1,7 +1,9 @@
 // scripts/skills/charge.js
-// FR-3.1 档位充能:消费棋盘 match_cleared 事件,按元素行累加档位(封顶 5)
-// 公式: tier_gain = min(base_tier(count) + min(chain-1, 2), 5), base_tier: 3→1 / 4→2 / ≥5→3
-// 数值依据: docs/design/02-三消玩法设计.md 5.2/5.3、docs/design/03-主角技能设计.md 4.1
+// FR-3.1 档位充能(M6/v0.2):消费棋盘 match_cleared 事件,按元素行单一池累加档位(封顶 5)
+// 公式(02 文档 5.2):tier_of = min(1 + ⌊(count−3)/3⌋, 5);tier_gain = min(tier_of + min(chain−1, 2), 5)
+// 锚点区间:3~5→档1、6~8→档2、9~11→档3、12~14→档4、15+→档5(3/6/9/12 为需求方锚点=区间起点)
+// 记账:行单一池;选技建预约时池全部余额转入预约并清池(03 文档 4.0);earliestT=池内最早未消费充能时刻
+// (预约执行下限 t0 取被占用档位中最早可用时刻,先到先占)。
 // 相对路径: scripts/skills/charge.js
 
 import { ELEMENTS } from '../board/grid.js';
@@ -9,20 +11,21 @@ import { ELEMENTS } from '../board/grid.js';
 export class Charge {
   constructor() {
     this.tiers = {};
-    for (const el of ELEMENTS) this.tiers[el] = 0;
+    this.earliestT = {}; // 各行当前池余额中最早充入时刻(整池转预约时的 t0 基准)
+    for (const el of ELEMENTS) { this.tiers[el] = 0; this.earliestT[el] = null; }
   }
 
-  static baseTier(count) {
-    if (count >= 5) return 3;
-    if (count === 4) return 2;
-    return 1; // count=3(棋盘引擎只发 ≥3 的事件)
+  // 02 文档 5.2 档位映射:v0.2 锚点 3/6/9/12+(区间起点);count=3→1、4~5→1、6→2、9→3、12→4、15+→5
+  static tierOf(count) {
+    return Math.min(1 + Math.floor((count - 3) / 3), 5);
   }
 
   static tierGain(count, chain) {
-    return Math.min(Charge.baseTier(count) + Math.min(chain - 1, 2), 5);
+    return Math.min(Charge.tierOf(count) + Math.min(chain - 1, 2), 5);
   }
 
-  // event: {type:'match_cleared', element, count, chain};返回本次 gain(供表现层飘字)
+  // event: {type:'match_cleared', element, count, chain, t?};t=事件确立时刻(演出起点,03 文档 4.0)
+  // 返回本次 gain(供表现层飘字)
   feed(event) {
     if (event.type !== 'match_cleared') return 0;
     const gain = Charge.tierGain(event.count, event.chain);
@@ -30,12 +33,26 @@ export class Charge {
     if (!(el in this.tiers)) return 0;
     const before = this.tiers[el];
     this.tiers[el] = Math.min(5, before + gain); // 封顶 5,溢出浪费无补偿(02 文档 5.2)
+    if (this.tiers[el] > 0 && this.earliestT[el] === null) this.earliestT[el] = event.t ?? null;
     return this.tiers[el] - before;
   }
 
-  drain(el) { // 释放清零(Caster 调用)
+  // 选技转池(03 文档 4.0 原子动作):池全部余额转入预约并清池;返回 {tier, t0}(t0=最早可用档位时刻)
+  drainAll(el) {
     const t = this.tiers[el];
+    const t0 = this.earliestT[el];
     this.tiers[el] = 0;
-    return t;
+    this.earliestT[el] = null;
+    return { tier: t, t0 };
+  }
+
+  // 兼容 M2 演示 API(保留,单测依赖):整行清零
+  drain(el) {
+    return this.drainAll(el).tier;
+  }
+
+  // 终局清空(REQ-05:VICTORY/DEFEAT/重试/换关,预约与池清空、两项记账累计同步归零)
+  reset() {
+    for (const el of ELEMENTS) { this.tiers[el] = 0; this.earliestT[el] = null; }
   }
 }
