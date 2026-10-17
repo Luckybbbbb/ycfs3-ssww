@@ -116,6 +116,9 @@ export class Caster {
   // 同轮多事件逐条建预约(单候选场景=1 个 tier1 预约+余档留池),绝不在池层合并;
   // tick 阶段 2 也复用本方法做「CD 就绪后余档」的逐帧判定回落(REQ-04 F1)。
   // 候选池 = 已拥有 ∧ CD 就绪 ∧ 未预约;t0 取被占用档位最早可用时刻(charge.earliestT)。
+  // M9-F2:execFloor=t0+floor 随档位留池保存(charge.earliestFloor)——延迟选技/跨轮留池的预约
+  // 仍继承**最早被占用档位所属轮**的执行下限(新事件不重设旧留池档位的等待时间);
+  // floor 缺失(无 floor 的历史事件)回退 0.75s 口径=rush1 的段④起点。
   reserveFor(el, rng, now) {
     if ((this.charge.tiers[el] || 0) < 1) return null;
     const pool = this.owned.filter(id => {
@@ -124,8 +127,9 @@ export class Caster {
     });
     if (!pool.length) return null; // 候选空:档位留池蓄能(下轮事件/CD 就绪帧再判)
     const skillId = pool[Math.floor(rng() * pool.length)];
-    const { tier, t0 } = this.charge.drainAll(el); // 原子:池全部余额转入预约并清池
-    const p = { id: `r${++this._seq}`, skillId, el, tier, t0: t0 ?? now, selT: now };
+    const { tier, t0, floor } = this.charge.drainAll(el); // 原子:池全部余额转入预约并清池
+    const base = t0 ?? now;
+    const p = { id: `r${++this._seq}`, skillId, el, tier, t0: base, selT: now, execFloor: base + (floor ?? 0.75) };
     this.pending.push(p);
     return p;
   }
@@ -161,10 +165,13 @@ export class Caster {
         if (used) out.push(used);
       }
     }
-    // 阶段 4:消除链到期预约执行(执行 = max(t0+0.75s, 选技时刻);执行时刻**复检**存活敌——
-    // REQ-M6-04 F6:主角链脉冲同帧杀死最后目标时,到期预约不得被消费,须挂起待敌人出现)
+    // 阶段 4:消除链到期预约执行(执行 = max(execFloor, 选技时刻);执行时刻**复检**存活敌——
+    // REQ-M6-04 F6:主角链脉冲同帧杀死最后目标时,到期预约不得被消费,须挂起待敌人出现)。
+    // M9-F2:execFloor=t0+floor 随档位留池保存(charge.earliestFloor),reserveFor 统一组装——
+    // 事件入口与延迟选技/跨轮留池的回落预约都继承最早被占用档位所属轮的段④起点;
+    // 历史无 floor 预约回退 0.75s 口径(rush1 的段④起点)
     for (const p of [...this.pending]) {
-      const exec = Math.max(p.t0 + 0.75, p.selT);
+      const exec = Math.max(p.execFloor ?? p.t0 + 0.75, p.selT);
       if (now < exec) continue;
       if (typeof ctx.nearestAlive === 'function' && !ctx.nearestAlive()) continue;
       const skill = skillById(p.skillId);

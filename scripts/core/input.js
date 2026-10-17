@@ -66,8 +66,10 @@ export function attachInput(canvas, handlers) {
       e.preventDefault();
       return;
     }
-    // 忙态丢弃整次手势(F7 续审):引擎非 IDLE/瘫痪时不开始任何手势
-    if (handlers.busy && handlers.busy()) {
+    // 忙态丢弃整次手势(F7 续审:M9 修订——「演出期可操作」忙态(RESOLVING/FALLING 等,
+    // canActInBusy()=true)放行手势,由引擎决定并行交换或预输入缓冲;仅「不可操作忙态」
+    // (瘫痪等)仍丢弃。F7 的「跨忙态不复活」语义保留:跨越进不可操作忙态仍作废。
+    if (handlers.busy && handlers.busy() && !(handlers.canActInBusy && handlers.canActInBusy())) {
       downCell = null; downXY = null; moved = false; curXY = null; gestureVoid = false;
       e.preventDefault();
       return;
@@ -86,9 +88,10 @@ export function attachInput(canvas, handlers) {
     const p = toLogical(pos(e));
     curXY = p;
     if (Math.hypot(p.x - downXY.x, p.y - downXY.y) > 12) moved = true;
-    // 手势进行中引擎进入忙态(交换被接受/消除开始等)→ 作废本次手势的预判定,
-    // 不再在忙态结束后「补触发」交换(F7:忙态丢弃整次手势)
-    if (handlers.busy && handlers.busy()) gestureVoid = true;
+    // 手势进行中引擎进入「不可操作忙态」→ 作废本次手势的预判定(M9:演出期可操作忙态
+    // 不作废——RESOLVING 并行交换/FALLING 预输入都由引擎 trySwap 分支承接)
+    const busyBlocked = () => handlers.busy && handlers.busy() && !(handlers.canActInBusy && handlers.canActInBusy());
+    if (busyBlocked()) gestureVoid = true;
     if (downCell && moved && !gestureVoid) {
       // 果冻拖拽:位移越过半格阈值(45px)且指向相邻格 → 预判定交换(02 文档 2.1)
       const dx = p.x - downXY.x, dy = p.y - downXY.y;
@@ -133,9 +136,9 @@ export function attachInput(canvas, handlers) {
   return {
     dragState, // 渲染层每帧读取跟手/回弹状态({drag, bounces})
     update(dt) {
-      // REQ-M6-07 F7 续审:忙态观察不依赖指针移动——手势存续期间引擎进入忙态
-      // (如其他道具超时触发 FALLING)即作废手势,静止按住跨过忙态同样不得复活
-      if (downXY && handlers.busy && handlers.busy()) gestureVoid = true;
+      // REQ-M6-07 F7 续审(M9 修订):忙态观察不依赖指针移动——手势存续期间引擎进入
+      // **不可操作**忙态(瘫痪等)即作废手势;演出期可操作忙态不作废(由 trySwap 分支承接)
+      if (downXY && handlers.busy && handlers.busy() && !(handlers.canActInBusy && handlers.canActInBusy())) gestureVoid = true;
       for (const b of bounces) b.t -= dt * 1000;
       bounces = bounces.filter(b => b.t > 0);
     },

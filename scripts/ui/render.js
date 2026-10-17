@@ -226,6 +226,10 @@ export function render(ctx, engine, hud) {
   }
 
   // ===== 三消棋盘 =====
+  // M9:播报棋盘微震(chain≥4 播报附带 ±2px 衰减;覆盖棋盘+演出+特效层,底栏/弹层不参与)
+  const bShake = hud.fx && hud.fx.boardShake ? hud.fx.boardShake() : { dx: 0, dy: 0 };
+  ctx.save();
+  ctx.translate(bShake.dx, bShake.dy);
   ctx.fillStyle = '#f8f8f0';
   ctx.fillRect(0, BOARD_Y, BOARD_W, BOARD_H);
   for (let r = 0; r < 8; r++) {
@@ -300,11 +304,15 @@ export function render(ctx, engine, hud) {
   }
 
   // 消除演出段②③④(02 文档 3.1):按**块键 bk**分组。
-  // REQ-M6-07 F8 续审修复:组阶段由**块自身 elapsed** 推导(0.35/0.5/0.75 边界)——
+  // REQ-M6-07 F8 续审修复:组阶段由**块自身 elapsed** 推导——
   // 不再读 cl.stage(那只在 cellsForRender 输出对象上,clearing 原始数据没有,曾致段②③④全灭)。
+  // M9-F1:段边界/段③上浮/段④碎裂补间全部读本轮 engine.stageDur(随连锁 RUSH 缩放;
+  // 修复前固定 0.35/0.50/0.75/0.9——chain3 缺少段④,chain≥4 缺少段③④)。
   // 认领绑定已上移至 main(tick 后按执行记录/存续预约回写 setBlockFx)——渲染层**纯显示**:
   // stamp.reserved→技能名+档位星;未认领→「蓄能」+池内档位。
   if (engine.fxEnabled !== false && engine.clearing && engine.clearing.length) {
+    const sd = engine.stageDur || { absorb: 0.35, flash: 0.15, icon: 0.25, burst: 0.15 };
+    const t2 = sd.absorb, t3 = sd.absorb + sd.flash, t4 = sd.absorb + sd.flash + sd.icon, tEnd = t4 + sd.burst;
     const groups = new Map(); // bk -> {r, c, elName, count, elapsed}
     for (const cl of engine.clearing) {
       const key = cl.bk || `x${cl.r},${cl.c}`;
@@ -316,7 +324,7 @@ export function render(ctx, engine, hud) {
     }
     for (const [key, g] of groups) {
       const gx = g.c * CELL + CELL / 2, gy = 504 + g.r * CELL + CELL / 2;
-      const stage = g.elapsed >= 0.75 ? 4 : g.elapsed >= 0.5 ? 3 : g.elapsed >= 0.35 ? 2 : 1;
+      const stage = g.elapsed >= t4 ? 4 : g.elapsed >= t3 ? 3 : g.elapsed >= t2 ? 2 : 1;
       // 段② 起点:合成闪光五行色粒子迸发 ≤8(一次性)
       if (stage >= 2) {
         if (!engine._flashShown) engine._flashShown = new Set();
@@ -335,12 +343,12 @@ export function render(ctx, engine, hud) {
         } else {
           stars = hud.charge ? (hud.charge.tiers[stamp?.el || g.elName] || 0) : 0;
         }
-        // ③上浮 20px(0.5~0.75);④放大 1.3 倍后碎裂淡出(0.75~0.9)
-        const e3 = Math.min(0.25, Math.max(0, g.elapsed - 0.5));
-        const p4 = Math.min(1, Math.max(0, (g.elapsed - 0.75) / 0.15));
-        const iconAlpha = stage >= 4 ? 1 - p4 : Math.min(1, e3 / 0.1);
-        const iconScale = stage >= 4 ? 1 + 0.3 * p4 : 0.8 + 0.2 * (e3 / 0.25);
-        const yOff = stage >= 4 ? -20 : -20 * (e3 / 0.25);
+        // ③上浮 20px(段③时长=sd.icon);④放大 1.3 倍后碎裂淡出(段④时长=sd.burst;M9-F1 随 RUSH 缩放)
+        const e3 = Math.min(sd.icon, Math.max(0, g.elapsed - t3));
+        const p4 = Math.min(1, Math.max(0, (g.elapsed - t4) / sd.burst));
+        const iconAlpha = stage >= 4 ? 1 - p4 : Math.min(1, e3 / (sd.icon * 0.4));
+        const iconScale = stage >= 4 ? 1 + 0.3 * p4 : 0.8 + 0.2 * (e3 / sd.icon);
+        const yOff = stage >= 4 ? -20 : -20 * (e3 / sd.icon);
         if (iconAlpha > 0.01) {
           ctx.save();
           ctx.translate(gx, gy + yOff);
@@ -409,6 +417,20 @@ export function render(ctx, engine, hud) {
   // 特效层(REQ-M7-01 F5:关动效 fxEnabled=false 时**停止绘制**存量粒子/冒字——
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
   if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx);
+  ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
+
+  // M9:预输入缓冲预选提示(FALLING 等忙时滑动被记住——两格金色虚线框+「落定执行」微标)
+  if (engine.swapBuffer) {
+    ctx.save();
+    ctx.strokeStyle = '#f5c31c';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 6]);
+    for (const s of [engine.swapBuffer.a, engine.swapBuffer.b]) {
+      roundRect(ctx, s.c * CELL + 4, BOARD_Y + s.r * CELL + 4, CELL - 8, CELL - 8, 12);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // 事件提示浮层
   if (hud.toast && hud.toast.t > 0) {

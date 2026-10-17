@@ -24,6 +24,9 @@ const CLEAR_TIME_FX = STAGE_ABSORB + STAGE_FLASH + STAGE_ICON + STAGE_BURST; // 
 const CLEAR_TIME = 0.20;    // 消除动画(动效关退化时长,02 文档 3.1)
 const FALL_TIME_PER_CELL = 0.08; // 下落 80ms/格（02 文档第 4 节）
 const MAX_CHAIN = 50;            // 连锁防御上限(理论不可达;防补位残余非零概率病态循环,REQ-M6 批次 A)
+// M9 连锁 RUSH(需求方 2026-10-17:连锁越大合成消除与补块越快,「进入 rush」):
+// 消除演出总时长/四段时长/下落时长全部乘 rushScale(chain)——数字例:chain1=1.00/2=0.85/3=0.70/4=0.55/≥5=0.45(封底)
+const RUSH_STEP = 0.15, RUSH_MIN = 0.45;
 
 export class BoardEngine {
   constructor(seed = 20260601) {
@@ -40,7 +43,16 @@ export class BoardEngine {
     this.roundSeq = 0;         // 消除轮次序号(每 _beginRound +1;预约盖章所属轮,跨轮不误认领新块 REQ-08 F8)
     this.paralyzeT = 0;        // 瘫痪态定时重试计时（02 文档第 8 节恢复转移）
     this.pendingItemRemovals = []; // RESOLVING/FALLING 期间被移除的道具格，落定后补位
+    this.parallelSwap = null;  // M9:RESOLVING 演出期并行交换动画 {a,b,t}(最多 1 个;grid 已即时交换)
+    this.swapBuffer = null;    // M9:忙时预输入缓冲 {a,b}(只留最新意图;回 IDLE 自动执行)
+    this.rush = 1;             // M9:本轮 rushScale(渲染/测试读取)
+    this.stageDur = null;      // M9:本轮四段时长(按 rush 缩放;cellsForRender 读实例不再读常量)
     this._init();
+  }
+
+  // M9 连锁 RUSH 缩放(02 文档 3.1):chain1=1.00/2=0.85/3=0.70/4=0.55/≥5=0.45 封底
+  rushScale(chain) {
+    return chain <= 1 ? 1 : Math.max(RUSH_MIN, 1 - RUSH_STEP * (chain - 1));
   }
 
   _init() {
@@ -56,27 +68,59 @@ export class BoardEngine {
 
   drainEvents() { const e = this.events; this.events = []; return e; }
 
-  // ---------- 输入（策略：忙时忽略，02 文档第 7 节） ----------
+  // ---------- 输入(02 文档第 7 节,M9 修订:演出期并行/忙时缓冲) ----------
+  // IDLE=正常交换;RESOLVING=**并行交换**(被消格已置 null,其余格逻辑静止——交换立即写回
+  // grid,动画与消除演出并行,匹配并入连锁下一环由 _beginRound 统一判定;玩家可抢位促大连锁
+  // 或换走即将匹配的棋子主动断连锁,均为策略空间);FALLING/SWAPPING/REBOUND=**预输入缓冲**
+  // (只留最新意图,回 IDLE 自动执行;下落中格子带位移动画,直接交换视觉混乱故缓冲)。
   trySwap(a, b) {
-    if (this.state !== STATE.IDLE || this.paralyzed) return false;
+    if (this.paralyzed) return false;
     if (Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) return false;
-    const A = this.grid[a.r][a.c], B = this.grid[b.r][b.c];
+    const A = this.grid[a.r]?.[a.c], B = this.grid[b.r]?.[b.c];
     if (!A || !B) return false;
-    // 道具可自由换位；纯棋子交换必须产生新匹配，否则回弹
-    const itemInvolved = isItem(A) || isItem(B);
-    if (!itemInvolved && !this._swapCreatesMatchFrom(a, b)) return false;
-    [this.grid[a.r][a.c], this.grid[b.r][b.c]] = [B, A];
-    this.state = STATE.SWAPPING;
-    this.fx = { swapA: a, swapB: b, t: SWAP_TIME, back: false };
-    return true;
+    if (this.state === STATE.IDLE) {
+      // 道具可自由换位；纯棋子交换必须产生新匹配，否则回弹
+      const itemInvolved = isItem(A) || isItem(B);
+      if (!itemInvolved && !this._swapCreatesMatchFrom(a, b)) return false;
+      [this.grid[a.r][a.c], this.grid[b.r][b.c]] = [B, A];
+      this.state = STATE.SWAPPING;
+      this.fx = { swapA: a, swapB: b, t: SWAP_TIME, back: false };
+      return true;
+    }
+    if (this.state === STATE.RESOLVING) {
+      if (this.parallelSwap) { // 并行位占用 → 预输入缓冲(最新意图优先)
+        this.swapBuffer = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c } };
+        return true;
+      }
+      const itemInvolved = isItem(A) || isItem(B);
+      if (!itemInvolved && !this._swapCreatesMatchFrom(a, b)) return false; // 无效→调用方 nudge
+      [this.grid[a.r][a.c], this.grid[b.r][b.c]] = [B, A];
+      this.parallelSwap = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c }, t: SWAP_TIME };
+      return true;
+    }
+    if (this.state === STATE.FALLING || this.state === STATE.SWAPPING || this.state === STATE.REBOUND) {
+      this.swapBuffer = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c } };
+      return true;
+    }
+    return false;
   }
 
-  // 点选无效交换的表现层弹回(REQ-M6-05 F7 续审):**不进状态机**(逻辑状态保持 IDLE,
+  // 回 IDLE 时执行预输入缓冲(最新意图;失败=无效交换走 nudge 表现层弹回)
+  _flushBuffer() {
+    const buf = this.swapBuffer;
+    this.swapBuffer = null;
+    if (!buf || this.state !== STATE.IDLE || this.paralyzed) return;
+    if (!this.trySwap(buf.a, buf.b)) this.nudge(buf.a, buf.b);
+  }
+
+  // 点选无效交换的表现层弹回(REQ-M6-05 F7 续审):**不进状态机**(逻辑状态保持不变,
   // 02 文档第 7 节禁止无效交互产生 REBOUND 转移),仅登记往返回弹动画数据 nudgeFx,
   // 由 cellsForRender 消费:位移=出~31px 再原路返回(正弦包络,真实往返);
   // 期间仅 a/b 两格锁定(main 输入层按 nudgeFx 拒绝),其他格照常可操作。
+  // M9:RESOLVING 演出期放开(并行交换的无效回弹,IDLE 语义不变)。
   nudge(a, b) {
-    if (this.state !== STATE.IDLE || this.paralyzed) return false;
+    if (this.paralyzed) return false;
+    if (this.state !== STATE.IDLE && this.state !== STATE.RESOLVING) return false;
     if (Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) return false;
     this.nudgeFx = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c }, t: SWAP_TIME, total: SWAP_TIME };
     return true;
@@ -105,6 +149,8 @@ export class BoardEngine {
   update(dt) {
     // 点选无效弹回动画计时(纯表现层,不依赖状态机;REQ-M6-05 F7)
     if (this.nudgeFx) { this.nudgeFx.t -= dt; if (this.nudgeFx.t <= 0) this.nudgeFx = null; }
+    // M9:RESOLVING 演出期并行交换动画计时(纯表现;grid 已在 trySwap 即时交换)
+    if (this.parallelSwap) { this.parallelSwap.t -= dt; if (this.parallelSwap.t <= 0) this.parallelSwap = null; }
     switch (this.state) {
       case STATE.SWAPPING:
       case STATE.REBOUND:
@@ -147,7 +193,7 @@ export class BoardEngine {
   }
 
   _afterSwapAnim() {
-    if (this.fx.back) { this.state = STATE.IDLE; return; }
+    if (this.fx.back) { this.state = STATE.IDLE; this._flushBuffer(); return; }
     // 检查匹配（道具不参与）
     this.chain = 1;
     this._beginRound();
@@ -155,16 +201,27 @@ export class BoardEngine {
 
   _beginRound() {
     const blocks = findMatchBlocks(this.grid);
-    if (!blocks.length) { this.state = STATE.IDLE; this._onSettle(); return; }
+    if (!blocks.length) { this.state = STATE.IDLE; this._onSettle(); this._flushBuffer(); return; }
+    // M9 连锁 RUSH:总时长/四段时长/段①错峰全部乘 rushScale(chain)——chain 越大演出越快(02 文档 3.1);
+    // **先于事件发出**(match_cleared 事件携带 floor=本轮段④起点偏移,M9-F2:释放执行门槛随轮缩放)
+    const rs = this.rushScale(this.chain);
+    this.rush = rs;
+    this.stageDur = {
+      absorb: STAGE_ABSORB * rs, flash: STAGE_FLASH * rs, icon: STAGE_ICON * rs, burst: STAGE_BURST * rs,
+    };
+    // M9 连锁播报(需求方 2026-10-17:王者「N连XX」屏幕播报;chain≥2 触发,main 转发 fx 层)
+    if (this.chain >= 2) this.events.push({ type: 'chain_announce', chain: this.chain });
     // 块-事件-预约绑定(REQ-M6-05 F8):每块一个稳定键 bk(本轮内唯一),事件与演出格都携带;
     // main 逐事件预约后经 setBlockFx 回填实际选技结果,渲染段③按 bk 读本块自己的预约/蓄能
     // (不再按元素全局找第一个 pending——同元素双块不同技能/单候选第二块蓄能各自正确)。
     this.roundSeq++; // 预约认领的所属轮次基准(REQ-08 F8:跨轮存续预约不得认领新轮块)
     this.blockFx = new Map();
     blocks.forEach((b, bi) => this.blockFx.set(`b${bi}`, { el: ELEMENTS[b.el], reserved: false }));
-    // 发事件（逐轮即发，02 文档 5.1；每连通块一事件；r/c 为表现层粒子发射点）
+    // 发事件（逐轮即发，02 文档 5.1；每连通块一事件；r/c 为表现层粒子发射点;
+    // floor=本轮段④起点偏移(相对 t0)——charge 在档位首次充入时保存(earliestFloor 留池),
+    // reserveFor 转池时写入预约 execFloor 供 cast 释放门槛用,M9-F2)
     blocks.forEach((b, bi) => {
-      this.events.push({ type: 'match_cleared', element: ELEMENTS[b.el], count: b.cells.length, chain: this.chain, r: b.cells[0].r, c: b.cells[0].c, bk: `b${bi}` });
+      this.events.push({ type: 'match_cleared', element: ELEMENTS[b.el], count: b.cells.length, chain: this.chain, r: b.cells[0].r, c: b.cells[0].c, bk: `b${bi}`, floor: this.stageDur.absorb + this.stageDur.flash + this.stageDur.icon });
     });
     // 消耗品生成（按单事件 count：4→普通、≥5→高级；02 文档 5.1/6）
     const cleared = [];
@@ -181,13 +238,14 @@ export class BoardEngine {
       }
     }
     // 消除演出(M6 v0.2 02 文档 3.1):每连通块一个质心,段①各格向质心汇聚;事件已于上文发出(演出起点=事件确立)。
+    // rush/stageDur 已在事件发出前计算(本方法开头)
     const blockOf = new Map(); // cellKey -> 质心 {r,c} + 块键 bk
     blocks.forEach((b, bi) => {
       const cr = b.cells.reduce((a, k) => a + k.r, 0) / b.cells.length;
       const cc = b.cells.reduce((a, k) => a + k.c, 0) / b.cells.length;
       for (const k of b.cells) blockOf.set(k.r * COLS + k.c, { r: cr, c: cc, bk: `b${bi}` });
     });
-    const total = this.fxEnabled ? CLEAR_TIME_FX : CLEAR_TIME;
+    const total = this.fxEnabled ? CLEAR_TIME_FX * rs : CLEAR_TIME * rs;
     this.clearFxAtStart = this.fxEnabled; // F8 续审:记录本轮演出起始动效状态(中途关闭才加速收口)
     this.clearTotal = total;
     this.clearing = cleared.map(k => ({
@@ -198,12 +256,12 @@ export class BoardEngine {
       bk: blockOf.get(k.r * COLS + k.c)?.bk ?? null,
       delay: 0, // 段①错峰(≤80ms),下方按块内序号填充
     }));
-    // 段①错峰启动(02 文档 3.1:≤80ms):按块内格子序号线性铺开,全部格压缩到 0.27s 内完成段①
+    // 段①错峰启动(02 文档 3.1:≤80ms×rush):按块内格子序号线性铺开,全部格仍于段①内完成
     for (const b of blocks) {
       const cells = b.cells;
       cells.forEach((k, i) => {
         const cl = this.clearing.find(x => x.r === k.r && x.c === k.c);
-        if (cl) cl.delay = cells.length > 1 ? (i * 0.08) / (cells.length - 1) : 0;
+        if (cl) cl.delay = cells.length > 1 ? (i * 0.08 * rs) / (cells.length - 1) : 0;
       });
     }
     this.state = STATE.RESOLVING;
@@ -237,6 +295,7 @@ export class BoardEngine {
 
   _afterClear() {
     this.clearing = [];
+    this.parallelSwap = null; // M9-F3:演出结束并行动画一并收口(极限 rush 下动画未播完即截断,grid 已交换、内容瞬间到位)
     this._applyFalls();
     this.state = STATE.FALLING;
   }
@@ -269,7 +328,8 @@ export class BoardEngine {
     }
     const maxDist = Math.max(1, ...moves.map(m => m.dist));
     this.falls = moves;
-    this.fallT = maxDist * FALL_TIME_PER_CELL;
+    // M9 连锁 RUSH:下落时长乘 rushScale(chain)——chain1(首轮消除后)=1.00,chain2 起 0.85/0.70/…(tapItem 补位 chain=0 同 1.00)
+    this.fallT = maxDist * FALL_TIME_PER_CELL * this.rushScale(this.chain);
     this.fallTotal = this.fallT;
   }
 
@@ -284,6 +344,7 @@ export class BoardEngine {
       this.chain = 0;
       this.state = STATE.IDLE;
       this._onSettle();
+      this._flushBuffer();
       return;
     }
     this._beginRound(); // 连锁判定（无匹配则回 IDLE + SETTLE）
@@ -292,9 +353,9 @@ export class BoardEngine {
   // 道具移除后补位（等价一次单格下落，02 文档第 6 节「移除后走标准下落补位」）
   _refillAfterRemovals() {
     if (this.state === STATE.IDLE) {
+      this.chain = 0; // M9-F6:先归零再编排下落(补位下落不构成连锁升级;修复前 _applyFalls 读到上一轮 chain 而误乘 rushScale)
       this._applyFalls();
       this.state = STATE.FALLING;
-      this.chain = 0; // 补位下落不构成连锁升级；落定后 _beginRound 无匹配即回 IDLE
     } else {
       // 忙时移除（超时/瘫瘓恢复重试）：登记，落定后追加
       this.pendingItemRemovals.push(...this._takeEmptyFromItems());
@@ -345,6 +406,7 @@ export class BoardEngine {
     this.paralyzed = false;
     this.state = STATE.IDLE;
     this.paralyzeT = 0;
+    this._flushBuffer();
   }
 
   _tryRecover() {
@@ -372,6 +434,17 @@ export class BoardEngine {
         let offsetX = 0, offsetY = 0, alpha = 1, scale = 1, flash = 0, stage = 0, jx = 0, jy = 0;
         const fm = this.falls.find(m => m.r === r && m.c === c);
         if (fm && fallProgress < 1) offsetY = -fm.dist * 90 * (1 - easeOutCubic(fallProgress));
+        // M9:RESOLVING 演出期并行交换偏移(grid 已即时交换,A 格内容=原 B 子,从 B 位置滑向 A 位置:
+        // 起点偏移=±(dirC,dirR)×CELL,随进度归 0;M9-F3 修正,修复前 0→90px 反向跳变)
+        if (this.parallelSwap) {
+          const ps = this.parallelSwap;
+          const q = Math.max(0, ps.t) / SWAP_TIME; // 剩余比例 1→0
+          const prog = easeInOutQuad(1 - q); // 滑动进度 0→1
+          const k = 1 - prog; // 偏移系数 1→0(起点=对方位置满幅,归 0=到位;M9-F3)
+          const dirR = ps.b.r - ps.a.r, dirC = ps.b.c - ps.a.c;
+          if (r === ps.a.r && c === ps.a.c) { offsetX += dirC * 90 * k; offsetY += dirR * 90 * k; }
+          if (r === ps.b.r && c === ps.b.c) { offsetX += -dirC * 90 * k; offsetY += -dirR * 90 * k; }
+        }
         // 点选无效弹回(REQ-M6-05 F7):状态保持 IDLE,纯位移叠加——
         // 正弦包络出~31px(90×0.35)再原路返回(真实往返),仅 a/b 两格
         if (this.nudgeFx) {
@@ -409,17 +482,18 @@ export class BoardEngine {
     // ③图标浮现=质心位半透明缩聚(技能图标由渲染层**状态驱动**逐帧绘制,F8);
     // ④爆发=图标放大 1.3 倍碎裂+径向光效(图标/光效由渲染层绘制)。
     for (const cl of this.clearing) {
-      const elapsed = Math.max(0, (this.fxEnabled ? this.clearTotal : CLEAR_TIME) - cl.t);
+      const sd = this.stageDur || { absorb: STAGE_ABSORB, flash: STAGE_FLASH, icon: STAGE_ICON, burst: STAGE_BURST };
+      const elapsed = Math.max(0, this.clearTotal - cl.t);
       let alpha = 1, scale = 1, flash = 0, stage = 0, jx = 0, jy = 0, sx = 1, sy = 1;
       if (!this.fxEnabled) {
-        alpha = Math.min(1, Math.max(0, cl.t / CLEAR_TIME));
+        alpha = Math.min(1, Math.max(0, this.clearTotal > 0 ? cl.t / this.clearTotal : 0));
         scale = 0.4 + 0.6 * alpha;
         flash = alpha > 0.7 ? (alpha - 0.7) / 0.3 : 0;
       } else {
-        const absT = STAGE_ABSORB - 0.08; // 段①净时长(错峰铺开后全部格仍于 0.35s 完成)
+        const absT = sd.absorb - 0.08 * (this.rush || 1); // 段①净时长(错峰铺开后全部格仍于段①内完成;随 rush 同缩)
         const p1 = Math.min(1, Math.max(0, (elapsed - (cl.delay || 0)) / absT));
         const dist = Math.hypot(cl.cc - cl.c, cl.cx - cl.r);
-        if (elapsed < STAGE_ABSORB) {
+        if (elapsed < sd.absorb) {
           // 段① 吸收聚集:二次贝塞尔(控制点=中点+法向偏移 0.35×距离)
           stage = 1;
           const dx = cl.cc - cl.c, dy = cl.cx - cl.r;
@@ -430,15 +504,15 @@ export class BoardEngine {
           // 果冻挤压:沿运动方向拉伸、垂直压缩,幅度随距离与进度增强
           const k = 0.22 * p1 * Math.min(1, dist / 2);
           if (Math.abs(dx) >= Math.abs(dy)) { sx = 1 + k; sy = 1 - k * 0.6; } else { sy = 1 + k; sx = 1 - k * 0.6; }
-        } else if (elapsed < STAGE_ABSORB + STAGE_FLASH) {
+        } else if (elapsed < sd.absorb + sd.flash) {
           // 段② 合成闪光:质心位,白闪+收缩到 0.5
           stage = 2;
           jx = (cl.cc - cl.c) * CELL; jy = (cl.cx - cl.r) * CELL;
-          const p = (elapsed - STAGE_ABSORB) / STAGE_FLASH;
+          const p = (elapsed - sd.absorb) / sd.flash;
           alpha = 1;
           scale = 1 - 0.5 * p;
           flash = 0.5 + 0.5 * (1 - p);
-        } else if (elapsed < STAGE_ABSORB + STAGE_FLASH + STAGE_ICON) {
+        } else if (elapsed < sd.absorb + sd.flash + sd.icon) {
           // 段③ 图标浮现:质心位半透明缩聚(图标由渲染层按块状态驱动绘制)
           stage = 3;
           jx = (cl.cc - cl.c) * CELL; jy = (cl.cx - cl.r) * CELL;
@@ -448,7 +522,7 @@ export class BoardEngine {
           // 段④ 爆发施放:淡出消散(图标放大碎裂与径向光效由渲染层绘制)
           stage = 4;
           jx = (cl.cc - cl.c) * CELL; jy = (cl.cx - cl.r) * CELL;
-          const p = (elapsed - STAGE_ABSORB - STAGE_FLASH - STAGE_ICON) / STAGE_BURST;
+          const p = (elapsed - sd.absorb - sd.flash - sd.icon) / sd.burst;
           alpha = Math.max(0, 1 - p);
           scale = 0.5 + 0.2 * p;
         }

@@ -47,6 +47,19 @@ const CRIT_SIZE_MULT = 1.4;     // 暴击字号放大
 const CRIT_PEAK = 1.38;         // 暴击 pop 过冲更强
 const CRIT_LIFE = 1.25;         // 暴击存在时间延长(调研:暴击应延长存在)
 
+// ===== M9 连锁播报(需求方 2026-10-17:王者「N连XX」屏幕定版播报)=====
+// 文案=王者 2017 官方播报(二连击破/三连决胜/四连超凡/五连绝世),≥6 延伸「连锁狂潮 ×N」;
+// 动效:0~0.12s 左滑入+easeOutBack 定版(0.3→1.15→1.0)→0.62s 停留(呼吸)→0.9s 上浮淡出;
+// 光带 0~0.25s 扫过;chain≥4 附棋盘微震(boardShakeT)。纯 Canvas 矢量,无外部素材。
+const ANNOUNCE_TABLE = [
+  { min: 6, text: (c) => `连锁狂潮 ×${c}`, color: '#e05a5a' },
+  { min: 5, text: () => '五连绝世', color: '#ffd700' },
+  { min: 4, text: () => '四连超凡', color: '#f5a02c' },
+  { min: 3, text: () => '三连决胜', color: '#b06fd8' },
+  { min: 2, text: () => '二连击破', color: '#4aa8cc' },
+];
+const AN_LIFE = 0.9, AN_IN = 0.12, AN_HOLD = 0.62, AN_BAND = 0.25, AN_SHAKE = 0.3;
+
 // easeOutBack 弹跳缓动(段 pop 过冲回落;REQ-M7-01 F3 沿用)
 function easeOutBack(x) {
   const c1 = 1.70158, c3 = c1 + 1;
@@ -58,6 +71,8 @@ export class FxLayer {
     this.particles = []; // {x,y,vx,vy,t,life,size,rgb}
     this.floaters = [];  // {x,y,text,t,life,size,color}
     this.combatTexts = []; // v0.3 伤害冒字(上限 64 字符位;M8 A 整条一体运动/暴击,03 文档 6.1)
+    this.announces = [];   // M9 连锁播报 [{chain,text,color,t,life}](engine chain_announce 事件驱动)
+    this.boardShakeT = 0;  // M9:播报棋盘微震计时(chain≥4 触发)
   }
 
   // 消除粒子爆裂:cx/cy 格中心(逻辑坐标),el 元素名,count 消除数(越多越密);
@@ -129,6 +144,25 @@ export class FxLayer {
     });
   }
 
+  // M9 连锁播报(main 转发 engine chain_announce 事件):文案/颜色按表;chain≥4 附微震;
+  // 替换式(M9-F5):新播报入队时把未完成旧播报直接推入淡出段(t≥AN_HOLD)——高连锁下
+  // 连续播报不相互静止叠加(修复前最多 3 条共用中央位互相覆盖)
+  chainAnnounce(chain) {
+    const row = ANNOUNCE_TABLE.find(r => chain >= r.min);
+    if (!row) return;
+    for (const old of this.announces) old.t = Math.max(old.t, AN_HOLD + (AN_LIFE - AN_HOLD) * 0.5); // 推入淡出段中点(alpha≈0.5,0.14s 内消亡——立即让位不再全亮叠加)
+    this.announces.push({ chain, text: row.text(chain), color: row.color, t: 0, life: AN_LIFE });
+    this.announces = this.announces.slice(-3); // 防堆积(淡出尾最多 3 条)
+    if (chain >= 4) this.boardShakeT = AN_SHAKE;
+  }
+
+  // 棋盘微震偏移(render 每帧读取;±2px 衰减,chain≥4 播报附带)
+  boardShake() {
+    if (this.boardShakeT <= 0) return { dx: 0, dy: 0 };
+    const a = (this.boardShakeT / AN_SHAKE) * 2;
+    return { dx: Math.sin(this.boardShakeT * 70) * a, dy: Math.cos(this.boardShakeT * 53) * a * 0.6 };
+  }
+
   update(dt) {
     for (const p of this.particles) {
       p.t += dt;
@@ -148,6 +182,9 @@ export class FxLayer {
       c.y += c.vy * dt;
     }
     this.combatTexts = this.combatTexts.filter(c => c.t < c.life);
+    for (const an of this.announces) an.t += dt;
+    this.announces = this.announces.filter(an => an.t < an.life);
+    if (this.boardShakeT > 0) this.boardShakeT = Math.max(0, this.boardShakeT - dt);
   }
 
   // pop→回落→恒定 scale(M8:过冲后回落 1.0 保持基础字号可读,不再缩小消失)
@@ -191,6 +228,50 @@ export class FxLayer {
       ctx.strokeText(c.text, c.x, ty);
       ctx.fillStyle = c.color;
       ctx.fillText(c.text, c.x, ty);
+    }
+    ctx.globalAlpha = 1;
+    // M9 连锁播报绘制(王者定版:左滑入→overshoot 定版→停留→上浮淡出;M9-F5:滑入含水平位移、
+    // scale 经 easeOutBack 连续回落 1.0 无跳变、替换式不叠加;纯表现不阻塞逻辑)
+    for (const an of this.announces) {
+      const t = an.t;
+      let scale = 1, alpha = 1, yoff = 0, xoff = 0;
+      if (t < AN_IN) {
+        const p = t / AN_IN;
+        const eb = easeOutBack(p); // 0→1,中段自然过冲(~1.1),终点 1.0 连续(修复前映射终点 1.15 跳变)
+        scale = 0.3 + 0.7 * eb;
+        xoff = -140 * Math.pow(1 - p, 2); // 左侧 140px 滑入(easeOut 二次)
+      } else if (t < AN_HOLD) {
+        scale = 1 + 0.02 * Math.sin(((t - AN_IN) / (AN_HOLD - AN_IN)) * Math.PI * 4); // 呼吸
+      } else {
+        const p = (t - AN_HOLD) / (AN_LIFE - AN_HOLD);
+        alpha = Math.max(0, 1 - p);
+        yoff = -30 * p;
+      }
+      // 光带(0~0.25s 斜带扫过播报区)
+      if (t < AN_BAND) {
+        const p = t / AN_BAND;
+        const gx = -200 + p * (720 + 400);
+        ctx.save();
+        ctx.globalAlpha = Math.sin(p * Math.PI) * 0.3;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(gx, 770); ctx.lineTo(gx + 60, 770); ctx.lineTo(gx + 140, 960); ctx.lineTo(gx + 80, 960);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      const font = Math.max(6, Math.round(56 * scale));
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = 'center';
+      ctx.lineJoin = 'round';
+      ctx.font = `bold ${font}px 'Nunito','Noto Sans SC',sans-serif`;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(3, Math.round(font / 8));
+      const ax = 360 + xoff, ay = 864 + yoff;
+      ctx.strokeText(an.text, ax, ay);
+      ctx.fillStyle = an.color;
+      ctx.fillText(an.text, ax, ay);
+      ctx.restore();
     }
     ctx.globalAlpha = 1;
   }

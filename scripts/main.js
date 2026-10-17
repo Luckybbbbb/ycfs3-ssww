@@ -130,18 +130,24 @@ function boot() {
     return !!nf && ((cell.r === nf.a.r && cell.c === nf.a.c) || (cell.r === nf.b.r && cell.c === nf.b.c));
   };
   const input = attachInput(canvas, {
-    // 忙态丢弃整次手势(F7 续审):引擎非 IDLE/瘫痪时不开始任何拖拽/点选手势
+    // 忙态丢弃整次手势(F7 续审;M9 修订):演出期可操作忙态放行(RESOLVING 并行交换/
+    // FALLING 预输入缓冲,由 engine.trySwap 分支承接),仅瘫痪等不可操作忙态仍丢弃
     busy: () => engine.state !== 'IDLE' || engine.paralyzed,
-    // 果冻拖拽预判定(02 文档 2.3;REQ-M6-04 F7):纯棋子交换须成消才放行;
-    // 含道具格走引擎换位分支(道具可自由换位,不成消也放行);引擎忙态一律拒绝
+    canActInBusy: () => !engine.paralyzed && engine.state !== 'IDLE',
+    // 果冻拖拽预判定(02 文档 2.3;REQ-M6-04 F7;M9 修订):仅 IDLE 预判成消(RESOLVING 交给引擎——
+    // 并行位占用时引擎直接转预输入缓冲(M9-F4:预判不得早于占用分支,否则「当前无效、落定后可能
+    // 有效」的拖拽被误拒);RESOLVING 非占用时引擎内部判成消,无效 false→跟手/松手回弹);
+    // 含道具格走引擎换位分支;FALLING/SWAPPING/REBOUND 走预输入缓冲(不预判——落定后 grid 变化再判)
     tryDragSwap: (a, b) => {
       if (screen !== 'playing' || battle.phase !== 'FIGHTING') return false;
       if (nudgeLock(a) || nudgeLock(b)) return false;
       if (!engine.grid[a.r]?.[a.c] || !engine.grid[b.r]?.[b.c]) return false;
+      const st = engine.state;
       const itemInvolved = isItem(engine.grid[a.r][a.c]) || isItem(engine.grid[b.r][b.c]);
-      if (!itemInvolved && !swapCreatesMatch(engine.grid, a.r, a.c, b.r, b.c)) return false;
+      if (st === 'IDLE' && !itemInvolved && !swapCreatesMatch(engine.grid, a.r, a.c, b.r, b.c)) return false;
       if (!engine.trySwap(a, b)) return false;
-      showToast('交换'); sfx.swap();
+      showToast(st === 'IDLE' ? '交换' : st === 'RESOLVING' ? '连锁中交换' : '已预约:落定后执行');
+      sfx.swap();
       return true;
     },
     // M4 路由拦截:选关界面/胜负弹层全屏接管(按钮在棋盘几何区之上)
@@ -197,8 +203,9 @@ function boot() {
     onCellDown: () => {},
     onTap: (cell) => {
       if (screen !== 'playing' || battle.phase !== 'FIGHTING') return;
-      // 引擎忙态(SWAPPING/RESOLVING/FALLING/瘫痪)丢弃整次输入(02 文档第 7 节;REQ-M6-04 F7)
-      if (engine.state !== 'IDLE' || engine.paralyzed) return;
+      // M9 修订:忙态放行点选(RESOLVING 并行交换/FALLING 预输入由 engine.trySwap 承接);
+      // 瘫痪仍丢弃;道具点击仍限 IDLE(engine.tapItem 自拦,忙时返回 null)
+      if (engine.paralyzed) return;
       // 弹回中的 a/b 两格锁定(F7 续审:只锁回弹格,其他格照常)
       if (nudgeLock(cell)) return;
       // 道具点击优先(道具格不参与点选交换)
@@ -302,6 +309,8 @@ function boot() {
             const p = caster.reserveFor(e.element, elimRng, battle.clock);
             if (p) {
               p.round = engine.roundSeq; // 盖章所属轮(跨轮存续预约不得认领新轮块)
+              // M9-F2:execFloor 已在 reserveFor 内组装(t0+floor 随档位留池保存——最早被占用
+              // 档位所属轮的段④起点,延迟选技/跨轮留池不丢失;main 不再按当前事件补写)
               engine.setBlockFx(e.bk, { el: e.element, reserved: true, skillId: p.skillId, tier: p.tier, resKey: p.id });
             }
             showToast(`${e.element} ×${e.count} 连锁${e.chain} → ${e.element}档 +${gain}`);
@@ -309,6 +318,7 @@ function boot() {
             if (engine.fxEnabled) hud.fx.onMatchCleared(e, e.chain); // REQ-M6-04 F8:关动效不触发粒子
           }
           if (e.type === 'board_paralyzed') showToast('棋盘瘫痪');
+          if (e.type === 'chain_announce' && engine.fxEnabled) hud.fx.chainAnnounce(e.chain); // M9 连锁播报(与 6.1 同步关闭口径:fx 关不播报)
         }
         // 同刻顺序④(M6 双链路,03 文档 4.0):caster.tick 仲裁(主角链合并/并发→消除链到期执行)
         // 子弹类已在 caster 内经 ctx.launch 同一提交发射(F6);无存活敌人执行挂起(预约保留)
