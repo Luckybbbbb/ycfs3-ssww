@@ -200,3 +200,4 @@
   3. **最终击杀未保证终局同帧**:整波击杀采样+「出现击破即可」。整改:**单发非穿透火弹(loadout 仅 fire_bolt)击杀末潮唯一敌**(tideIdx 置末+截断 1 只 HP1);新断言 **kill 事件与 VICTORY 同一次 update**(battle.log 最后 kill.t===victory.t,同帧)+该事件经 main 转发被绘制(击破白色采样)。
   验证:全量 **191/191**(m7 28)+returncode 0 配对;CDP **11/11**(隔离+同帧版)。注释「唯一击破=终局帧事件」更正为实际验证条件。候选重新冻结重算 manifest,以 REQ-SSWW-M7-v0.1-04 同链 ycfs3-m7-v0.1 RESUBMIT。
 - REQ-SSWW-M7-v0.1-04 裁决 **RULING=APPROVED**(2026-10-17;审核链 ycfs3-m7-v0.1 第四轮收口):F1~F7 全部闭合,伤害冒字与异常状态标记批次达到 03 文档 v0.3 第 6 节 MVP 验收约定——方向接线(真实弹速/爆炸中心/敌弹方向)、实际变化量口径(致死溢出/封顶/全吸免伤)、三段运动(easeOutBack 弹跳)+淘汰先后(单调 seq)、GEM_COLORS 单一定义源、真实生命周期(减速跃迁/灼烧束缚到期静默)、CDP 隔离验证(消除链金色伤害/终局 kill.t===victory.t 同帧击破)。范围保留后续验证义务:真机、M5 三视口完整回归、数值体感。
+- M7 部署(2026-10-17):commit bc533a0 `feat(battle): 伤害冒字与异常状态标记(方向迸发五行冒字/状态图标/生命周期)`(11 文件,+959/−23,含 tests/m7.test.mjs 新增)已推送 origin master;GitHub Pages 构建完成(built),fx.js/draw_util.js 新模块均可达(HTTP 200)。
