@@ -10,68 +10,98 @@ import { roundRect, GEM_COLORS as GEM_SRC } from './draw_util.js'; // 五行色�
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
 import { skillById, SKILL_LIBRARY } from '../skills/library.js';
 import { levelUpCost, skillUpCost, SKILL_LEVEL_CAP } from '../meta/economy.js';
-import { ENEMY_TYPES } from '../battle/wave.js';
+import { ENEMY_TYPES, levelWeights } from '../battle/wave.js';
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { LEVEL_META, WAVES_PER_LEVEL } from '../meta/levels.js'; // M11 UI 设计稿:关卡名/建议等级
 import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶栏经验条
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
-// 道具图标贴图(M11 接入:codex 生图,assets/icons/items/<item>[_premium].png 144×144;
-// 替换 emoji 占位;缺图回退 emoji,预载校验见 assets/manifest.js iconList)
+// 道具图标贴图(assets/icons/items/<item>[_premium].png 144×144;缺图回退 emoji 原样式;
+// 预载校验见 assets/manifest.js iconList)
+// ===== M11-03 F1 残留整改:生产导入路径零顶层加载 =====
+// 历史(两轮裁决):本模块顶层循环创建 Image 并立即赋 src——在 main 调 preload **之前**就发生
+// 119 次独立加载,绕过 loader 的 24 并发上限与重试(M11-01 F1)。「bindImages 兜底」注释与
+// 执行事实不符(M11-02 F1 残留)。现改为:各表初始为空,生产路径**唯一填充入口=bindImages(map)**
+// (main 预载成功后注入 preload 同一实例);ensureFallbackImages() 为显式兜底入口(幂等,仅
+// 单测/无 main 的演示环境调用),生产代码永不调用——启动期全部图片加载只发生在 preload 内
+// (24 并发/重试口径覆盖真实启动流程)。
 const ITEM_IMG = {};
-for (const it of ['heal', 'invincible', 'cd']) {
-  for (const suffix of ['', '_premium']) {
-    const img = new Image();
-    img.src = new URL(`../../assets/icons/items/${it}${suffix}.png`, import.meta.url).href;
-    ITEM_IMG[it + suffix] = img;
+// ===== M11-02 F1 整改:渲染贴图消费预载同一资源集合 =====
+// 历史缺陷:本模块在求值期自建全部 Image(上方与下方各表),绕过 loader 的重试/并发上限——
+// 预载 125/125 成功后,渲染层自建实例仍可能加载失败(弱网下独立失败),高级图标回退 emoji 且
+// main 丢弃 preload 返回 Map,预载成果没有被消费。
+// 修复:保留懒加载自建为兜底(单测/未接 main 的演示环境),新增 bindImages(map)——main 预载
+// 成功后以 **preload 返回的同一 Image 实例** 替换各表项,保证「预载成功 ⇒ 绘制资源就绪」。
+export function bindImages(map) {
+  if (!map || typeof map.get !== 'function') return 0;
+  let n = 0;
+  for (const it of ['heal', 'invincible', 'cd']) {
+    for (const suffix of ['', '_premium']) {
+      const img = map.get(`icon:items:${it}${suffix}`);
+      if (img) { ITEM_IMG[it + suffix] = img; n++; }
+    }
   }
+  for (const el of ELEMENTS) {
+    const img = map.get(`icon:elements:${el}`);
+    if (img) { GEM_IMG[el] = img; n++; }
+  }
+  for (const s of SKILL_LIBRARY) {
+    const img = map.get(`icon:skills:${s.id}`);
+    if (img) { SKILL_IMG[s.id] = img; n++; }
+  }
+  // PLAYER idle 16 / walk_start 3:帧数按 manifest 固定口径(表初始为空,不能以 length 为界)
+  for (let i = 0; i < 16; i++) {
+    const img = map.get(`player:idle:${i + 1}`);
+    if (img) { PLAYER_FRAMES[i] = img; n++; }
+  }
+  for (let i = 0; i < 3; i++) {
+    const img = map.get(`player:walk_start:${i + 1}`);
+    if (img) { PLAYER_ATK_FRAMES[i] = img; n++; }
+  }
+  for (const [type, t] of Object.entries(ENEMY_TYPES)) {
+    ENEMY_FRAMES[type] = []; // M11-03 F1:先初始化行数组——ENEMY_FRAMES 初始 {},直接 [type][j]=img 抛 TypeError(黑屏根因)
+    t.frames.forEach((fn, j) => {
+      const img = map.get(`${type}:${fn}`);
+      if (img) { ENEMY_FRAMES[type][j] = img; n++; }
+    });
+  }
+  return n;
 }
 // 技能一句话说明(备战界面技能库行;03 文档 5.2 kind 口径)
 const SKILL_BRIEF = {
   bolt: '单体弹', dotzone: '灼烧区域', chain: '连锁弹', bind: '束缚+持续伤害', multi: '多发弹',
   shield: '护盾', pulse: '脉冲环', field: '减速领域', aura: '回复光环',
 };
-// 棋子贴图(M10 接入:codex 生图 animal-island 风格五行宝石,assets/icons/elements/<el>.png 144×144;
-// 替换原型期纯色圆 gems/;缺图走矢量兜底,预载校验见 assets/manifest.js fullManifest)
-const GEM_IMG = {};
-const GEM_DIR = new URL('../../assets/icons/elements/', import.meta.url);
-for (const el of ELEMENTS) {
-  const img = new Image();
-  img.src = new URL(`${el}.png`, GEM_DIR).href;
-  GEM_IMG[el] = img;
+// M11-03 F1:显式兜底入口(幂等)——把渲染消费的全部贴图按 manifest 同款路径自建加载。
+// 仅限单测/无 main 的演示环境显式调用;生产路径唯一入口=bindImages(preload Map)。
+export function ensureFallbackImages() {
+  if (ensureFallbackImages._done) return ensureFallbackImages._done;
+  const created = [];
+  const mk = (url) => { const img = new Image(); img.src = url; created.push(img); return img; };
+  for (const it of ['heal', 'invincible', 'cd']) {
+    for (const suffix of ['', '_premium']) ITEM_IMG[it + suffix] = mk(new URL(`../../assets/icons/items/${it}${suffix}.png`, import.meta.url).href);
+  }
+  for (const el of ELEMENTS) GEM_IMG[el] = mk(new URL(`${el}.png`, GEM_DIR).href);
+  for (const s of SKILL_LIBRARY) SKILL_IMG[s.id] = mk(new URL(`../../assets/icons/skills/${s.id}.png`, import.meta.url).href);
+  for (let i = 1; i <= 16; i++) PLAYER_FRAMES.push(mk(new URL(`../../assets/sprites/player/idle_${String(i).padStart(2, '0')}.png`, import.meta.url).href));
+  for (let i = 1; i <= 3; i++) PLAYER_ATK_FRAMES.push(mk(new URL(`../../assets/sprites/player/walk_start_${String(i).padStart(2, '0')}.png`, import.meta.url).href));
+  for (const [type, t] of Object.entries(ENEMY_TYPES)) {
+    ENEMY_FRAMES[type] = t.frames.map(n => mk(new URL(`../../assets/sprites/${t.dir}/${t.prefix}${String(n).padStart(3, '0')}_nobg.png`, import.meta.url).href));
+  }
+  ensureFallbackImages._done = created;
+  return created;
 }
-// 技能图标贴图(M10 接入:assets/icons/skills/<skillId>.png 144×144,15 张 id 与 library 一致;
-// 段③④消除演出使用;未加载时回退为文字[原样式])
-const SKILL_IMG = {};
-for (const s of SKILL_LIBRARY) {
-  const img = new Image();
-  img.src = new URL(`../../assets/icons/skills/${s.id}.png`, import.meta.url).href;
-  SKILL_IMG[s.id] = img;
-}
+// bindImages(map):生产唯一填充入口(main 预载成功后调用)——见下方定义。
 
-// 序列帧预载(帧清单见 scripts/assets/manifest.js;此处按同清单懒加载,缺图走矢量兜底)
-const PLAYER_FRAMES = [];
-for (let i = 1; i <= 16; i++) {
-  const img = new Image();
-  img.src = new URL(`../../assets/sprites/player/idle_${String(i).padStart(2, '0')}.png`, import.meta.url).href;
-  PLAYER_FRAMES.push(img);
-}
-// 攻击动画:walk_start 3 帧单次播放(资源无独立攻击帧,对标 player.tscn startup 16.7fps)
-const PLAYER_ATK_FRAMES = [];
-for (let i = 1; i <= 3; i++) {
-  const img = new Image();
-  img.src = new URL(`../../assets/sprites/player/walk_start_${String(i).padStart(2, '0')}.png`, import.meta.url).href;
-  PLAYER_ATK_FRAMES.push(img);
-}
-const ENEMY_FRAMES = {};
-for (const [type, t] of Object.entries(ENEMY_TYPES)) {
-  ENEMY_FRAMES[type] = t.frames.map(n => {
-    const img = new Image();
-    img.src = new URL(`../../assets/sprites/${t.dir}/${t.prefix}${String(n).padStart(3, '0')}_nobg.png`, import.meta.url).href;
-    return img;
-  });
-}
+// 渲染贴图表(初始全空;填充入口二选一:生产=bindImages,单测/演示=ensureFallbackImages;
+// miss 时绘制层已有矢量/emoji 兜底)
+const GEM_DIR = new URL('../../assets/icons/elements/', import.meta.url);
+const GEM_IMG = {};      // 棋子贴图(M10:assets/icons/elements/<el>.png;缺图矢量兜底)
+const SKILL_IMG = {};    // 技能图标(M10:assets/icons/skills/<id>.png;缺图文字兜底)
+const PLAYER_FRAMES = [];      // 主角 idle 16 帧(缺图人形色块兜底)
+const PLAYER_ATK_FRAMES = [];  // 主角攻击 walk_start 3 帧
+const ENEMY_FRAMES = {};       // 六类敌人序列帧(缺图椭圆兜底)
 const seqFrame = (frames, t, fps) => frames[Math.floor(t * fps) % frames.length];
 
 let worldT = 0; // 表现层动画时钟
@@ -637,15 +667,17 @@ export const UI = {
   },
   menu: {
     backBtn: { x: 24, y: 20, w: 80, h: 70 },
-    growBtn: { x: 566, y: 1170, w: 130, h: 80 },
-    cardTop: 140, cardH: 178, cardGap: 24,
-    cardBtn: { w: 150, h: 80 }, // 卡内右侧:x=688-28-150=510, y=cardY+49
+    growBtn: { x: 566, y: 1140, w: 130, h: 80 },
+    cardTop: 200, cardH: 170, cardGap: 14, // F7 整改:首卡下移(货币 HUD 不再被卡覆盖),卡高压缩给 HUD 行让位
+    cardBtn: { w: 150, h: 80 }, cardBtnY: 45, // 卡内右侧:x=510, y=cardY+cardBtnY
+    chipsX: 210, chipsY: 100, chipsMaxX: 505, chipsRowGap: 34, // M11-03 F7:chips 左列两行、限宽 ≤300(x<505),与按钮区 x≥510 完全错开
   },
   loadout: {
     backBtn: { x: 24, y: 20, w: 80, h: 70 },
-    panelY: 500, slotsY: 566, slotSize: 120, slotGap: 24, // 4 槽:x0=44,步进 144
-    libY: 800, libRowH: 40, libCols: [56, 376], libPerCol: 7, // 技能库两列 7 行
-    fightBtn: { x: 160, y: 1140, w: 400, h: 110 },
+    panelY: 490, slotsY: 560, slotSize: 120, slotGap: 24, // 4 槽:x0=44,步进 144
+    libY: 715, libRowH: 38, libCols: [56, 376], libPerCol: 8, // F2 整改:两列 8 行(15 技能全可见;原 7 行漏第 15 个 NaN)
+    libRowW: 288,
+    fightBtn: { x: 160, y: 1115, w: 400, h: 100 },
   },
   battle: {
     pauseBtn: { x: 24, y: 1232, w: 70, h: 40 },
@@ -682,6 +714,27 @@ export const UI = {
 };
 
 const FONT = (s, w = '') => `${w ? w + ' ' : ''}${s}px 'Nunito','Noto Sans SC',sans-serif`;
+
+// ===== M11-02 F2/F7 整改:命中区单一来源 =====
+// 选关卡片按钮 / 备战槽位 / 技能库行的命中区此前在 main 硬编码(与 render 布局双源易漂移,
+// libRectOf 甚至按旧 7 行计算)——统一由 UI 常量派生,main 与测试共用。
+export const uiCardBtn = (L) => ({
+  x: 510,
+  y: UI.menu.cardTop + (L - 1) * (UI.menu.cardH + UI.menu.cardGap) + UI.menu.cardBtnY,
+  w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h,
+});
+export const uiSlotRect = (i) => ({
+  x: 44 + i * (UI.loadout.slotSize + UI.loadout.slotGap),
+  y: UI.loadout.slotsY, w: UI.loadout.slotSize, h: UI.loadout.slotSize,
+});
+export const uiLibRect = (i) => {
+  const col = Math.floor(i / UI.loadout.libPerCol), row = i % UI.loadout.libPerCol;
+  return {
+    x: UI.loadout.libCols[col],
+    y: UI.loadout.libY + 56 + row * UI.loadout.libRowH,
+    w: UI.loadout.libRowW, h: UI.loadout.libRowH - 4,
+  };
+};
 
 // 通用小按钮(底栏 ⏸/⚙ 等 ghost 风格)
 function drawIconBtn(ctx, r, glyph) {
@@ -769,8 +822,8 @@ function drawStartScreen(ctx, hud) {
   ctx.textAlign = 'center';
   ctx.font = FONT(84, 'bold');
   ctx.lineWidth = 14; ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(121,79,39,.9)'; ctx.strokeText('三消守卫', 360, ty);
-  ctx.fillStyle = '#19c8b9'; ctx.fillText('三消守卫', 360, ty);
+  ctx.strokeStyle = 'rgba(121,79,39,.9)'; ctx.strokeText('言出法随之三生万物', 360, ty);
+  ctx.fillStyle = '#19c8b9'; ctx.fillText('言出法随之三生万物', 360, ty);
   ctx.font = FONT(28);
   ctx.fillStyle = '#794f27';
   ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, ty + 56);
@@ -808,11 +861,11 @@ function drawMenuScreen(ctx, hud) {
   const prof = hud.profile ? hud.profile() : { level: 1, coins: 0, materials: 0 };
   const prog = hud.progress ? hud.progress() : { unlockedLevel: 1, lastLevelCleared: 0 };
   drawTopBar(ctx, '关卡选择', prof);
-  // 货币/材料(FR-7 v0.2)
+  // 货币/材料(FR-7 v0.2;F7 整改:卡顶 200 下移,HUD 行不再被首卡覆盖)
   ctx.fillStyle = '#794f27';
-  ctx.font = FONT(22, 'bold');
+  ctx.font = FONT(24, 'bold');
   ctx.textAlign = 'left';
-  ctx.fillText(`💰 ${prof.coins ?? 0}  ⛏ ${prof.materials ?? 0}`, 124, 165);
+  ctx.fillText(`💰 ${prof.coins ?? 0}  ⛏ ${prof.materials ?? 0}`, 124, 178);
   ctx.textAlign = 'center';
   // 关卡卡片 ×5(三态:已通关重打 / 当前高亮挑战 / 锁定)
   for (let i = 1; i <= 5; i++) {
@@ -828,7 +881,7 @@ function drawMenuScreen(ctx, hud) {
     ctx.lineWidth = current ? 4 : 3;
     roundRect(ctx, 32, y, 656, UI.menu.cardH, 24); ctx.stroke();
     // Boss 缩略图(boss 序列帧首帧;缺图灰盒)
-    const th = 130, tx = 56, tyy = y + 24;
+    const th = 126, tx = 56, tyy = y + 22;
     ctx.fillStyle = '#efe9db';
     roundRect(ctx, tx, tyy, th, th, 16); ctx.fill();
     const bossImg = ENEMY_FRAMES.boss && ENEMY_FRAMES.boss[0];
@@ -849,52 +902,42 @@ function drawMenuScreen(ctx, hud) {
     ctx.textAlign = 'left';
     ctx.fillStyle = unlocked ? '#794f27' : '#9f927d';
     ctx.font = FONT(30, 'bold');
-    ctx.fillText(`第 ${i} 关 · ${meta.name}`, 210, y + 56);
-    ctx.font = FONT(22);
+    ctx.fillText(`第 ${i} 关 · ${meta.name}`, 210, y + 52);
+    ctx.font = FONT(21);
     ctx.fillStyle = '#9f927d';
-    ctx.fillText(`建议 Lv.${meta.suggest}+ · Boss×1 · ${WAVES_PER_LEVEL} 波`, 210, y + 90);
-    // 敌人编成 chips(权重表键)
-    let cx0 = 210;
-    for (const k of levelWeightsSafe(i)) {
-      const w = 24 + k.length * 13;
+    // M11-03 F7 整改:锁定态文案并入副标行(解锁条件),chips 区域不再被锁定文案占用
+    const subtitle = unlocked
+      ? `建议 Lv.${meta.suggest}+ · Boss×1 · ${WAVES_PER_LEVEL} 波`
+      : `通关第 ${i - 1} 关后解锁 · ${WAVES_PER_LEVEL} 波`;
+    ctx.fillText(subtitle, 210, y + 84);
+    // 敌人编成 chips(M11-03 F7 残留整改:键序=wave.js LEVEL_WEIGHTS 真表;左列两行、
+    // 限宽 ≤300(chipsMaxX=505)——与按钮区 x≥510 完全错开,修复前单行铺开被按钮遮挡
+    // (第四/五关 tiger 区域 x523~596 与按钮区 x510~660/y45~125 相交,基线 y=121 被盖))
+    let cx0 = UI.menu.chipsX, cy0 = y + UI.menu.chipsY;
+    for (const k of Object.keys(levelWeights(i))) {
+      const w = 18 + k.length * 11;
+      if (cx0 + w > UI.menu.chipsMaxX) { cx0 = UI.menu.chipsX; cy0 += UI.menu.chipsRowGap; } // 超出左列(≤300)换行到第二行
       ctx.fillStyle = '#fff';
-      roundRect(ctx, cx0, y + 104, w, 34, 17); ctx.fill();
-      ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2; roundRect(ctx, cx0, y + 104, w, 34, 17); ctx.stroke();
-      ctx.fillStyle = '#794f27'; ctx.font = FONT(19);
-      ctx.fillText(k, cx0 + w / 2, y + 127);
-      cx0 += w + 10;
-      if (cx0 > 480) break;
+      roundRect(ctx, cx0, cy0, w, 28, 14); ctx.fill();
+      ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2; roundRect(ctx, cx0, cy0, w, 28, 14); ctx.stroke();
+      ctx.fillStyle = '#794f27'; ctx.font = FONT(16);
+      ctx.fillText(k, cx0 + w / 2, cy0 + 19);
+      cx0 += w + 8;
     }
     ctx.textAlign = 'center';
-    // 状态 chip + 按钮
+    // 状态 chip + 按钮(右列;M11-03 F7:按钮区 x≥510 与 chips 左列完全错开)
     if (cleared) {
-      chip(ctx, 370, y + 34, '已通关', '#e6f9f6', '#0e7a70');
-      drawBtn(ctx, { x: 510, y: y + 49, w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h }, '重打', 'ghost', 26);
+      chip(ctx, 370, y + 30, '已通关', '#e6f9f6', '#0e7a70');
+      drawBtn(ctx, uiCardBtn(i), '重打', 'ghost', 26);
     } else if (current) {
       chip(ctx, 560, y - 14, '当前进度', '#fff', '#794f27');
-      drawBtn(ctx, { x: 510, y: y + 49, w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h }, '挑战', 'primary', 26);
+      drawBtn(ctx, uiCardBtn(i), '挑战', 'primary', 26);
     } else {
-      drawBtn(ctx, { x: 510, y: y + 49, w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h }, '锁定', 'disabled', 26);
-      ctx.fillStyle = '#9f927d'; ctx.font = FONT(20);
-      ctx.textAlign = 'left';
-      ctx.fillText(`通关第 ${i - 1} 关后解锁`, 210, y + 156);
-      ctx.textAlign = 'center';
+      drawBtn(ctx, uiCardBtn(i), '锁定', 'disabled', 26);
     }
   }
   // 养成入口(FR-10 保留)
   drawBtn(ctx, UI.menu.growBtn, '养成', 'ghost', 28);
-}
-
-function levelWeightsSafe(L) {
-  // 与 battle/wave.js LEVEL_WEIGHTS 键序同源(避免循环依赖,内联键表)
-  const W = [
-    ['slime', 'fox'],
-    ['slime', 'fox', 'zombie'],
-    ['slime', 'fox', 'zombie', 'snake'],
-    ['slime', 'fox', 'zombie', 'snake', 'tiger'],
-    ['fox', 'zombie', 'snake', 'tiger'],
-  ];
-  return W[Math.min(L, W.length) - 1] ?? W[0];
 }
 
 function chip(ctx, x, y, text, bg, fg) {
@@ -956,24 +999,35 @@ function drawLoadoutScreen(ctx, hud) {
   ctx.fillText('出战信息', 482, 184);
   ctx.font = FONT(19);
   ctx.fillStyle = '#5a4a32';
-  const enemies = levelWeightsSafe(L).join(' / ');
+  // M11-03 F7 残留整改:wave.js 真权重表+按宽度换行(信息卡内区宽 ~190px,一行放不下高关卡 5 键)
+  const enemiesAll = Object.keys(levelWeights(L));
+  const enemiesL1 = enemiesAll.slice(0, 3).join(' / ');
+  const enemiesL2 = enemiesAll.slice(3).join(' / ');
   ctx.fillText(`关卡:第 ${L} 关 ${meta.name}`, 482, 222);
   ctx.fillText(`波次:${WAVES_PER_LEVEL} 波`, 482, 252);
   ctx.fillText(`第 ${WAVES_PER_LEVEL} 波为关底 Boss`, 482, 278);
-  ctx.fillText(`敌人:${enemies}`, 482, 308);
-  ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, 338);
+  if (enemiesL2) {
+    ctx.fillText(`敌人:${enemiesL1} /`, 482, 308);
+    ctx.fillText(enemiesL2, 500, 334);
+    ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, 364);
+  } else {
+    ctx.fillText(`敌人:${enemiesL1}`, 482, 308);
+    ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, 338);
+  }
+  const warnY = enemiesL2 ? 392 : 366;
   if (prof.level < meta.suggest) {
     ctx.fillStyle = '#fff';
-    roundRect(ctx, 482, 366, 184, 40, 20); ctx.fill();
-    ctx.strokeStyle = '#e05a5a'; ctx.lineWidth = 2; roundRect(ctx, 482, 366, 184, 40, 20); ctx.stroke();
+    roundRect(ctx, 482, warnY - 26, 184, 40, 20); ctx.fill();
+    ctx.strokeStyle = '#e05a5a'; ctx.lineWidth = 2; roundRect(ctx, 482, warnY - 26, 184, 40, 20); ctx.stroke();
     ctx.fillStyle = '#e05a5a'; ctx.font = FONT(19, 'bold');
-    ctx.fillText('⚠ 等级低于建议', 574, 392);
+    ctx.fillText('⚠ 等级低于建议', 574, warnY);
   }
   ctx.textAlign = 'center';
-  // 技能装配 4 槽(M11 设计稿:120×120 图标+技能名;点击选中→技能库换装)
+  // 技能装配 4 槽(M11 设计稿:120×120 图标+技能名;点击选中→技能库换装;
+  // F2/F7 整改:槽区上移 panelY=490/slotsY=560,库区扩为两列 8 行)
   ctx.fillStyle = '#fff';
-  roundRect(ctx, 32, UI.loadout.panelY, 656, 220, 24); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.panelY, 656, 220, 24); ctx.stroke();
+  roundRect(ctx, 32, UI.loadout.panelY, 656, 210, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.panelY, 656, 210, 24); ctx.stroke();
   ctx.fillStyle = '#794f27';
   ctx.font = FONT(26, 'bold');
   ctx.textAlign = 'left';
@@ -983,8 +1037,8 @@ function drawLoadoutScreen(ctx, hud) {
   ctx.fillText('点击槽位选中 → 在下方技能库点技能换装(立即生效)', 150, UI.loadout.panelY + 40);
   ctx.textAlign = 'center';
   for (let i = 0; i < 4; i++) {
-    const sx = 44 + i * (UI.loadout.slotSize + UI.loadout.slotGap);
-    const sy = UI.loadout.slotsY;
+    const sr = uiSlotRect(i);
+    const sx = sr.x, sy = sr.y;
     const id = prof.loadout[i];
     const sk = skillById(id);
     const sel = (lo.selSlot || 0) === i;
@@ -1013,10 +1067,11 @@ function drawLoadoutScreen(ctx, hud) {
       ctx.fillText('空槽', sx + 60, sy + 66);
     }
   }
-  // 技能库(15 技能两列 7 行+底部说明行;未解锁灰显;已装配●;点击装配到选中槽)
+  // 技能库(F2 整改:两列 8 行——15 技能全部可见可点,原 7 行第 15 个 earth_pulse
+  // col=2 → x=undefined/NaN 溢出屏外;F7 整改:行内改两行文本,名字与简介不再重叠)
   ctx.fillStyle = '#fff';
-  roundRect(ctx, 32, UI.loadout.libY, 656, 320, 24); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.libY, 656, 320, 24); ctx.stroke();
+  roundRect(ctx, 32, UI.loadout.libY, 656, 380, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.libY, 656, 380, 24); ctx.stroke();
   ctx.fillStyle = '#794f27';
   ctx.font = FONT(24, 'bold');
   ctx.textAlign = 'left';
@@ -1025,12 +1080,14 @@ function drawLoadoutScreen(ctx, hud) {
   ctx.fillStyle = '#9f927d';
   ctx.fillText('(Lv 解锁 · 灰=未解锁 · ●=已装配 · 点击换到选中槽)', 150, UI.loadout.libY + 36);
   SKILL_LIBRARY.forEach((sk, i) => {
-    const col = Math.floor(i / UI.loadout.libPerCol), row = i % UI.loadout.libPerCol;
-    const x0 = UI.loadout.libCols[col], y0 = UI.loadout.libY + 56 + row * UI.loadout.libRowH;
-    const unlockedNow = sk.unlockLevel <= prof.level;
+    const r = uiLibRect(i);
+    const x0 = r.x, y0 = r.y;
+    // M11-02 F4:拥有制灰显与装配门控一致(等级够但未拥有 → 灰+「未拥有」,养成抽卡获取)
+    const ownedNow = (prof.ownedSkills || []).includes(sk.id);
+    const unlockedNow = sk.unlockLevel <= prof.level && ownedNow;
     const equipped = (prof.loadout || []).includes(sk.id);
     ctx.fillStyle = unlockedNow ? 'rgba(232,226,214,.5)' : 'rgba(232,226,214,.85)';
-    roundRect(ctx, x0, y0, 288, 34, 10); ctx.fill();
+    roundRect(ctx, x0, y0, r.w, r.h, 10); ctx.fill();
     const img = SKILL_IMG[sk.id];
     if (img && img.complete && img.naturalWidth > 0) {
       ctx.drawImage(img, x0 + 4, y0 + 3, 28, 28);
@@ -1038,12 +1095,13 @@ function drawLoadoutScreen(ctx, hud) {
       ctx.fillStyle = GEM_SRC[sk.el];
       ctx.beginPath(); ctx.arc(x0 + 18, y0 + 17, 13, 0, Math.PI * 2); ctx.fill();
     }
+    // 行 1:技能名(+已装配 ●);行 2:简介|CD|等级(13px,F7 整改:单行 18px 名+15px 简介同 x 轴曾重叠)
     ctx.fillStyle = unlockedNow ? '#5a4a32' : '#c4b89e';
-    ctx.font = FONT(18, 'bold');
-    ctx.fillText(sk.name, x0 + 38, y0 + 23);
-    ctx.font = FONT(15);
+    ctx.font = FONT(17, 'bold');
+    ctx.fillText(sk.name + (equipped ? ' ●' : ''), x0 + 38, y0 + 15);
+    ctx.font = FONT(13);
     ctx.fillStyle = unlockedNow ? '#9f927d' : '#c4b89e';
-    ctx.fillText(`${SKILL_BRIEF[sk.kind] || sk.kind}｜CD ${sk.cd}s｜${unlockedNow ? 'Lv' + (prof.skillLevels[sk.id] || 1) : 'Lv' + sk.unlockLevel + '解锁'}${equipped ? ' ●' : ''}`, x0 + 96, y0 + 23);
+    ctx.fillText(`${SKILL_BRIEF[sk.kind] || sk.kind}｜CD ${sk.cd}s｜${unlockedNow ? 'Lv' + (prof.skillLevels[sk.id] || 1) : !ownedNow ? '未拥有' : 'Lv' + sk.unlockLevel + '解锁'}`, x0 + 38, y0 + 31);
   });
   ctx.textAlign = 'center';
   // 出战按钮
@@ -1190,7 +1248,7 @@ function drawAboutPanel(ctx, hud) {
   ctx.fillText('关 于', 360, P.y + 60);
   ctx.font = FONT(21);
   ctx.fillStyle = '#794f27';
-  ctx.fillText('三消守卫 v0.1 原型', 360, P.y + 130);
+  ctx.fillText('言出法随之三生万物 v0.1 原型', 360, P.y + 130);
   ctx.fillStyle = '#9f927d';
   ctx.fillText('上半横版放置自动战斗 × 下半 8×8 五行三消', 360, P.y + 176);
   ctx.fillText('消除合成技能,主角自动释放,挑战五关', 360, P.y + 208);

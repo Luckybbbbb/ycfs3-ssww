@@ -265,4 +265,21 @@
 - M11 补充(同日):战斗中 ⚙ 设置=暂停+设置面板(修复 ⚙ 打开面板不渲染不拦截的接线缺陷);原型期胜负 overlay 死代码移除(drawResult 替代)。
 - M11 占位图标与验证收口(同日):道具 6 张先落**占位 PNG**(144×144 透明底,主色圆底+白色图形+premium 金环,Pillow 程序化绘制)保证 FR-9 预载/线上可用,codex 生图完成后整批替换;全量单测 **247/247**(m11 9 例全绿)+CDP 冒烟 **17/17 exit 0**(m11-cdp-1.mjs:预载 boot/五屏导航/备战换装/RESOLVING 演出期不成消交换受理+多槽/道具演出期可点/旧连锁提示不再绘制/播报实绘/⏸暂停/⚙设置面板/零异常;截图 m11-01~06)。
 - M11a 预载健壮性(2026-10-17 线上反馈:Pages 刷新两次分别报缺 idle_15/idle_11,而服务端 125 项全量 200——并发 125 请求在弱网/浏览器代理下随机个别失败,FR-9 一次失败即停载误报):loader.js 增**单图重试 2 次(300ms 退避)**+**并发上限 24 分批**(消突发连接重置);「缺图停载」语义不变(重试耗尽才报 `缺 <路径>(实体:<名>)`,真缺失必停)。新增 tests/loader.test.mjs 3 例(瞬时失败重试吸收/耗尽停载诊断/125 项分批全载+真缺失停载)。
-- M11 道具图标定版(2026-10-17 需求方确认):程序化占位图标转正免 codex 生图(取消 19:41 生图重试任务)——主色圆底+白色图形(心形/盾牌/沙漏)+深棕描边+premium 金环,与 GEM_COLORS 方案一色板同源;02 文档措辞同步(「程序化绘制定版」)。
+  验证:全量 **255/255**(m9 32/m11 13,新增 F1~F9 回归 5 例)+returncode 0 配对。文档更正:02 文档/changelog 道具色板表述(冷却 #4488ff 非 GEM_COLORS.water #4aa8cc)。候选重新冻结,以 REQ-SSWW-M11-v0.1-02 同链 ycfs3-m11-v0.1 RESUBMIT。
+- REQ-SSWW-M11-v0.1-02 裁决 **RULING=REJECTED**(receipt validation=PASS/cli_exit_code=0/session_mode=RESUME 已校验;F2/F3/F4/F5/F6/F8 确认闭合;F1/F7/F9 残留+新 F10 证据归档),逐项整改:
+  1. **F1 残留(P1) 并发上限仍被绕过**:render.js 模块求值期自建 119 个 Image 并设 src——在 main 调 preload **之前**就发生 119 次独立加载,loader 的 24 并发上限未覆盖真实启动流程;「bindImages 兜底」注释与执行事实不符。整改:**删除全部顶层 `new Image()`+`src=` 赋值**,渲染贴图表初始全空,生产路径**唯一填充入口=bindImages(preload Map)**;`ensureFallbackImages()` 为显式兜底入口(幂等,仅单测/无 main 的演示环境调用,生产代码永不调用)——启动期全部图片加载只发生在 preload 内(24 并发/重试口径覆盖真实启动流程);bindImages 帧数按 manifest 固定口径(表初始为空,不能以 length 为界)。
+  2. **F7 残留(P2) 完整编成仍被按钮遮挡**:chips 基线 y=121 与按钮区(x510~660/y45~125)相交,第四/五关 tiger 区域 x523~596 被按钮盖住。整改:编成 chips 改为**左列两行、限宽 ≤300(chipsMaxX=505)——与按钮区 x≥510 完全错开**;锁定态文案并入副标行(解锁条件),chips 区域不再被锁定文案占用;备战出战信息卡敌人按宽度换行(信息卡内区宽 ~190px,高关卡 5 键一行放不下)。
+  3. **F9 残留(P2) 旧局点选状态仍带入新局**:main.js `firstSel`(点选交换的第一个选中格)在 boot() 内声明,startLevel/retryLevel 无法访问。整改:提升到模块顶层,startLevel/retryLevel/openLoadout 均清 `firstSel=null`——旧局点选状态不带入新局。
+  4. **F10(P2) 前轮证据被同名覆盖**:M11-01 轮 manifest 绑定的 CDP JSON、冒烟脚本及六张截图因 M11-02 轮同名重写已无法恢复原件——**如实记录,不把重新采集记作原件恢复**(M9 链 REQ-03 先例口径);自 M11-03 轮起证据按 REQUEST_ID 独立归档(m11-03-*)。
+  5. **表述更正**:M11-02 条目「m9 31」实为 **32**(分组账 25+30+36+31+5+24+40+32+13+3+6+6=255);M11-02 manifest generated_by 自述「依赖 29 项」实为 **30 项**(冻结证据不改字节,口径更正以本条为准,M10-03 先例口径)。
+- REQ-SSWW-M11-v0.1-01 裁决 **RULING=REJECTED**(receipt validation=PASS/cli_exit_code=0 已校验;身份/测试计数成立,预载接线/备战装配/播报唯一化/界面布局/动画合成/局界清理 9 项阻断),逐项整改:
+  1. **F1(P1) 预载成功≠绘制资源就绪**:render 自建 119 个 Image 绕过 loader 重试/并发,main 丢弃 preload Map。整改:render 新增 `bindImages(map)`——main 预载成功后以 **preload 同一 Image 实例**替换 ITEM_IMG/GEM_IMG/SKILL_IMG/PLAYER_FRAMES/PLAYER_ATK_FRAMES/ENEMY_FRAMES 各表(保留懒加载自建为单测/演示兜底);main `boot(images)` 消费预载 Map 并暴露 `__ssww.imagesBound`。
+  2. **F2(P2) 第 15 技能 NaN 不可见**:技能库两列×7 放不下 15 项(earth_pulse col=2 → x=undefined)。整改:库区上移扩为**两列 8 行**(libY 715/行高 38/卡高 380),uiLibRect/uiSlotRect/uiCardBtn 命中区 helper 从 UI 常量派生导出,main 弃用硬编码(单一来源)。
+  3. **F3(P2) 备战槽位读旧装配**:Caster 构造把档内元素名转技能 ID 而 render 读 profile.loadout。整改:persistProfile 与 boot 均 `profile.loadout=[...caster.loadout]` 同步内存态。
+  4. **F4(P2) 装配入口与释放条件不一致**:备战技能库只查等级不查 ownedSkills(cast.js 跳过未拥有技能)。整改:备战入口补 `profile.ownedSkills.includes` 门控(与战斗联动栏 cycleSlot 一致),技能库行未拥有灰显+「未拥有」标注。
+  5. **F5(P2) 音效开关不写档**:整改:save.js settings 增 `sfx`(默认 true,loadProfile 恢复),toggleSfx 写档,boot 启动恢复 `sfx.enabled=profile.settings.sfx!==false`。
+  6. **F6(P2) toast 残留连锁级数**:充能 toast `连锁${chain}` 移除,连锁信息唯一来源=王者式播报。
+  7. **F7(P2) 选关遮挡/编成漏项/文字重叠**:卡顶 200 下移(货币 HUD 不再被首卡覆盖)、卡高 170/间距 14;编成 chips 改读 **wave.js LEVEL_WEIGHTS 真表**(内联表漏 slime)且取消提前 break(缩窄 chip,5 关最多 5 键全绘);备战技能库行改**两行文本**(名字 17px+简介 13px,不再同轴重叠)。
+  8. **F8(P2) 并行交换同格偏移叠加**:trySwap 受理新槽前终止与 a/b 重叠的旧槽(同对连点两次偏移 ±180 → 恒 ≤1 格);cellsForRender 每格仅应用最新槽(break 防御),注释按实改写。m9 增回归(重叠槽替换/同对两次 grid 还原/偏移 ≤90px)。
+  9. **F9(P2) 放弃重开残留旧局**:engine 新增 `resetBoard()`(清 clearing/falls/parallelSwaps/swapBuffer/nudgeFx/events/blockFx 并重新生成棋盘),startLevel/retryLevel 接线——修复演出/缓冲期间放弃后再出战继续旧轮次、旧缓冲自动执行。
+  验证:全量 **255/255**(m9 31/m11 13,新增 F1~F9 回归 5 例)+returncode 0 配对。文档更正:02 文档/changelog 道具色板表述(冷却 #4488ff 非 GEM_COLORS.water #4aa8cc)。候选重新冻结,以 REQ-SSWW-M11-v0.1-02 同链 ycfs3-m11-v0.1 RESUBMIT。

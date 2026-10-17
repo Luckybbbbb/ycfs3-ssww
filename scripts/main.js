@@ -23,7 +23,7 @@ import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpC
 import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
 import { applyItem } from './board/items.js';
 import { skillById, SKILL_LIBRARY } from './skills/library.js';
-import { GROW_LAYOUT, UI } from './ui/render.js'; // M11:UI 命中区常量(与 render 布局单一来源)
+import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiLibRect, bindImages } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
 fitCanvas(canvas);
@@ -45,12 +45,17 @@ let coinsSeen = 0;            // 已入账的货币水位(M6 v0.2,每帧增量)
 let matsSeen = 0;             // 已入账的材料水位
 let clearedTotal = 0;         // 本局累计消除格数(FR-7 底栏"消除"计数,startLevel 归零)
 let lastWave = 0;             // 上一帧波次(换波同步视差用)
+let firstSel = null;          // M11-03 F9:点选交换的第一个选中格(02 文档 2.1;提升到模块级——
+                              // 局界清理可见:startLevel/retryLevel 需清除,避免旧局点选状态带入新局)
 let growPanel = false;        // 养成面板开关(FR-10/03 文档 2.6:角色升级/技能升级/抽卡)
 
 const engine = new BoardEngine(20260601);
 engine.fxEnabled = profile.settings.effects !== false; // 消除演出动效开关(02 文档 3.1:关→退化 0.20s 淡出)
 const charge = new Charge();
 const caster = new Caster(charge, profile.loadout, profile.level, profile.ownedSkills, profile.skillLevels); // v0.2:owned/skillLevels 由存档接入(批次 D)
+// M11-02 F3 整改:Caster 构造把档内元素名转换为技能 ID(内存 caster.loadout ≠ profile.loadout),
+// 备战界面 render 读 profile.loadout —— 启动即同步内存态(写档仍走事件驱动 persistProfile)
+profile.loadout = [...caster.loadout];
 const elimRng = makeRng(20260617); // 消除触发链均匀选技随机源(固定种子可复现,03 文档 6 自查)
 const parallax = new Parallax({ effects: profile.settings.effects !== false });
 const battle = new Battle({ atk: atkAt(profile.level), maxHp: maxHpAt(profile.level), rng: makeRng(20260601) });
@@ -61,23 +66,31 @@ const hud = { toast: null, fx: new FxLayer(), charge, caster, battle, parallax, 
 
 function showToast(text) { hud.toast = { text, t: 1.2 }; }
 
-function persistProfile() { api.saveProfile({ ...profile, loadout: [...caster.loadout] }); }
+function persistProfile() {
+  // M11-02 F3 整改:装配内存态同步(caster.loadout=技能 ID 转换结果,profile.loadout 若不同步,
+  // 备战界面 render 读到旧档元素名显示「空槽」、换装后槽位图标/● 标记不更新)
+  profile.loadout = [...caster.loadout];
+  api.saveProfile({ ...profile, loadout: [...caster.loadout] });
+}
 
 // FR-9:先预载资源;缺文件报「缺 <路径>(实体:<名>)」并停载(不绑定输入、不启动主循环、无未处理拒绝)
 let loadError = null;
+let images = null;
 try {
-  await preload(fullManifest());
+  images = await preload(fullManifest());
 } catch (err) {
   loadError = err;
 }
 if (loadError) {
   document.body.innerHTML = `<pre style="color:#f66;font-size:20px;padding:24px">资源缺失:${loadError.message}</pre>`;
 } else {
-  boot();
+  boot(images);
 }
 
 function startLevel(L) {
   if (!canPlay(progress, L)) { showToast('关卡未解锁'); return; }
+  engine.resetBoard(); // M11-03 F9:局界重置(放弃后重开不带旧局 clearing/falls/缓冲/事件)
+  firstSel = null; // M11-03 F9:输入态局界清除(旧局点选状态不带入新局)
   battle.atk = atkAt(profile.level);
   battle.maxHp = maxHpAt(profile.level);
   battle.hp = battle.maxHp;
@@ -101,6 +114,8 @@ function startLevel(L) {
 // 失败重试统一入口(REQ-M6-04 F3):与 startLevel 同一套局界初始化——
 // 产出累计/入账水位/消除计数/池/预约/临时状态全部清空,不再只 battle.restart()
 function retryLevel() {
+  engine.resetBoard(); // M11-02 F9:同 startLevel(终局快进只到 IDLE,swapBuffer 等仍可能残留)
+  firstSel = null; // M11-03 F9:输入态局界清除(旧局点选状态不带入新局)
   battle.atk = atkAt(profile.level);
   battle.maxHp = maxHpAt(profile.level);
   battle.hp = battle.maxHp;
@@ -124,11 +139,18 @@ function retryLevel() {
 function openLoadout(L) {
   if (!canPlay(progress, L)) { showToast('关卡未解锁'); return; }
   selLevel = L; selSlot = 0; panel = null; growPanel = false;
+  firstSel = null; // M11-03 F9:换装入口也清输入态(旧局点选不带入备战/新局)
   screen = 'loadout';
 }
 
 // M11:设置开关(音效/动效;开始界面与暂停面板共用,写档)
-function toggleSfx() { sfx.enabled = !sfx.enabled; showToast(`音效 ${sfx.enabled ? '开' : '关'}`); sfx.item(); }
+function toggleSfx() {
+  sfx.enabled = !sfx.enabled;
+  profile.settings.sfx = sfx.enabled; // M11-02 F5:音效开关入档(修复前只改内存,刷新后重开)
+  persistProfile();
+  showToast(`音效 ${sfx.enabled ? '开' : '关'}`);
+  sfx.item();
+}
 function toggleFx() {
   profile.settings.effects = profile.settings.effects === false; // false→true,其余→false
   engine.fxEnabled = profile.settings.effects;
@@ -137,7 +159,12 @@ function toggleFx() {
   sfx.item();
 }
 
-function boot() {
+function boot(images) {
+  // M11-02 F1 整改:渲染消费预载同一资源集合(render 各表以 preload 返回实例替换自建懒加载,
+  // 「预载成功 ⇒ 绘制资源就绪」;返回绑定数,CDP/测试校验)
+  window.__sswwImagesBound = bindImages(images);
+  // M11-02 F5:音效开关启动恢复(档内 settings.sfx;与 effects 同一套写档)
+  sfx.enabled = profile.settings.sfx !== false;
   showToast('资源就绪');
 
   // 命中区工具
@@ -153,14 +180,12 @@ function boot() {
     return -1;
   };
 
-  // M11:选关卡片「挑战/重打」按钮命中区(与 render UI.menu 卡片布局一致)
-  const cardBtnOf = (L) => ({ x: 510, y: 140 + (L - 1) * 202 + 49, w: 150, h: 80 });
-  // M11:备战界面命中区(与 render UI.loadout 一致)
-  const slotRectOf = (i) => ({ x: 44 + i * 144, y: 566, w: 120, h: 120 });
-  const libRectOf = (i) => {
-    const col = Math.floor(i / 7), row = i % 7;
-    return { x: [56, 376][col], y: 800 + 56 + row * 40, w: 288, h: 34 };
-  };
+  // M11:选关卡片「挑战/重打」按钮 / 备战槽位 / 技能库行命中区
+  // (M11-02 F2 整改:统一由 render.ui* helper 从 UI 常量派生,与绘制同源——
+  // 修复前 main 硬编码 libRectOf 按旧 7 行计算,与 render 布局漂移)
+  const cardBtnOf = uiCardBtn;
+  const slotRectOf = uiSlotRect;
+  const libRectOf = uiLibRect;
 
   // 输入绑定（cellAt 由渲染坐标反查棋盘格);返回拖拽状态句柄(果冻拖拽,M6)
   // nudgeLock(F7 续审):点选无效弹回期间仅锁 a/b 两格,其他格照常可操作
@@ -239,6 +264,9 @@ function boot() {
           if (!hit(p, libRectOf(i))) continue;
           const sk = SKILL_LIBRARY[i];
           if (sk.unlockLevel > profile.level) { showToast(`Lv.${sk.unlockLevel} 解锁`); sfx.invalid(); return; }
+          // M11-02 F4:拥有制门控(与 cast.js 释放条件一致——未拥有的技能装槽后该槽无输出;
+          // 战斗联动栏 cycleSlot 已按 owned 过滤,此处补备战入口)
+          if (!profile.ownedSkills.includes(sk.id)) { showToast('未拥有该技能(养成抽卡获取)'); sfx.invalid(); return; }
           if (caster.loadout.includes(sk.id) && caster.loadout[selSlot] !== sk.id) { showToast('该技能已装配'); sfx.invalid(); return; }
           caster.loadout[selSlot] = sk.id;
           persistProfile(); // 装配变更写档(D13)
@@ -381,8 +409,8 @@ function boot() {
     }
   }
 
-  let firstSel = null; // 点选交换的第一个选中格(02 文档 2.1 点选输入)
   let prevShakeT = 0; // 上一帧 battle.shakeT(边沿触发,避免每帧重置震动延长时长)
+  // firstSel 已提升到模块顶层(M11-03 F9:startLevel/retryLevel 需清除输入态,避免旧局点选带入新局)
   startLoop(
     (dt) => {
       // M11:暂停门控(底栏 ⏸)——冻结模拟推进,仅保留输入(继续/设置按钮)与渲染
@@ -414,7 +442,7 @@ function boot() {
               // 档位所属轮的段④起点,延迟选技/跨轮留池不丢失;main 不再按当前事件补写)
               engine.setBlockFx(e.bk, { el: e.element, reserved: true, skillId: p.skillId, tier: p.tier, resKey: p.id });
             }
-            showToast(`${e.element} ×${e.count} 连锁${e.chain} → ${e.element}档 +${gain}`);
+            showToast(`${e.element} ×${e.count} → ${e.element}档 +${gain}`); // M11-02 F6:不再携带连锁级数(播报唯一化——连锁信息唯一来源=fx.chainAnnounce)
             sfx.match(e.chain);
             if (engine.fxEnabled) hud.fx.onMatchCleared(e, e.chain); // REQ-M6-04 F8:关动效不触发粒子
           }
@@ -511,5 +539,7 @@ window.__ssww = {
   // M11 五屏导航与状态(CDP 驱动;仅改 UI 态,不写档)
   nav: (s) => { if (['start', 'menu', 'loadout', 'playing'].includes(s)) screen = s; },
   openLoadout, uiState: () => ({ screen, selLevel, selSlot, panel, paused, maxChain }),
+  imagesBound: () => window.__sswwImagesBound ?? 0, // M11-02 F1:预载→渲染绑定数(CDP 校验)
+  sfxEnabled: () => sfx.enabled, // M11-02 F5:音效开关实时态(CDP 验证刷新恢复)
   toggleSfx, toggleFx, setPaused: (v) => { paused = !!v; },
 };

@@ -115,7 +115,7 @@ test('M11 道具图标:ITEM_IMG 6 张(items/<item>[_premium].png);道具格实�
 test('M11 开始界面:标题/开始冒险按钮/设置/关于/存档条绘制(有档文案=开始冒险)', () => {
   const r = mkCtx();
   render(r.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
-  assert.ok(r.rec.fillTexts.includes('三消守卫'), '主标题');
+  assert.ok(r.rec.fillTexts.includes('言出法随之三生万物'), '主标题');
   assert.ok(r.rec.fillTexts.some(t => t.includes('开 始 冒 险')), '有档主按钮=开始冒险');
   assert.ok(r.rec.fillTexts.some(t => t.includes('设 置') || t.includes('设 置'.slice(0, 2))), '设置按钮');
   assert.ok(r.rec.fillTexts.some(t => t.includes('关 于')), '关于按钮');
@@ -155,7 +155,8 @@ test('M11 备战界面:主角面板/出战信息/4 装配槽/技能库(解锁灰
   assert.ok(r.rec.fillTexts.some(t => t.includes('技能装配')), '装配槽区');
   assert.ok(r.rec.fillTexts.some(t => t.includes('火弹')), '技能库行(已装配)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('烈焰环')), 'Lv6 技能行存在');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('Lv6解锁')), '未解锁灰显标注');
+  // M11-02 F4:等级够但未拥有 → 「未拥有」灰显(装配门控与 cast.js 释放条件一致)
+  assert.ok(r.rec.fillTexts.some(t => t.includes('未拥有')), '未拥有技能灰显标注');
   assert.ok(r.rec.fillTexts.some(t => t.includes('●')), '已装配●标记');
   assert.ok(r.rec.fillTexts.some(t => t.includes('出 战')), '出战按钮');
   // 高等级无警告
@@ -220,6 +221,26 @@ test('M11 UI 布局常量:五屏命中区齐备且不越 720×1280 界面(main �
   }
 });
 
+// ---- M11-03 F7 残留整改:编成 chips 与按钮区域互斥(矩形不相交) ----
+test('M11-03 F7 编成/按钮区域互斥:五关 chips 矩形均不与卡片按钮相交(修复前第四/五关 tiger 被遮挡)', async () => {
+  const { uiCardBtn, UI: UIC } = await import('../scripts/ui/render.js');
+  const { levelWeights } = await import('../scripts/battle/wave.js');
+  const btn = { x: 510, y: 0, w: UIC.menu.cardBtn.w, h: UIC.menu.cardBtn.h };
+  const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  for (let L = 1; L <= 5; L++) {
+    const btn = { x: 510, y: UIC.menu.cardTop + (L - 1) * (UIC.menu.cardH + UIC.menu.cardGap) + UIC.menu.cardBtnY, w: UIC.menu.cardBtn.w, h: UIC.menu.cardBtn.h };
+    // 模拟 chips 逐个绘制,记录矩形;chipsX/chipsY/chipsMaxX/chipsRowGap 与 drawMenuScreen 一致
+    let cx0 = UIC.menu.chipsX, cy0 = UIC.menu.cardTop + (L - 1) * (UIC.menu.cardH + UIC.menu.cardGap) + UIC.menu.chipsY;
+    for (const k of Object.keys(levelWeights(L))) {
+      const w = 18 + k.length * 11;
+      if (cx0 + w > UIC.menu.chipsMaxX) { cx0 = UIC.menu.chipsX; cy0 += UIC.menu.chipsRowGap; }
+      const chipRect = { x: cx0, y: cy0, w, h: 28 };
+      assert.ok(!overlap(chipRect, btn), `L${L} chip[${k}] 不与按钮重叠(chips=[${chipRect.x},${chipRect.y},${chipRect.w},${chipRect.h}])`);
+      cx0 += w + 8;
+    }
+  }
+});
+
 // ---- M11-4 接线源码断言 ----
 test('M11 接线:main 五屏路由/暂停门控/道具图标;manifest 26 张;levels 元数据', () => {
   const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
@@ -234,4 +255,85 @@ test('M11 接线:main 五屏路由/暂停门控/道具图标;manifest 26 张;lev
   assert.ok(levelsSrc.includes('LEVEL_META'), '关卡名/建议等级元数据');
   const audioSrc = fs.readFileSync(new URL('../scripts/ui/audio.js', import.meta.url), 'utf-8');
   assert.ok(audioSrc.includes('state.enabled'), 'audio 音效开关');
+});
+
+// ---- M11-02 整改(REJECTED F1~F9)回归 ----
+test('M11-02 F1 预载接线:bindImages 以预载实例替换渲染表;main 消费 preload Map(不再丢弃)', async () => {
+  const src = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(src.includes('export function bindImages'), 'bindImages 导出(预载→渲染同一资源集合)');
+  const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
+  assert.ok(mainSrc.includes('boot(images)'), 'main 把 preload Map 传入 boot(不再丢弃)');
+  assert.ok(mainSrc.includes('bindImages(images)'), 'boot 内绑定预载实例');
+  // 行为:注入 premium 道具实例 → 道具格实绘命中注入实例(而非自建懒加载)
+  // 用普通对象冒充 Image:并跑(--test-isolation=none)下 globalThis.Image 可能被其他文件的
+  // 桩(loader.test 的 StubImage 等)覆盖,不保证有 setLoaded——bindImages 只存引用,
+  // render 按 complete/naturalWidth 判定,普通对象即可精确控制
+  const { bindImages } = await import('../scripts/ui/render.js');
+  const injected = { _src: 'stub://invincible_premium.png', src: 'stub://invincible_premium.png', complete: true, naturalWidth: 144, naturalHeight: 144 };
+  const n = bindImages(new Map([['icon:items:invincible_premium', injected]]));
+  assert.ok(n >= 1, '至少绑定 1 项');
+  const e = mkEngineStub();
+  e.cellsForRender = () => [{ r: 0, c: 0, item: 'invincible', premium: true, expire: 7, alpha: 1, offsetX: 0, offsetY: 0 }];
+  const r = mkCtx();
+  render(r.ctx, e, mkHud());
+  assert.ok(r.rec.draws.some(d => d.img === 'stub://invincible_premium.png'), '道具格实绘=预载注入实例');
+});
+
+test('M11-02 F2 技能库布局:两列 8 行(15 技能坐标全有限);命中区 ui* helper 与绘制同源', async () => {
+  const { uiCardBtn, uiSlotRect, uiLibRect } = await import('../scripts/ui/render.js');
+  // 15 技能库坐标全部有限且在界面内(修复前第 15 个 col=2 → x=undefined NaN)
+  for (let i = 0; i < 15; i++) {
+    const r = uiLibRect(i);
+    assert.ok(Number.isFinite(r.x) && Number.isFinite(r.y), `技能 ${i + 1} 坐标有限`);
+    assert.ok(r.x >= 0 && r.x + r.w <= 720 && r.y >= 0 && r.y + r.h <= 1280, `技能 ${i + 1} 行在界面内`);
+  }
+  const r15 = uiLibRect(14);
+  assert.equal(r15.x, uiLibRect(13).x, '第 15 项与第 14 项同列(两列装下)');
+  for (let L = 1; L <= 5; L++) {
+    const b = uiCardBtn(L);
+    assert.ok(Number.isFinite(b.x) && Number.isFinite(b.y) && b.y + b.h <= 1280, `L${L} 卡片按钮命中有限且在屏内`);
+  }
+  for (let i = 0; i < 4; i++) {
+    const s = uiSlotRect(i);
+    assert.ok(Number.isFinite(s.x) && Number.isFinite(s.y), `槽 ${i + 1} 命中有限`);
+  }
+});
+
+test('M11-02 F3/F4/F5/F6 接线:persistProfile 同步装配;owned 门控;sfx 写档;toast 无连锁级数', () => {
+  const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
+  assert.ok(mainSrc.includes('profile.loadout = [...caster.loadout]'), 'F3:persistProfile/boot 同步装配内存态(render 读 profile.loadout)');
+  assert.ok(mainSrc.includes('profile.ownedSkills.includes(sk.id)'), 'F4:备战装配 ownedSkills 门控(与 cast.js 释放条件一致)');
+  assert.ok(mainSrc.includes('profile.settings.sfx = sfx.enabled'), 'F5:音效开关写档');
+  assert.ok(mainSrc.includes("sfx.enabled = profile.settings.sfx !== false"), 'F5:启动恢复音效开关');
+  assert.ok(!mainSrc.includes('连锁${e.chain}'), 'F6:充能 toast 不再携带连锁级数(播报唯一化)');
+  const saveSrc = fs.readFileSync(new URL('../scripts/meta/save.js', import.meta.url), 'utf-8');
+  assert.ok(saveSrc.includes('sfx: v.settings.sfx !== false'), 'F5:loadProfile 恢复 sfx(缺省 true)');
+  assert.ok(saveSrc.includes('settings: { effects: true, sfx: true }'), 'F5:默认档含 sfx');
+  const renderSrc = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(renderSrc.includes('Object.keys(levelWeights('), 'F7:编成 chips/出战信息读 wave.js 真权重表(内联表曾漏 slime)');
+  assert.ok(!renderSrc.includes('levelWeightsSafe'), 'F7:内联权重键表移除');
+  assert.ok(!renderSrc.includes('if (cx0 > 480) break;'), 'F7:编成 chips 不再提前截断(第三关起漏项)');
+});
+
+test('M11-02 F9 局界重置:resetBoard 清演出/缓冲/事件并重新生成棋盘;startLevel/retryLevel 接线', async () => {
+  const { BoardEngine, STATE } = await import('../scripts/board/engine.js');
+  const e = new BoardEngine(20260601);
+  // 构造脏状态:演出中登记并行交换+预输入缓冲+事件+clearing
+  e.chain = 3;
+  e.events.push({ type: 'match_cleared', element: 'fire', count: 3, chain: 3 });
+  e.parallelSwaps.push({ a: { r: 0, c: 0 }, b: { r: 0, c: 1 }, t: 0.1 });
+  e.swapBuffer = { a: { r: 2, c: 2 }, b: { r: 2, c: 3 } };
+  e.nudgeFx = { a: { r: 1, c: 1 }, b: { r: 1, c: 2 }, t: 0.1, total: 0.15 };
+  e.clearing = [{ r: 0, c: 0, t: 0.5 }];
+  e.resetBoard();
+  assert.equal(e.state, STATE.IDLE, '状态回 IDLE');
+  assert.equal(e.parallelSwaps.length, 0, '并行动画槽清空');
+  assert.equal(e.swapBuffer, null, '预输入缓冲清空(放弃重开不自动执行旧操作)');
+  assert.equal(e.events.length, 0, '未消费事件清空');
+  assert.equal(e.clearing.length, 0, '演出格清空');
+  assert.equal(e.nudgeFx, null, '弹回动画清空');
+  assert.equal(e.chain, 0, '连锁归零');
+  assert.ok(e.grid && e.grid.length === 8 && e.grid.every(row => row.every(c => c !== null)), '棋盘重新生成(双验证全满)');
+  const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
+  assert.ok(mainSrc.includes('engine.resetBoard()'), 'startLevel/retryLevel 局界重置接线');
 });

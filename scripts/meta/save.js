@@ -24,7 +24,7 @@ export function defaultProfile() {
     skillLevels: { ...eco.skillLevels },
     unlockedLevel: 1,
     loadout: [...DEFAULT_LOADOUT],
-    settings: { effects: true },
+    settings: { effects: true, sfx: true }, // M11-02 F5:音效开关入档(原只存 effects,刷新后音效开关丢失)
   };
 }
 
@@ -69,7 +69,7 @@ export function loadProfile(storage = globalThis.localStorage) {
     return d;
   }
   const settings = (v.settings && typeof v.settings === 'object' && !Array.isArray(v.settings))
-    ? { effects: v.settings.effects !== false } : d.settings;
+    ? { effects: v.settings.effects !== false, sfx: v.settings.sfx !== false } : d.settings;
   // 拥有/技能等级校验:ownedSkills 须含 5 初始弹(拥有制基线);skillLevels 仅接受已拥有的正整数等级
   const owned = Array.isArray(v.ownedSkills) && v.ownedSkills.every(x => typeof x === 'string')
     ? [...new Set([...d.ownedSkills, ...v.ownedSkills])] : d.ownedSkills;

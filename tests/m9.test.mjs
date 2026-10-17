@@ -119,6 +119,31 @@ test('M11 并行交换:RESOLVING 中任意相邻非空对立即受理写回 grid
   assert.deepEqual(e.swapBuffer.a, { r: 7, c: 0 }, '缓冲记录最新意图');
 });
 
+test('M11-02 F8 同格不重复占用:重叠对受理终止旧槽(槽被替换不叠加);同对连点两次偏移≤1 格', () => {
+  const e = inject(new BoardEngine(7));
+  e.chain = 1;
+  e._beginRound(); // RESOLVING
+  // 第 1 槽 (7,0)↔(7,1);随后与 (7,1) 重叠的 (7,1)↔(7,2) 受理 → 旧槽终止(不再叠加偏移)
+  assert.equal(e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }), true);
+  assert.equal(e.parallelSwaps.length, 1);
+  assert.equal(e.trySwap({ r: 7, c: 1 }, { r: 7, c: 2 }), true);
+  assert.equal(e.parallelSwaps.length, 1, '重叠旧槽被终止,仅新槽 1 条(修复前累加为 2)');
+  assert.ok(!e.parallelSwaps.some(ps => ps.a.r === 7 && ps.a.c === 0), '旧槽 (7,0) 已移除');
+  // 同一对连点两次:grid 还原(a 格内容回原),同对槽仅 1 条(旧槽被替换),渲染偏移幅度 ≤1 格(90px,修复前 ±180)
+  const g0 = e.grid[6][4].el, g1 = e.grid[6][5].el;
+  assert.equal(e.trySwap({ r: 6, c: 4 }, { r: 6, c: 5 }), true);
+  assert.equal(e.trySwap({ r: 6, c: 4 }, { r: 6, c: 5 }), true);
+  const pairSlots = e.parallelSwaps.filter(ps =>
+    (ps.a.r === 6 && ps.a.c === 4) || (ps.a.r === 6 && ps.a.c === 5) ||
+    (ps.b.r === 6 && ps.b.c === 4) || (ps.b.r === 6 && ps.b.c === 5));
+  assert.equal(pairSlots.length, 1, '同对槽仅 1 条(旧槽被替换,不叠加)');
+  assert.equal(e.grid[6][4].el, g0, '同对交换两次 grid 还原(a 格)');
+  assert.equal(e.grid[6][5].el, g1, '同对交换两次 grid 还原(b 格)');
+  const cells = e.cellsForRender();
+  const maxOff = Math.max(...cells.map(c => Math.abs(c.offsetX || 0)));
+  assert.ok(maxOff <= 90.0001, `渲染偏移 ≤90px(单格;实测 ${maxOff})`);
+});
+
 test('M9 并行交换匹配并入连锁下一环:交换形成的三连在 chain2 被消除(玩家抢位促连锁)', () => {
   const e = inject(new BoardEngine(7));
   e.chain = 1;

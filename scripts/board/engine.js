@@ -72,6 +72,33 @@ export class BoardEngine {
 
   drainEvents() { const e = this.events; this.events = []; return e; }
 
+  // M11-02 F9 整改:局界重置(放弃后重开/新局入口调用)——清空全部演出/缓冲/事件状态并
+  // 重新生成棋盘。修复缺陷:放弃仅切屏不清理,演出或缓冲期间放弃后再出战会继续旧局轮次
+  // (clearing/falls 残留)、旧预输入缓冲 swapBuffer 自动执行。终局快进收口只保证到 IDLE,
+  // 不覆盖「非终局路径放弃」(暂停面板 quit 在 RESOLVING/FALLING 中直接切 menu)。
+  resetBoard() {
+    this.state = STATE.IDLE;
+    this.chain = 0;
+    this.events = [];
+    this.fx = { swapA: null, swapB: null, t: 0, back: false };
+    this.clearing = [];
+    this.falls = [];
+    this.fallT = 0; this.fallTotal = 0;
+    this.paralyzed = false;
+    this.paralyzeT = 0;
+    this.pendingItemRemovals = [];
+    this.parallelSwaps = [];
+    this.swapBuffer = null;
+    this.nudgeFx = null;
+    this.blockFx = new Map();
+    this.roundSeq = 0;
+    this.rush = 1;
+    this.stageDur = null;
+    this.clearTotal = 0;
+    this.clearFxAtStart = undefined;
+    this._init(); // 重新生成棋盘(双验证;失败瘫痪兜底)
+  }
+
   // ---------- 输入(02 文档第 7 节,M9/M11 修订:演出期随时可操作) ----------
   // IDLE=正常交换;RESOLVING/**FALLING**=**并行交换**(M11:任意相邻非空对立即受理写回 grid——
   // RESOLVING 被消格已置 null 其余格静止,FALLING grid 已是落定终态,均不再要求「立即成消」:
@@ -98,6 +125,12 @@ export class BoardEngine {
         this.swapBuffer = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c } };
         return true;
       }
+      // M11-02 F8 整改:同格不重复占用——新槽受理前终止与 a/b 重叠的旧槽
+      // (grid 已即时交换,旧槽动画立即作废,由新槽呈现;修复前同格可挂多条槽,
+      // cellsForRender 逐条累加偏移,同一对连点两次偏移达 ±180px)
+      this.parallelSwaps = this.parallelSwaps.filter(ps =>
+        !((ps.a.r === a.r && ps.a.c === a.c) || (ps.a.r === b.r && ps.a.c === b.c) ||
+          (ps.b.r === a.r && ps.b.c === a.c) || (ps.b.r === b.r && ps.b.c === b.c)));
       [this.grid[a.r][a.c], this.grid[b.r][b.c]] = [B, A];
       this.parallelSwaps.push({ a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c }, t: SWAP_TIME });
       return true;
@@ -451,15 +484,16 @@ export class BoardEngine {
         if (fm && fallProgress < 1) offsetY = -fm.dist * 90 * (1 - easeOutCubic(fallProgress));
         // M11:演出期并行交换偏移(grid 已即时交换,A 格内容=原 B 子,从 B 位置滑向 A 位置:
         // 起点偏移=±(dirC,dirR)×CELL,随进度归 0;M9-F3 修正,修复前 0→90px 反向跳变;
-        // M11 多槽:逐条叠加,同格最多被一条占用——trySwap 以格对不重叠为玩家输入自然保证,
-        // 极端连点同格对时按后写覆盖,视觉以最后一次为准)
-        for (const ps of this.parallelSwaps) {
+        // M11-02 F8 整改:每格只应用**最新一条**涉及槽(倒序取首个匹配即 break)——
+        // trySwap 已保证槽间不共享格,此处为渲染层防御;修复前逐条累加,
+        // 同格挂多槽时偏移叠加(同对连点两次 → ±180px 与 grid 状态矛盾)
+        for (const ps of [...this.parallelSwaps].reverse()) {
           const q = Math.max(0, ps.t) / SWAP_TIME; // 剩余比例 1→0
           const prog = easeInOutQuad(1 - q); // 滑动进度 0→1
           const k = 1 - prog; // 偏移系数 1→0(起点=对方位置满幅,归 0=到位;M9-F3)
           const dirR = ps.b.r - ps.a.r, dirC = ps.b.c - ps.a.c;
-          if (r === ps.a.r && c === ps.a.c) { offsetX += dirC * 90 * k; offsetY += dirR * 90 * k; }
-          if (r === ps.b.r && c === ps.b.c) { offsetX += -dirC * 90 * k; offsetY += -dirR * 90 * k; }
+          if (r === ps.a.r && c === ps.a.c) { offsetX += dirC * 90 * k; offsetY += dirR * 90 * k; break; }
+          if (r === ps.b.r && c === ps.b.c) { offsetX += -dirC * 90 * k; offsetY += -dirR * 90 * k; break; }
         }
         // 点选无效弹回(REQ-M6-05 F7):状态保持 IDLE,纯位移叠加——
         // 正弦包络出~31px(90×0.35)再原路返回(真实往返),仅 a/b 两格
