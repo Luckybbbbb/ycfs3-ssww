@@ -18,6 +18,9 @@ export const STATE = {
 };
 
 const SWAP_TIME = 0.15;     // 交换/回弹动画（02 文档第 2 节 0.15s）
+// M11 演出期并发并行交换上限(需求方 2026-10-17「任何时刻都必须可以操作」):
+// RESOLVING/FALLING 中交换立即受理写回 grid,动画槽最多 3 个,占满转预输入缓冲
+const PARALLEL_MAX = 3;
 // 消除演出四段(02 文档 3.1,总 0.9s):①吸收聚集 0.35 ②合成闪光 0.15 ③图标浮现 0.25 ④爆发施放 0.15
 const STAGE_ABSORB = 0.35, STAGE_FLASH = 0.15, STAGE_ICON = 0.25, STAGE_BURST = 0.15;
 const CLEAR_TIME_FX = STAGE_ABSORB + STAGE_FLASH + STAGE_ICON + STAGE_BURST; // 0.9s(动效开)
@@ -43,7 +46,8 @@ export class BoardEngine {
     this.roundSeq = 0;         // 消除轮次序号(每 _beginRound +1;预约盖章所属轮,跨轮不误认领新块 REQ-08 F8)
     this.paralyzeT = 0;        // 瘫痪态定时重试计时（02 文档第 8 节恢复转移）
     this.pendingItemRemovals = []; // RESOLVING/FALLING 期间被移除的道具格，落定后补位
-    this.parallelSwap = null;  // M9:RESOLVING 演出期并行交换动画 {a,b,t}(最多 1 个;grid 已即时交换)
+    this.parallelSwaps = [];   // M11:演出期并行交换动画 [{a,b,t}](最多 PARALLEL_MAX 个;grid 已即时交换)
+                               // (M9 单槽 parallelSwap 升级为数组——需求方「任何时刻都必须可以操作」)
     this.swapBuffer = null;    // M9:忙时预输入缓冲 {a,b}(只留最新意图;回 IDLE 自动执行)
     this.rush = 1;             // M9:本轮 rushScale(渲染/测试读取)
     this.stageDur = null;      // M9:本轮四段时长(按 rush 缩放;cellsForRender 读实例不再读常量)
@@ -68,11 +72,12 @@ export class BoardEngine {
 
   drainEvents() { const e = this.events; this.events = []; return e; }
 
-  // ---------- 输入(02 文档第 7 节,M9 修订:演出期并行/忙时缓冲) ----------
-  // IDLE=正常交换;RESOLVING=**并行交换**(被消格已置 null,其余格逻辑静止——交换立即写回
-  // grid,动画与消除演出并行,匹配并入连锁下一环由 _beginRound 统一判定;玩家可抢位促大连锁
-  // 或换走即将匹配的棋子主动断连锁,均为策略空间);FALLING/SWAPPING/REBOUND=**预输入缓冲**
-  // (只留最新意图,回 IDLE 自动执行;下落中格子带位移动画,直接交换视觉混乱故缓冲)。
+  // ---------- 输入(02 文档第 7 节,M9/M11 修订:演出期随时可操作) ----------
+  // IDLE=正常交换;RESOLVING/**FALLING**=**并行交换**(M11:任意相邻非空对立即受理写回 grid——
+  // RESOLVING 被消格已置 null 其余格静止,FALLING grid 已是落定终态,均不再要求「立即成消」:
+  // 成消并入连锁下一环(_beginRound 统一判定),不成消则断连锁回 IDLE,均为策略空间;
+  // 动画槽最多 PARALLEL_MAX 个,占满转预输入缓冲);SWAPPING/REBOUND=预输入缓冲
+  // (0.15s 短动画,只留最新意图,回 IDLE 自动执行)。
   trySwap(a, b) {
     if (this.paralyzed) return false;
     if (Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) return false;
@@ -87,18 +92,17 @@ export class BoardEngine {
       this.fx = { swapA: a, swapB: b, t: SWAP_TIME, back: false };
       return true;
     }
-    if (this.state === STATE.RESOLVING) {
-      if (this.parallelSwap) { // 并行位占用 → 预输入缓冲(最新意图优先)
+    if (this.state === STATE.RESOLVING || this.state === STATE.FALLING) {
+      // M11:任意相邻非空对立即受理(不再要求成消);动画槽占满 → 预输入缓冲(最新意图优先)
+      if (this.parallelSwaps.length >= PARALLEL_MAX) {
         this.swapBuffer = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c } };
         return true;
       }
-      const itemInvolved = isItem(A) || isItem(B);
-      if (!itemInvolved && !this._swapCreatesMatchFrom(a, b)) return false; // 无效→调用方 nudge
       [this.grid[a.r][a.c], this.grid[b.r][b.c]] = [B, A];
-      this.parallelSwap = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c }, t: SWAP_TIME };
+      this.parallelSwaps.push({ a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c }, t: SWAP_TIME });
       return true;
     }
-    if (this.state === STATE.FALLING || this.state === STATE.SWAPPING || this.state === STATE.REBOUND) {
+    if (this.state === STATE.SWAPPING || this.state === STATE.REBOUND) {
       this.swapBuffer = { a: { r: a.r, c: a.c }, b: { r: b.r, c: b.c } };
       return true;
     }
@@ -134,14 +138,23 @@ export class BoardEngine {
       (k.r === a.r && k.c === a.c) || (k.r === b.r && k.c === b.c)));
   }
 
-  // 道具点击（IDLE 时直接生效；忙时按文档走「落定后追加」——M1 简化为仅 IDLE 可点）
+  // 道具点击(M11 修订:任何时刻都可操作——IDLE 即时生效走标准下落补位;RESOLVING 移除后
+  // 与本轮消除合并,由 _afterClear→_applyFalls 统一补位;FALLING/SWAPPING/REBOUND grid 已是
+  // 落定终态,移除后原地静默补新(safePick,新子随既有下落/交换动画呈现);PARALYZED 不可点
+  // ——瘫痪恢复链自身管理道具超时,02 文档第 8 节)
   tapItem(cell) {
-    if (this.state !== STATE.IDLE) return null;
+    if (this.paralyzed) return null;
     const c = this.grid[cell.r]?.[cell.c];
     if (!isItem(c)) return null;
     this.grid[cell.r][cell.c] = null;
-    this.pendingItemRemovals.push(cell);
-    this._refillAfterRemovals();
+    if (this.state === STATE.IDLE) {
+      this.pendingItemRemovals.push(cell);
+      this._refillAfterRemovals();
+    } else if (this.state !== STATE.RESOLVING) {
+      // FALLING/SWAPPING/REBOUND:原地补新(不改动 falls/fallT——该位既有位移动画照播)
+      this.grid[cell.r][cell.c] = { el: safePickRefill(this.rng, this.grid, cell.r, cell.c) };
+    }
+    // RESOLVING:留空,随本轮 _afterClear→_applyFalls 与被消格一起补位
     return c;
   }
 
@@ -149,8 +162,10 @@ export class BoardEngine {
   update(dt) {
     // 点选无效弹回动画计时(纯表现层,不依赖状态机;REQ-M6-05 F7)
     if (this.nudgeFx) { this.nudgeFx.t -= dt; if (this.nudgeFx.t <= 0) this.nudgeFx = null; }
-    // M9:RESOLVING 演出期并行交换动画计时(纯表现;grid 已在 trySwap 即时交换)
-    if (this.parallelSwap) { this.parallelSwap.t -= dt; if (this.parallelSwap.t <= 0) this.parallelSwap = null; }
+    // M9/M11:RESOLVING/FALLING 演出期并行交换动画计时(纯表现;grid 已在 trySwap 即时交换)
+    if (this.parallelSwaps.length) {
+      this.parallelSwaps = this.parallelSwaps.filter(ps => (ps.t -= dt) > 0);
+    }
     switch (this.state) {
       case STATE.SWAPPING:
       case STATE.REBOUND:
@@ -295,7 +310,7 @@ export class BoardEngine {
 
   _afterClear() {
     this.clearing = [];
-    this.parallelSwap = null; // M9-F3:演出结束并行动画一并收口(极限 rush 下动画未播完即截断,grid 已交换、内容瞬间到位)
+    this.parallelSwaps = []; // M9-F3/M11:演出结束并行动画一并收口(极限 rush 下动画未播完即截断,grid 已交换、内容瞬间到位)
     this._applyFalls();
     this.state = STATE.FALLING;
   }
@@ -434,10 +449,11 @@ export class BoardEngine {
         let offsetX = 0, offsetY = 0, alpha = 1, scale = 1, flash = 0, stage = 0, jx = 0, jy = 0;
         const fm = this.falls.find(m => m.r === r && m.c === c);
         if (fm && fallProgress < 1) offsetY = -fm.dist * 90 * (1 - easeOutCubic(fallProgress));
-        // M9:RESOLVING 演出期并行交换偏移(grid 已即时交换,A 格内容=原 B 子,从 B 位置滑向 A 位置:
-        // 起点偏移=±(dirC,dirR)×CELL,随进度归 0;M9-F3 修正,修复前 0→90px 反向跳变)
-        if (this.parallelSwap) {
-          const ps = this.parallelSwap;
+        // M11:演出期并行交换偏移(grid 已即时交换,A 格内容=原 B 子,从 B 位置滑向 A 位置:
+        // 起点偏移=±(dirC,dirR)×CELL,随进度归 0;M9-F3 修正,修复前 0→90px 反向跳变;
+        // M11 多槽:逐条叠加,同格最多被一条占用——trySwap 以格对不重叠为玩家输入自然保证,
+        // 极端连点同格对时按后写覆盖,视觉以最后一次为准)
+        for (const ps of this.parallelSwaps) {
           const q = Math.max(0, ps.t) / SWAP_TIME; // 剩余比例 1→0
           const prog = easeInOutQuad(1 - q); // 滑动进度 0→1
           const k = 1 - prog; // 偏移系数 1→0(起点=对方位置满幅,归 0=到位;M9-F3)

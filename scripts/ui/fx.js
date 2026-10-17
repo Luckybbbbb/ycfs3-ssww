@@ -278,12 +278,11 @@ export class FxLayer {
 
   /** 由引擎事件驱动(main.js 桥接):match_cleared 事件 → 粒子 + 飞字 */
   onMatchCleared(ev, chainMax) {
+    // M11:移除消除点「连锁 ×N」飞字——连锁播报唯一化(fx.chainAnnounce 王者式定版播报,
+    // 需求方 2026-10-17:旧常显/飞字提示与新播报重复,移除);粒子迸发保留
     const cx = ev.c * CELL + CELL / 2;
     const cy = 504 + ev.r * CELL + CELL / 2;
     this.burst(cx, cy, ev.element, ev.count);
-    if (ev.chain >= 2) {
-      this.float(cx, cy - 30, `连锁 ×${ev.chain}`, { size: 22, color: '#e0662e' });
-    }
     void chainMax; void ELEMENTS;
   }
   // (段③技能图标与段④图标碎裂改由 render 状态驱动逐帧绘制,REQ-M6-06 F8;

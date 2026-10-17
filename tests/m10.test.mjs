@@ -25,13 +25,14 @@ const { FxLayer } = await import('../scripts/ui/fx.js');
 const { fullManifest, iconList } = await import('../scripts/assets/manifest.js');
 
 // ---- 清单与路径 ----
-test('M10 manifest 图标清单:20 张(5 棋子+15 技能)纳入 fullManifest 预载(FR-9 缺图停载)', () => {
+test('M10/M11 manifest 图标清单:26 张(5 棋子+15 技能+6 道具)纳入 fullManifest 预载(FR-9 缺图停载)', () => {
   const icons = iconList();
-  assert.equal(icons.length, 20, '图标 20 张');
+  assert.equal(icons.length, 26, '图标 26 张(M11 追加道具 6)');
   assert.equal(icons.filter(x => x.key.startsWith('icon:elements:')).length, 5, '五行棋子 5');
   assert.equal(icons.filter(x => x.key.startsWith('icon:skills:')).length, 15, '技能图标 15');
+  assert.equal(icons.filter(x => x.key.startsWith('icon:items:')).length, 6, '道具图标 6(M11:heal/invincible/cd × 普通/premium)');
   assert.ok(fullManifest().some(x => x.key === 'icon:elements:metal'), '纳入全量清单');
-  // 文件真实存在(FR-9:预载校验,缺图停载)
+  // 文件真实存在(FR-9:预载校验,缺图停载;M11 道具 6 张由生图批次落盘后入库)
   for (const it of icons) {
     const p = new URL('../' + it.url, import.meta.url).pathname.replace(/^\/(\w:)/, '$1');
     assert.ok(fs.existsSync(p), `存在 ${it.url}`);

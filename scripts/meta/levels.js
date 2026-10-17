@@ -33,3 +33,12 @@ export function mergeRunResult(progress, res) {
   if (!Number.isInteger(v) || v <= progress.lastLevelCleared) return progress;
   return { ...progress, lastLevelCleared: v };
 }
+
+// ---- 关卡元数据(UI 设计稿 02/03 界面:卡片名/建议等级;2026-10-17 M11) ----
+export const LEVEL_META = [
+  { name: '青葱丘林', suggest: 1 },
+  { name: '幽泽林间', suggest: 4 },
+  { name: '雾隐山道', suggest: 8 },
+  { name: '霜语雪原', suggest: 12 },
+  { name: '炎狱火山', suggest: 16 },
+];

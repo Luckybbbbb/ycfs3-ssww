@@ -13,8 +13,25 @@ import { levelUpCost, skillUpCost, SKILL_LEVEL_CAP } from '../meta/economy.js';
 import { ENEMY_TYPES } from '../battle/wave.js';
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
+import { LEVEL_META, WAVES_PER_LEVEL } from '../meta/levels.js'; // M11 UI 设计稿:关卡名/建议等级
+import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶栏经验条
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
+// 道具图标贴图(M11 接入:codex 生图,assets/icons/items/<item>[_premium].png 144×144;
+// 替换 emoji 占位;缺图回退 emoji,预载校验见 assets/manifest.js iconList)
+const ITEM_IMG = {};
+for (const it of ['heal', 'invincible', 'cd']) {
+  for (const suffix of ['', '_premium']) {
+    const img = new Image();
+    img.src = new URL(`../../assets/icons/items/${it}${suffix}.png`, import.meta.url).href;
+    ITEM_IMG[it + suffix] = img;
+  }
+}
+// 技能一句话说明(备战界面技能库行;03 文档 5.2 kind 口径)
+const SKILL_BRIEF = {
+  bolt: '单体弹', dotzone: '灼烧区域', chain: '连锁弹', bind: '束缚+持续伤害', multi: '多发弹',
+  shield: '护盾', pulse: '脉冲环', field: '减速领域', aura: '回复光环',
+};
 // 棋子贴图(M10 接入:codex 生图 animal-island 风格五行宝石,assets/icons/elements/<el>.png 144×144;
 // 替换原型期纯色圆 gems/;缺图走矢量兜底,预载校验见 assets/manifest.js fullManifest)
 const GEM_IMG = {};
@@ -279,11 +296,18 @@ export function render(ctx, engine, hud) {
       ctx.beginPath();
       ctx.arc(x + CELL / 2, y + CELL / 2, CELL / 2 - 4, -Math.PI / 2, -Math.PI / 2 + Math.max(0, Math.min(1, cell.expire / 10)) * Math.PI * 2);
       ctx.stroke();
+      // M11:道具图标贴图(高级版用 _premium;缺图回退 emoji 原样式)
+      const itemImg = ITEM_IMG[cell.item + (cell.premium ? '_premium' : '')];
+      if (itemImg && itemImg.complete && itemImg.naturalWidth > 0) {
+        ctx.drawImage(itemImg, x + 19, y + 12, CELL - 38, CELL - 38);
+      } else {
+        ctx.fillStyle = '#794f27';
+        ctx.font = "30px 'Nunito','Noto Sans SC',sans-serif";
+        ctx.fillText(ITEM_ICON[cell.item] || '?', x + CELL / 2, y + CELL / 2 - 2);
+      }
       ctx.fillStyle = '#794f27';
-      ctx.font = "30px 'Nunito','Noto Sans SC',sans-serif";
-      ctx.fillText(ITEM_ICON[cell.item] || '?', x + CELL / 2, y + CELL / 2 - 2);
       ctx.font = "14px 'Nunito','Noto Sans SC',sans-serif";
-      ctx.fillText(Math.ceil(cell.expire) + 's', x + CELL / 2, y + CELL / 2 + 22);
+      ctx.fillText(Math.ceil(cell.expire) + 's', x + CELL / 2, y + CELL / 2 + 30);
       ctx.globalAlpha = 1;
       continue;
     }
@@ -407,30 +431,30 @@ export function render(ctx, engine, hud) {
     engine._iconShown = new Set(); engine._burstShown = new Set(); engine._flashShown = new Set();
   }
 
-  // 连锁提示(FR-7:连锁进行中右上角常显;单次消除由飞字提示)
-  if (engine.chain >= 2) {
-    ctx.fillStyle = 'rgba(224,102,46,.9)';
-    ctx.font = "bold 26px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.textAlign = 'right';
-    ctx.fillText(`连锁 ×${engine.chain}`, 704, BOARD_Y + 34);
-    ctx.textAlign = 'center';
-  }
+  // M11:连锁常显提示已移除(需求方 2026-10-17——中间右侧「连锁 ×N」旧提示与新播报重复;
+  // 连锁信息唯一来源=fx.chainAnnounce 王者式定版播报)
 
   // ===== 底栏 =====
   ctx.fillStyle = '#f0e8d8';
   ctx.fillRect(0, 1224, 720, 56);
+  ctx.strokeStyle = '#dcd8d1';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, 1224); ctx.lineTo(720, 1224); ctx.stroke();
   ctx.fillStyle = '#9f927d';
   ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
   const st = engine.paralyzed ? '棋盘瘫痪 · 等待恢复'
-    : `M3 · 第 ${battle ? battle.level : 1} 关 · 击杀 ${battle ? battle.kills : 0} · 消除 ${hud.cleared ? hud.cleared() : 0}`;
+    : `第 ${battle ? battle.level : 1} 关 ${LEVEL_META[(battle ? battle.level : 1) - 1]?.name || ''} · 击杀 ${battle ? battle.kills : 0} · 消除 ${hud.cleared ? hud.cleared() : 0}`;
   ctx.fillText(st, 360, 1258);
+  // M11 底栏操作按钮(UI 设计稿 04:⏸ 暂停 / ⚙ 设置)
+  drawIconBtn(ctx, UI.battle.pauseBtn, '⏸');
+  drawIconBtn(ctx, UI.battle.settingsBtn, '⚙');
   // 货币/材料 HUD(FR-7 v0.2:击杀/通关产出实时可见)
   const prof0 = hud.profile ? hud.profile() : null;
   if (prof0) {
     ctx.textAlign = 'right';
     ctx.fillStyle = '#ffe9b8';
     ctx.font = "18px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(`💰 ${prof0.coins ?? 0}  ⛏ ${prof0.materials ?? 0}`, 700, 30);
+    ctx.fillText(`💰 ${prof0.coins ?? 0}  ⛏ ${prof0.materials ?? 0}`, 620, 1258);
     ctx.textAlign = 'center';
   }
 
@@ -462,60 +486,27 @@ export function render(ctx, engine, hud) {
     ctx.fillText(hud.toast.text, 360, 545);
   }
 
-  // ===== 胜负结算弹层(FR-1.4 验收;REQ-M6-05 F12:明细分行,不越弹层边界) =====
+  // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====
   if (battle && battle.phase === 'VICTORY') {
-    const vc = battle.victoryCoins || 0, vm = battle.victoryMats || 0;
-    overlay(ctx, '通关!', [
-      `货币 +${battle.coinsGained + vc} 材料 +${battle.matsGained + vm}`,
-      `含通关奖励 💰${vc} ⛏${vm}`,
-      `击杀 ${battle.kills}`,
-    ], '#3fae5c', '点击任意处返回选关');
+    drawResult(ctx, hud, battle, true);
   } else if (battle && battle.phase === 'DEFEAT') {
-    overlay(ctx, '失败', [
-      `本局击杀 ${battle.kills}`,
-      `货币 +${battle.coinsGained} 材料 +${battle.matsGained}`,
-      '收益不清退',
-    ], '#c44', '点击任意处从第 1 波重来');
+    drawResult(ctx, hud, battle, false);
   }
 
-  // ===== M4 选关界面(FR-6:顺序解锁,锁定灰置) =====
-  if (hud.screen && hud.screen() === 'menu') {
-    ctx.fillStyle = 'rgba(20,22,15,.82)';
-    ctx.fillRect(0, 0, 720, 1280);
-    ctx.fillStyle = '#fdf6e8';
-    ctx.font = "52px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.textAlign = 'center';
-    ctx.fillText('三消守卫', 360, 340);
-    ctx.font = "22px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, 390);
-    const prof = hud.profile ? hud.profile() : { level: 1 };
-    const prog = hud.progress ? hud.progress() : { unlockedLevel: 1 };
-    ctx.fillText(`Lv${prof.level} · 通关进度 ${prog.lastLevelCleared}/5`, 360, 460);
-    for (let i = 1; i <= 5; i++) {
-      const bx = 75 + (i - 1) * 118, by = 600, unlocked = i <= prog.unlockedLevel;
-      ctx.fillStyle = unlocked ? '#fdf6e8' : 'rgba(200,200,200,.25)';
-      roundRect(ctx, bx, by, 100, 100, 16); ctx.fill();
-      if (unlocked) { ctx.strokeStyle = '#7ba86f'; ctx.lineWidth = 3; roundRect(ctx, bx, by, 100, 100, 16); ctx.stroke(); }
-      ctx.fillStyle = unlocked ? '#5a4a32' : 'rgba(120,120,120,.6)';
-      ctx.font = "40px 'Nunito','Noto Sans SC',sans-serif";
-      ctx.fillText(i, bx + 50, by + 52);
-      ctx.font = "14px 'Nunito','Noto Sans SC',sans-serif";
-      ctx.fillText(unlocked ? (i <= prog.lastLevelCleared ? '可重打' : '可挑战') : '未解锁', bx + 50, by + 82);
-    }
-    // 货币/材料显示(FR-7 v0.2)
-    ctx.fillStyle = '#ffe9b8';
-    ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(`💰 ${prof.coins ?? 0}    ⛏ ${prof.materials ?? 0}`, 360, 500);
-    // 养成入口(FR-10:角色升级/技能升级/抽卡)
-    ctx.fillStyle = '#7ba86f';
-    roundRect(ctx, 290, 800, 140, 60, 14); ctx.fill();
-    ctx.fillStyle = '#fdf6e8';
-    ctx.font = "24px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText('养成', 360, 840);
-    ctx.fillStyle = '#9f927d';
-    ctx.font = "16px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText('点击已解锁关卡开始', 360, 940);
-    if (hud.growPanel && hud.growPanel()) drawGrowPanel(ctx, hud);
+  // ===== M11 界面路由(UI 设计稿五屏;01 开始 / 02 选关 / 03 备战;战斗与结算见上) =====
+  const scr = hud.screen ? hud.screen() : 'playing';
+  if (scr === 'start') drawStartScreen(ctx, hud);
+  if (scr === 'menu') {
+    drawMenuScreen(ctx, hud);
+    if (hud.growPanel && hud.growPanel()) drawGrowPanel(ctx, hud); // FR-10 养成面板(选关入口,保留)
+  }
+  if (scr === 'loadout') drawLoadoutScreen(ctx, hud);
+  if (scr === 'playing' && hud.paused && hud.paused() && battle && battle.phase === 'FIGHTING') {
+    drawPauseOverlay(ctx, hud); // M11 暂停
+  }
+  if (scr === 'start' || scr === 'menu' || scr === 'loadout' || (scr === 'playing' && hud.paused && hud.paused())) {
+    if (hud.panel && hud.panel() === 'settings') drawSettingsPanel(ctx, hud); // M11 设置(开始/暂停共用)
+    if (hud.panel && hud.panel() === 'about') drawAboutPanel(ctx, hud);
   }
 }
 
@@ -584,25 +575,7 @@ function drawGrowPanel(ctx, hud) {
   ctx.fillText('返 回', 360, 1000);
 }
 
-function overlay(ctx, title, lines, color, hint) {
-  // lines:字符串数组(F12:明细分行,每行独立绘制,不越 160~560 弹层边界)
-  const arr = Array.isArray(lines) ? lines : [lines];
-  ctx.fillStyle = 'rgba(10,10,20,.55)';
-  ctx.fillRect(0, 0, 720, 1280);
-  ctx.fillStyle = '#fdf6e8';
-  roundRect(ctx, 160, 440, 400, 260, 20); ctx.fill();
-  ctx.strokeStyle = color; ctx.lineWidth = 4;
-  roundRect(ctx, 160, 440, 400, 260, 20); ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.font = "44px 'Nunito','Noto Sans SC',sans-serif";
-  ctx.textAlign = 'center';
-  ctx.fillText(title, 360, 520);
-  ctx.fillStyle = '#5a4a32';
-  ctx.font = "19px 'Nunito','Noto Sans SC',sans-serif";
-  arr.forEach((line, i) => ctx.fillText(line, 360, 566 + i * 30));
-  ctx.fillText(hint, 360, 566 + arr.length * 30 + 14);
-  ctx.textAlign = 'center';
-}
+// (M11:原型期胜负 overlay 已由 drawResult 五屏结算界面替代,原函数移除)
 
 // 视差未就绪时的静态兜底(与 M2 版面一致)
 function drawFlatBackdrop(ctx) {
@@ -653,3 +626,574 @@ function drawEnemy(ctx, e, t, scale) {
 }
 
 void TIER_MULT; void PLAYER_Y; void ENEMY_SPAWN_X;
+
+// ==================== M11 界面(UI 设计稿 docs/design/ui/ 五屏) ====================
+// 布局常量导出:main.js 命中区与测试共用(单一来源,与 draw* 逐字一致)
+export const UI = {
+  start: {
+    playBtn: { x: 160, y: 900, w: 400, h: 110 },
+    settingsBtn: { x: 160, y: 1030, w: 190, h: 90 },
+    aboutBtn: { x: 370, y: 1030, w: 190, h: 90 },
+  },
+  menu: {
+    backBtn: { x: 24, y: 20, w: 80, h: 70 },
+    growBtn: { x: 566, y: 1170, w: 130, h: 80 },
+    cardTop: 140, cardH: 178, cardGap: 24,
+    cardBtn: { w: 150, h: 80 }, // 卡内右侧:x=688-28-150=510, y=cardY+49
+  },
+  loadout: {
+    backBtn: { x: 24, y: 20, w: 80, h: 70 },
+    panelY: 500, slotsY: 566, slotSize: 120, slotGap: 24, // 4 槽:x0=44,步进 144
+    libY: 800, libRowH: 40, libCols: [56, 376], libPerCol: 7, // 技能库两列 7 行
+    fightBtn: { x: 160, y: 1140, w: 400, h: 110 },
+  },
+  battle: {
+    pauseBtn: { x: 24, y: 1232, w: 70, h: 40 },
+    settingsBtn: { x: 626, y: 1232, w: 70, h: 40 },
+  },
+  result: {
+    victory: {
+      mainBtn: { x: 110, y: 1010, w: 500, h: 110 },  // 下一关
+      retryBtn: { x: 110, y: 1140, w: 240, h: 90 },  // 重打本关
+      backBtn: { x: 370, y: 1140, w: 240, h: 90 },   // 返回选关
+    },
+    defeat: {
+      mainBtn: { x: 110, y: 870, w: 500, h: 110 },   // 再战一次
+      loadoutBtn: { x: 110, y: 1000, w: 240, h: 90 },// 去备战
+      backBtn: { x: 370, y: 1000, w: 240, h: 90 },   // 返回选关
+    },
+  },
+  pause: {
+    resumeBtn: { x: 210, y: 470, w: 300, h: 90 },
+    sfxBtn: { x: 210, y: 590, w: 300, h: 70 },
+    fxBtn: { x: 210, y: 680, w: 300, h: 70 },
+    quitBtn: { x: 210, y: 780, w: 300, h: 90 },
+  },
+  settings: {
+    panel: { x: 110, y: 440, w: 500, h: 400 },
+    sfxBtn: { x: 160, y: 540, w: 400, h: 80 },
+    fxBtn: { x: 160, y: 650, w: 400, h: 80 },
+    closeBtn: { x: 260, y: 760, w: 200, h: 60 },
+  },
+  about: {
+    panel: { x: 110, y: 440, w: 500, h: 400 },
+    closeBtn: { x: 260, y: 760, w: 200, h: 60 },
+  },
+};
+
+const FONT = (s, w = '') => `${w ? w + ' ' : ''}${s}px 'Nunito','Noto Sans SC',sans-serif`;
+
+// 通用小按钮(底栏 ⏸/⚙ 等 ghost 风格)
+function drawIconBtn(ctx, r, glyph) {
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2;
+  roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.stroke();
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(22, 'bold');
+  ctx.textAlign = 'center';
+  ctx.fillText(glyph, r.x + r.w / 2, r.y + r.h / 2 + 8);
+}
+
+// 通用 clay 按钮(kind: primary|ghost|warn|disabled)
+function drawBtn(ctx, r, text, kind = 'primary', fontSize = 26) {
+  const colors = {
+    primary: ['#19c8b9', '#fff'],
+    ghost: ['#f0e8d8', '#794f27'],
+    warn: ['#f5c31c', '#794f27'],
+    disabled: ['#d8d2c4', '#c4b89e'],
+  };
+  const [bg, fg] = colors[kind] || colors.primary;
+  ctx.fillStyle = bg;
+  roundRect(ctx, r.x, r.y, r.w, r.h, Math.min(24, r.h / 2)); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 3;
+  roundRect(ctx, r.x, r.y, r.w, r.h, Math.min(24, r.h / 2)); ctx.stroke();
+  ctx.fillStyle = fg;
+  ctx.font = FONT(fontSize, 'bold');
+  ctx.textAlign = 'center';
+  ctx.fillText(text, r.x + r.w / 2, r.y + r.h / 2 + fontSize * 0.36);
+}
+
+// 顶栏(选关/备战共用;UI 设计稿 02/03:h=110 青绿浅底)
+function drawTopBar(ctx, title, prof) {
+  ctx.fillStyle = '#e6f9f6';
+  ctx.fillRect(0, 0, 720, 110);
+  ctx.strokeStyle = '#e8e2d6'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, 110); ctx.lineTo(720, 110); ctx.stroke();
+  drawBtn(ctx, UI.menu.backBtn, '←', 'ghost', 30);
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(38, 'bold');
+  ctx.textAlign = 'left';
+  ctx.fillText(title, 124, 68);
+  ctx.textAlign = 'center';
+  if (prof) {
+    // 等级 chip + 经验条(读 profile 累计经验;M11 设计稿 02)
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, 470, 25, 96, 56, 28); ctx.fill();
+    ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2; roundRect(ctx, 470, 25, 96, 56, 28); ctx.stroke();
+    ctx.fillStyle = '#794f27'; ctx.font = FONT(24, 'bold');
+    ctx.fillText(`Lv.${prof.level}`, 518, 60);
+    const { surplus } = levelFromExp(prof.expTotal ?? 0);
+    const need = expNeed(prof.level);
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, 586, 40, 110, 26, 13); ctx.fill();
+    ctx.strokeStyle = '#dcd8d1'; roundRect(ctx, 586, 40, 110, 26, 13); ctx.stroke();
+    ctx.fillStyle = '#f5c31c';
+    roundRect(ctx, 588, 42, Math.max(4, 106 * Math.min(1, surplus / need)), 22, 11); ctx.fill();
+  }
+}
+
+// ===== 01 开始界面 =====
+function drawStartScreen(ctx, hud) {
+  // 田园渐变背景(上青绿天→米白地)
+  const sky = ctx.createLinearGradient(0, 0, 0, 1280);
+  sky.addColorStop(0, '#d8f3ef'); sky.addColorStop(0.46, '#d8f3ef'); sky.addColorStop(0.46, '#f8f8f0'); sky.addColorStop(1, '#f8f8f0');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, 720, 1280);
+  // 远景装饰:云(低饱和,浮动动画)
+  ctx.fillStyle = 'rgba(255,255,255,.8)';
+  const drift = (worldT * 12) % 800 - 80;
+  for (const [cx0, cy0, s] of [[drift, 90, 1], [drift + 320, 150, 0.7], [drift + 560, 70, 0.85]]) {
+    ctx.beginPath();
+    ctx.ellipse(cx0, cy0, 55 * s, 20 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx0 + 40 * s, cy0 - 10 * s, 35 * s, 16 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 远山剪影
+  ctx.fillStyle = '#bfe3d0';
+  ctx.beginPath();
+  ctx.moveTo(0, 584); ctx.lineTo(160, 470); ctx.lineTo(330, 584);
+  ctx.lineTo(500, 455); ctx.lineTo(720, 584); ctx.lineTo(720, 620); ctx.lineTo(0, 620);
+  ctx.fill();
+  // 标题(Claymorphism 厚描边字,浮动动画)
+  const ty = 250 + Math.sin(worldT * 1.6) * 8;
+  ctx.textAlign = 'center';
+  ctx.font = FONT(84, 'bold');
+  ctx.lineWidth = 14; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(121,79,39,.9)'; ctx.strokeText('三消守卫', 360, ty);
+  ctx.fillStyle = '#19c8b9'; ctx.fillText('三消守卫', 360, ty);
+  ctx.font = FONT(28);
+  ctx.fillStyle = '#794f27';
+  ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, ty + 56);
+  // 主角立绘(player idle 序列帧,绘制 210×374)
+  const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
+  if (pf && pf.complete && pf.naturalWidth > 0) {
+    ctx.drawImage(pf, 255, 420, 210, 374);
+  } else {
+    ctx.fillStyle = '#3f6fb5';
+    roundRect(ctx, 285, 440, 150, 340, 30); ctx.fill();
+  }
+  // 主按钮(有存档「开始冒险」/无档「开始游戏」——存档信息条有无同步)
+  const prof = hud.profile ? hud.profile() : null;
+  const hasSave = !!(prof && ((prof.level > 1) || (prof.expTotal ?? 0) > 0 || (hud.progress ? hud.progress().lastLevelCleared : 0) > 0));
+  drawBtn(ctx, UI.start.playBtn, hasSave ? '开 始 冒 险' : '开 始 游 戏', 'primary', 36);
+  drawBtn(ctx, UI.start.settingsBtn, '设 置', 'ghost', 28);
+  drawBtn(ctx, UI.start.aboutBtn, '关 于', 'ghost', 28);
+  // 存档信息条
+  ctx.font = FONT(22);
+  const prog = hud.progress ? hud.progress() : { lastLevelCleared: 0 };
+  if (hasSave) {
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, 128, 1152, 330, 52, 26); ctx.fill();
+    ctx.strokeStyle = '#dcd8d1'; roundRect(ctx, 128, 1152, 330, 52, 26); ctx.stroke();
+    ctx.fillStyle = '#794f27';
+    ctx.fillText(`存档:Lv.${prof.level} · 已通关第 ${prog.lastLevelCleared} 关`, 293, 1185);
+  }
+  ctx.fillStyle = '#9f927d';
+  ctx.fillText('v0.1 原型', 560, 1185);
+}
+
+// ===== 02 关卡选择 =====
+function drawMenuScreen(ctx, hud) {
+  ctx.fillStyle = '#f8f8f0'; ctx.fillRect(0, 0, 720, 1280);
+  const prof = hud.profile ? hud.profile() : { level: 1, coins: 0, materials: 0 };
+  const prog = hud.progress ? hud.progress() : { unlockedLevel: 1, lastLevelCleared: 0 };
+  drawTopBar(ctx, '关卡选择', prof);
+  // 货币/材料(FR-7 v0.2)
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(22, 'bold');
+  ctx.textAlign = 'left';
+  ctx.fillText(`💰 ${prof.coins ?? 0}  ⛏ ${prof.materials ?? 0}`, 124, 165);
+  ctx.textAlign = 'center';
+  // 关卡卡片 ×5(三态:已通关重打 / 当前高亮挑战 / 锁定)
+  for (let i = 1; i <= 5; i++) {
+    const meta = LEVEL_META[i - 1] || { name: `第 ${i} 关`, suggest: i };
+    const y = UI.menu.cardTop + (i - 1) * (UI.menu.cardH + UI.menu.cardGap);
+    const cleared = i <= prog.lastLevelCleared;
+    const unlocked = i <= prog.unlockedLevel;
+    const current = unlocked && !cleared;
+    // 卡片底
+    ctx.fillStyle = !unlocked ? '#f0e8d8' : current ? '#e6f9f6' : '#fff';
+    roundRect(ctx, 32, y, 656, UI.menu.cardH, 24); ctx.fill();
+    ctx.strokeStyle = current ? '#19c8b9' : cleared ? '#dcd8d1' : '#e8e2d6';
+    ctx.lineWidth = current ? 4 : 3;
+    roundRect(ctx, 32, y, 656, UI.menu.cardH, 24); ctx.stroke();
+    // Boss 缩略图(boss 序列帧首帧;缺图灰盒)
+    const th = 130, tx = 56, tyy = y + 24;
+    ctx.fillStyle = '#efe9db';
+    roundRect(ctx, tx, tyy, th, th, 16); ctx.fill();
+    const bossImg = ENEMY_FRAMES.boss && ENEMY_FRAMES.boss[0];
+    if (!unlocked) {
+      ctx.fillStyle = '#c4b89e'; ctx.font = FONT(34);
+      ctx.fillText('🔒', tx + th / 2, tyy + th / 2 + 4);
+      ctx.font = FONT(18); ctx.fillText('未解锁', tx + th / 2, tyy + th / 2 + 40);
+    } else if (bossImg && bossImg.complete && bossImg.naturalWidth > 0) {
+      ctx.save();
+      roundRect(ctx, tx, tyy, th, th, 16); ctx.clip();
+      ctx.drawImage(bossImg, tx + 5, tyy + 5, th - 10, th - 10);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#9f927d'; ctx.font = FONT(20);
+      ctx.fillText('Boss', tx + th / 2, tyy + th / 2 + 7);
+    }
+    // 文案区
+    ctx.textAlign = 'left';
+    ctx.fillStyle = unlocked ? '#794f27' : '#9f927d';
+    ctx.font = FONT(30, 'bold');
+    ctx.fillText(`第 ${i} 关 · ${meta.name}`, 210, y + 56);
+    ctx.font = FONT(22);
+    ctx.fillStyle = '#9f927d';
+    ctx.fillText(`建议 Lv.${meta.suggest}+ · Boss×1 · ${WAVES_PER_LEVEL} 波`, 210, y + 90);
+    // 敌人编成 chips(权重表键)
+    let cx0 = 210;
+    for (const k of levelWeightsSafe(i)) {
+      const w = 24 + k.length * 13;
+      ctx.fillStyle = '#fff';
+      roundRect(ctx, cx0, y + 104, w, 34, 17); ctx.fill();
+      ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2; roundRect(ctx, cx0, y + 104, w, 34, 17); ctx.stroke();
+      ctx.fillStyle = '#794f27'; ctx.font = FONT(19);
+      ctx.fillText(k, cx0 + w / 2, y + 127);
+      cx0 += w + 10;
+      if (cx0 > 480) break;
+    }
+    ctx.textAlign = 'center';
+    // 状态 chip + 按钮
+    if (cleared) {
+      chip(ctx, 370, y + 34, '已通关', '#e6f9f6', '#0e7a70');
+      drawBtn(ctx, { x: 510, y: y + 49, w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h }, '重打', 'ghost', 26);
+    } else if (current) {
+      chip(ctx, 560, y - 14, '当前进度', '#fff', '#794f27');
+      drawBtn(ctx, { x: 510, y: y + 49, w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h }, '挑战', 'primary', 26);
+    } else {
+      drawBtn(ctx, { x: 510, y: y + 49, w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h }, '锁定', 'disabled', 26);
+      ctx.fillStyle = '#9f927d'; ctx.font = FONT(20);
+      ctx.textAlign = 'left';
+      ctx.fillText(`通关第 ${i - 1} 关后解锁`, 210, y + 156);
+      ctx.textAlign = 'center';
+    }
+  }
+  // 养成入口(FR-10 保留)
+  drawBtn(ctx, UI.menu.growBtn, '养成', 'ghost', 28);
+}
+
+function levelWeightsSafe(L) {
+  // 与 battle/wave.js LEVEL_WEIGHTS 键序同源(避免循环依赖,内联键表)
+  const W = [
+    ['slime', 'fox'],
+    ['slime', 'fox', 'zombie'],
+    ['slime', 'fox', 'zombie', 'snake'],
+    ['slime', 'fox', 'zombie', 'snake', 'tiger'],
+    ['fox', 'zombie', 'snake', 'tiger'],
+  ];
+  return W[Math.min(L, W.length) - 1] ?? W[0];
+}
+
+function chip(ctx, x, y, text, bg, fg) {
+  ctx.font = FONT(20);
+  const w = 28 + ctx.measureText(text).width;
+  ctx.fillStyle = bg;
+  roundRect(ctx, x, y, w, 40, 20); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2; roundRect(ctx, x, y, w, 40, 20); ctx.stroke();
+  ctx.fillStyle = fg;
+  ctx.textAlign = 'left';
+  ctx.fillText(text, x + 14, y + 27);
+  ctx.textAlign = 'center';
+  return w;
+}
+
+// ===== 03 备战界面 =====
+function drawLoadoutScreen(ctx, hud) {
+  ctx.fillStyle = '#f8f8f0'; ctx.fillRect(0, 0, 720, 1280);
+  const prof = hud.profile ? hud.profile() : { level: 1, coins: 0, materials: 0, ownedSkills: [], skillLevels: {}, loadout: [] };
+  const lo = hud.loadout ? hud.loadout() : { selLevel: 1, selSlot: 0 };
+  const L = lo.selLevel || 1;
+  const meta = LEVEL_META[L - 1] || { name: `第 ${L} 关`, suggest: L };
+  drawTopBar(ctx, `备战 · 第 ${L} 关`, prof);
+  // 主角面板(立绘+等级/HP/ATK+升级缺口)
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, 32, 140, 400, 330, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, 140, 400, 330, 24); ctx.stroke();
+  const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
+  ctx.fillStyle = '#efe9db';
+  roundRect(ctx, 52, 160, 160, 290, 16); ctx.fill();
+  if (pf && pf.complete && pf.naturalWidth > 0) {
+    ctx.save(); roundRect(ctx, 52, 160, 160, 290, 16); ctx.clip();
+    ctx.drawImage(pf, 72, 170, 120, 214);
+    ctx.restore();
+  }
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(30, 'bold');
+  ctx.fillText(`赤狐 · Lv.${prof.level}`, 232, 200);
+  ctx.font = FONT(24);
+  ctx.fillText(`HP ${maxHpText(prof.level)}`, 232, 240);
+  ctx.fillStyle = '#fff'; roundRect(ctx, 232, 252, 176, 18, 9); ctx.fill();
+  ctx.fillStyle = '#6fba2c'; roundRect(ctx, 234, 254, 172, 14, 7); ctx.fill();
+  ctx.fillStyle = '#794f27';
+  ctx.fillText(`ATK ${atkText(prof.level)}`, 232, 310);
+  ctx.font = FONT(21);
+  ctx.fillStyle = '#9f927d';
+  const cost = levelUpCost(prof.level);
+  ctx.fillText(`升级:Lv.${prof.level} → ${prof.level + 1}`, 232, 356);
+  ctx.fillText(`材料 ${cost}(养成面板升级)`, 232, 386);
+  ctx.textAlign = 'center';
+  // 出战信息卡
+  ctx.fillStyle = '#f0e8d8';
+  roundRect(ctx, 460, 140, 228, 330, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; roundRect(ctx, 460, 140, 228, 330, 24); ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(26, 'bold');
+  ctx.fillText('出战信息', 482, 184);
+  ctx.font = FONT(19);
+  ctx.fillStyle = '#5a4a32';
+  const enemies = levelWeightsSafe(L).join(' / ');
+  ctx.fillText(`关卡:第 ${L} 关 ${meta.name}`, 482, 222);
+  ctx.fillText(`波次:${WAVES_PER_LEVEL} 波`, 482, 252);
+  ctx.fillText(`第 ${WAVES_PER_LEVEL} 波为关底 Boss`, 482, 278);
+  ctx.fillText(`敌人:${enemies}`, 482, 308);
+  ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, 338);
+  if (prof.level < meta.suggest) {
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, 482, 366, 184, 40, 20); ctx.fill();
+    ctx.strokeStyle = '#e05a5a'; ctx.lineWidth = 2; roundRect(ctx, 482, 366, 184, 40, 20); ctx.stroke();
+    ctx.fillStyle = '#e05a5a'; ctx.font = FONT(19, 'bold');
+    ctx.fillText('⚠ 等级低于建议', 574, 392);
+  }
+  ctx.textAlign = 'center';
+  // 技能装配 4 槽(M11 设计稿:120×120 图标+技能名;点击选中→技能库换装)
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, 32, UI.loadout.panelY, 656, 220, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.panelY, 656, 220, 24); ctx.stroke();
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(26, 'bold');
+  ctx.textAlign = 'left';
+  ctx.fillText('技能装配', 56, UI.loadout.panelY + 40);
+  ctx.font = FONT(19);
+  ctx.fillStyle = '#9f927d';
+  ctx.fillText('点击槽位选中 → 在下方技能库点技能换装(立即生效)', 150, UI.loadout.panelY + 40);
+  ctx.textAlign = 'center';
+  for (let i = 0; i < 4; i++) {
+    const sx = 44 + i * (UI.loadout.slotSize + UI.loadout.slotGap);
+    const sy = UI.loadout.slotsY;
+    const id = prof.loadout[i];
+    const sk = skillById(id);
+    const sel = (lo.selSlot || 0) === i;
+    ctx.fillStyle = sel ? 'rgba(25,200,185,.15)' : '#f8f8f0';
+    roundRect(ctx, sx, sy, UI.loadout.slotSize, UI.loadout.slotSize, 20); ctx.fill();
+    ctx.strokeStyle = sel ? '#19c8b9' : 'rgba(121,79,39,.35)';
+    ctx.lineWidth = sel ? 5 : 3;
+    roundRect(ctx, sx, sy, UI.loadout.slotSize, UI.loadout.slotSize, 20); ctx.stroke();
+    if (sk) {
+      const img = SKILL_IMG[sk.id];
+      if (img && img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, sx + 22, sy + 14, 76, 76);
+      } else {
+        ctx.fillStyle = GEM_SRC[sk.el];
+        ctx.beginPath(); ctx.arc(sx + 60, sy + 52, 38, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = ['fire', 'water', 'earth'].includes(sk.el) ? '#fff' : '#794f27';
+        ctx.font = FONT(30, 'bold');
+        ctx.fillText(sk.el[0].toUpperCase(), sx + 60, sy + 63);
+      }
+      ctx.fillStyle = '#794f27';
+      ctx.font = FONT(20, 'bold');
+      ctx.fillText(sk.name, sx + 60, sy + 108);
+    } else {
+      ctx.fillStyle = '#c4b89e';
+      ctx.font = FONT(22);
+      ctx.fillText('空槽', sx + 60, sy + 66);
+    }
+  }
+  // 技能库(15 技能两列 7 行+底部说明行;未解锁灰显;已装配●;点击装配到选中槽)
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, 32, UI.loadout.libY, 656, 320, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.libY, 656, 320, 24); ctx.stroke();
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(24, 'bold');
+  ctx.textAlign = 'left';
+  ctx.fillText('技能库', 56, UI.loadout.libY + 36);
+  ctx.font = FONT(18);
+  ctx.fillStyle = '#9f927d';
+  ctx.fillText('(Lv 解锁 · 灰=未解锁 · ●=已装配 · 点击换到选中槽)', 150, UI.loadout.libY + 36);
+  SKILL_LIBRARY.forEach((sk, i) => {
+    const col = Math.floor(i / UI.loadout.libPerCol), row = i % UI.loadout.libPerCol;
+    const x0 = UI.loadout.libCols[col], y0 = UI.loadout.libY + 56 + row * UI.loadout.libRowH;
+    const unlockedNow = sk.unlockLevel <= prof.level;
+    const equipped = (prof.loadout || []).includes(sk.id);
+    ctx.fillStyle = unlockedNow ? 'rgba(232,226,214,.5)' : 'rgba(232,226,214,.85)';
+    roundRect(ctx, x0, y0, 288, 34, 10); ctx.fill();
+    const img = SKILL_IMG[sk.id];
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, x0 + 4, y0 + 3, 28, 28);
+    } else {
+      ctx.fillStyle = GEM_SRC[sk.el];
+      ctx.beginPath(); ctx.arc(x0 + 18, y0 + 17, 13, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = unlockedNow ? '#5a4a32' : '#c4b89e';
+    ctx.font = FONT(18, 'bold');
+    ctx.fillText(sk.name, x0 + 38, y0 + 23);
+    ctx.font = FONT(15);
+    ctx.fillStyle = unlockedNow ? '#9f927d' : '#c4b89e';
+    ctx.fillText(`${SKILL_BRIEF[sk.kind] || sk.kind}｜CD ${sk.cd}s｜${unlockedNow ? 'Lv' + (prof.skillLevels[sk.id] || 1) : 'Lv' + sk.unlockLevel + '解锁'}${equipped ? ' ●' : ''}`, x0 + 96, y0 + 23);
+  });
+  ctx.textAlign = 'center';
+  // 出战按钮
+  drawBtn(ctx, UI.loadout.fightBtn, '出 战', 'primary', 38);
+}
+
+// HP/ATK 面板值(与 meta/exp.js 公式同源:HP=100+15×(Lv−1)、ATK=10+(Lv−1);避免循环依赖内联)
+function maxHpText(level) { return 100 + 15 * (level - 1); }
+function atkText(level) { return 10 + (level - 1); }
+
+// ===== 05 结算(胜利/失败;UI 设计稿 05) =====
+function drawResult(ctx, hud, battle, victory) {
+  ctx.fillStyle = victory ? 'rgba(232,246,224,.88)' : 'rgba(243,226,224,.9)';
+  ctx.fillRect(0, 0, 720, 1280);
+  const R = victory ? UI.result.victory : UI.result.defeat;
+  // 横幅
+  ctx.fillStyle = victory ? '#6fba2c' : '#e05a5a';
+  roundRect(ctx, 90, 130, 540, 150, 24); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 4;
+  roundRect(ctx, 90, 130, 540, 150, 24); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = FONT(64, 'bold');
+  ctx.textAlign = 'center';
+  ctx.fillText(victory ? '通 关 !' : '战 败', 360, 228);
+  // 统计卡
+  const cardH = victory ? 580 : 430;
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, 60, 340, 600, cardH, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 60, 340, 600, cardH, 24); ctx.stroke();
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(30, 'bold');
+  ctx.fillText(victory ? `第 ${battle.level} 关 · 结算` : `第 ${battle.level} 关 · 第 ${battle.wave} 波`, 360, 390);
+  ctx.font = FONT(25);
+  ctx.textAlign = 'left';
+  let ry = 440;
+  const row = (label, value, color = '#5a4a32') => {
+    ctx.fillStyle = '#9f927d'; ctx.fillText(label, 92, ry);
+    ctx.fillStyle = color; ctx.textAlign = 'right'; ctx.fillText(value, 628, ry); ctx.textAlign = 'left';
+    ry += 42;
+  };
+  row('击杀敌人', `${battle.kills} 只`);
+  row('最高连锁', `×${hud.maxChain ? hud.maxChain() : 0}`);
+  row('击杀经验累计', `+${battle.expGained} exp`);
+  if (victory) {
+    row('通关奖励', `💰${battle.victoryCoins || 0} ⛏${battle.victoryMats || 0}`);
+    row('本局产出', `💰${battle.coinsGained} ⛏${battle.matsGained}`, '#b06f1f');
+    // 升级/资产段(经验与材料收益已入档;养成面板消费)
+    ry += 8;
+    ctx.strokeStyle = '#dcd8d1'; ctx.setLineDash([8, 6]);
+    ctx.beginPath(); ctx.moveTo(92, ry - 24); ctx.lineTo(628, ry - 24); ctx.stroke();
+    ctx.setLineDash([]);
+    const prof = hud.profile ? hud.profile() : { level: 1, coins: 0, materials: 0 };
+    ctx.fillStyle = '#5a4a32';
+    ctx.font = FONT(28, 'bold');
+    ctx.fillText(`当前 Lv.${prof.level}`, 92, ry + 20);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#f5c31c';
+    ctx.fillText(`💰${prof.coins ?? 0} ⛏${prof.materials ?? 0}`, 628, ry + 20);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9f927d';
+    ctx.font = FONT(19);
+    ctx.fillText('养成面板可用材料升级/技能升级/抽卡', 92, ry + 56);
+    // 解锁提示 chip(通关 L → 解锁 L+1,FR-6)
+    if (battle.level < 5) {
+      const meta = LEVEL_META[battle.level] || { name: `第 ${battle.level + 1} 关` };
+      ctx.textAlign = 'center';
+      chip(ctx, 210, 946, `🎉 解锁第 ${battle.level + 1} 关 · ${meta.name}`, '#fff', '#0e7a70');
+      ctx.textAlign = 'left';
+    }
+  } else {
+    row('本局获得', `💰${battle.coinsGained} ⛏${battle.matsGained}`, '#b06f1f');
+    row('剩余主角 HP', '0', '#e05a5a');
+    // 鼓励文案(距建议等级差距动态生成)
+    const meta = LEVEL_META[battle.level - 1] || { suggest: battle.level };
+    ctx.fillStyle = '#efe9db';
+    roundRect(ctx, 92, ry - 10, 536, 96, 14); ctx.fill();
+    ctx.fillStyle = '#794f27';
+    ctx.font = FONT(22);
+    ctx.textAlign = 'center';
+    const lv = hud.profile ? (hud.profile().level || 1) : 1;
+    ctx.fillText(lv < meta.suggest ? `练到 Lv.${meta.suggest} 再来挑战!` : '差一点!调整装配再战一次。', 360, ry + 22);
+    ctx.font = FONT(18);
+    ctx.fillStyle = '#9f927d';
+    ctx.fillText('失败无惩罚:等级/收益/解锁全部保留', 360, ry + 64);
+    ctx.textAlign = 'left';
+  }
+  ctx.textAlign = 'center';
+  // 按钮组
+  if (victory) {
+    drawBtn(ctx, R.mainBtn, battle.level >= 5 ? '完 成' : '下一关 ▶', 'primary', 36);
+    drawBtn(ctx, R.retryBtn, '重打本关', 'ghost', 28);
+    drawBtn(ctx, R.backBtn, '返回选关', 'ghost', 28);
+  } else {
+    drawBtn(ctx, R.mainBtn, '再战一次', 'primary', 36);
+    drawBtn(ctx, R.loadoutBtn, '去备战', 'ghost', 28);
+    drawBtn(ctx, R.backBtn, '返回选关', 'ghost', 28);
+  }
+}
+
+// ===== 暂停浮层(底栏 ⏸;M11) =====
+function drawPauseOverlay(ctx, hud) {
+  ctx.fillStyle = 'rgba(20,22,15,.6)';
+  ctx.fillRect(0, 0, 720, 1280);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fdf6e8';
+  ctx.font = FONT(44, 'bold');
+  ctx.fillText('已暂停', 360, 400);
+  drawBtn(ctx, UI.pause.resumeBtn, '继 续', 'primary', 32);
+  const sfxOn = hud.sfxEnabled ? hud.sfxEnabled() : true;
+  const fxOn = hud.fxEnabled ? hud.fxEnabled() : true;
+  drawBtn(ctx, UI.pause.sfxBtn, `音效:${sfxOn ? '开' : '关'}`, 'ghost', 24);
+  drawBtn(ctx, UI.pause.fxBtn, `动效:${fxOn ? '开' : '关'}`, 'ghost', 24);
+  drawBtn(ctx, UI.pause.quitBtn, '放弃本局 · 返回选关', 'warn', 24);
+}
+
+// ===== 设置面板(开始界面「设置」/暂停面板共用;M11) =====
+function drawSettingsPanel(ctx, hud) {
+  ctx.fillStyle = 'rgba(20,22,15,.6)';
+  ctx.fillRect(0, 0, 720, 1280);
+  const P = UI.settings.panel;
+  ctx.fillStyle = '#fdf6e8';
+  roundRect(ctx, P.x, P.y, P.w, P.h, 24); ctx.fill();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#5a4a32';
+  ctx.font = FONT(34, 'bold');
+  ctx.fillText('设 置', 360, P.y + 60);
+  const sfxOn = hud.sfxEnabled ? hud.sfxEnabled() : true;
+  const fxOn = hud.fxEnabled ? hud.fxEnabled() : true;
+  drawBtn(ctx, UI.settings.sfxBtn, `音效:${sfxOn ? '开' : '关'}`, 'ghost', 26);
+  drawBtn(ctx, UI.settings.fxBtn, `消除动效:${fxOn ? '开' : '关'}`, 'ghost', 26);
+  drawBtn(ctx, UI.settings.closeBtn, '关 闭', 'primary', 24);
+}
+
+// ===== 关于面板(M11) =====
+function drawAboutPanel(ctx, hud) {
+  ctx.fillStyle = 'rgba(20,22,15,.6)';
+  ctx.fillRect(0, 0, 720, 1280);
+  const P = UI.about.panel;
+  ctx.fillStyle = '#fdf6e8';
+  roundRect(ctx, P.x, P.y, P.w, P.h, 24); ctx.fill();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#5a4a32';
+  ctx.font = FONT(34, 'bold');
+  ctx.fillText('关 于', 360, P.y + 60);
+  ctx.font = FONT(21);
+  ctx.fillStyle = '#794f27';
+  ctx.fillText('三消守卫 v0.1 原型', 360, P.y + 130);
+  ctx.fillStyle = '#9f927d';
+  ctx.fillText('上半横版放置自动战斗 × 下半 8×8 五行三消', 360, P.y + 176);
+  ctx.fillText('消除合成技能,主角自动释放,挑战五关', 360, P.y + 208);
+  ctx.fillText('纯 HTML5 Canvas 2D · 720×1280', 360, P.y + 240);
+  drawBtn(ctx, UI.about.closeBtn, '关 闭', 'primary', 24);
+}

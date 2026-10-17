@@ -22,8 +22,8 @@ import { maxHpAt, atkAt } from './meta/exp.js';
 import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpCost, COIN_PER_GACHA, SKILL_LEVEL_CAP } from './meta/economy.js';
 import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
 import { applyItem } from './board/items.js';
-import { skillById } from './skills/library.js';
-import { GROW_LAYOUT } from './ui/render.js';
+import { skillById, SKILL_LIBRARY } from './skills/library.js';
+import { GROW_LAYOUT, UI } from './ui/render.js'; // M11:UI 命中区常量(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
 fitCanvas(canvas);
@@ -34,7 +34,12 @@ const api = createApi();
 const profile = await api.getProfile();
 const levels0 = await api.getLevels();   // FR-8/整改 F5:进度统一经 API 读取(远端可替换)
 let progress = { unlockedLevel: levels0.unlockedLevel, lastLevelCleared: levels0.lastLevelCleared, bestChains: 0 };
-let screen = 'menu';          // 'menu' | 'playing'(FR-6 选关入口)
+let screen = 'start';         // M11 五屏:'start'(01 开始)| 'menu'(02 选关)| 'loadout'(03 备战)| 'playing'(04 战斗/05 结算)
+let selLevel = 1;             // 备战目标关(选关卡片 → 备战 → 出战)
+let selSlot = 0;              // 备战界面选中装配槽(技能库换装目标)
+let panel = null;             // 通用浮层:null | 'settings' | 'about'(开始/暂停共用)
+let paused = false;           // 战斗暂停(底栏 ⏸;M11)
+let maxChain = 0;             // 本局最高连锁(结算展示,startLevel/retryLevel 归零)
 let victoryHandled = false;
 let coinsSeen = 0;            // 已入账的货币水位(M6 v0.2,每帧增量)
 let matsSeen = 0;             // 已入账的材料水位
@@ -49,7 +54,10 @@ const caster = new Caster(charge, profile.loadout, profile.level, profile.ownedS
 const elimRng = makeRng(20260617); // 消除触发链均匀选技随机源(固定种子可复现,03 文档 6 自查)
 const parallax = new Parallax({ effects: profile.settings.effects !== false });
 const battle = new Battle({ atk: atkAt(profile.level), maxHp: maxHpAt(profile.level), rng: makeRng(20260601) });
-const hud = { toast: null, fx: new FxLayer(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress, cleared: () => clearedTotal, drag: null, growPanel: () => growPanel };
+const hud = { toast: null, fx: new FxLayer(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress, cleared: () => clearedTotal, drag: null, growPanel: () => growPanel,
+  // M11 五屏状态句柄(render 布局/UI 常量消费)
+  paused: () => paused, panel: () => panel, loadout: () => ({ selLevel, selSlot }),
+  maxChain: () => maxChain, sfxEnabled: () => sfx.enabled, fxEnabled: () => engine.fxEnabled };
 
 function showToast(text) { hud.toast = { text, t: 1.2 }; }
 
@@ -82,6 +90,8 @@ function startLevel(L) {
   battle.victoryCoins = 0; battle.victoryMats = 0; // 通关奖励展示口径(结算弹层,REQ-M6-04 F4)
   coinsSeen = 0; matsSeen = 0; // REQ-M6-04 F3:入账水位同步归零(重试新局收益从零累计)
   clearedTotal = 0;
+  maxChain = 0; // M11:最高连锁统计归零
+  paused = false; panel = null;
   victoryHandled = false;
   screen = 'playing';
   lastWave = 0;
@@ -103,16 +113,36 @@ function retryLevel() {
   battle.victoryCoins = 0; battle.victoryMats = 0;
   coinsSeen = 0; matsSeen = 0;
   clearedTotal = 0;
+  maxChain = 0;
+  paused = false; panel = null;
   victoryHandled = false;
   lastWave = 0;
   parallax.setWave(1, false);
 }
 
+// M11:选关卡片 → 备战界面(03)
+function openLoadout(L) {
+  if (!canPlay(progress, L)) { showToast('关卡未解锁'); return; }
+  selLevel = L; selSlot = 0; panel = null; growPanel = false;
+  screen = 'loadout';
+}
+
+// M11:设置开关(音效/动效;开始界面与暂停面板共用,写档)
+function toggleSfx() { sfx.enabled = !sfx.enabled; showToast(`音效 ${sfx.enabled ? '开' : '关'}`); sfx.item(); }
+function toggleFx() {
+  profile.settings.effects = profile.settings.effects === false; // false→true,其余→false
+  engine.fxEnabled = profile.settings.effects;
+  persistProfile();
+  showToast(`消除动效 ${profile.settings.effects ? '开' : '关'}`);
+  sfx.item();
+}
+
 function boot() {
   showToast('资源就绪');
 
-  // 选关按钮命中区(FR-6:5 关横排)
-  const LEVEL_BUTTONS = Array.from({ length: 5 }, (_, i) => ({ level: i + 1, x: 75 + i * 118, y: 600, w: 100, h: 100 }));
+  // 命中区工具
+  const hit = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  const inRect = (p, x, y, w, h) => hit(p, { x, y, w, h });
 
   // 联动栏装配槽点击换装(FR-3.3 最小入口:槽位轮换,立即生效;M4 起写档)
   const SLOT_HITBOX = (x) => {
@@ -123,6 +153,15 @@ function boot() {
     return -1;
   };
 
+  // M11:选关卡片「挑战/重打」按钮命中区(与 render UI.menu 卡片布局一致)
+  const cardBtnOf = (L) => ({ x: 510, y: 140 + (L - 1) * 202 + 49, w: 150, h: 80 });
+  // M11:备战界面命中区(与 render UI.loadout 一致)
+  const slotRectOf = (i) => ({ x: 44 + i * 144, y: 566, w: 120, h: 120 });
+  const libRectOf = (i) => {
+    const col = Math.floor(i / 7), row = i % 7;
+    return { x: [56, 376][col], y: 800 + 56 + row * 40, w: 288, h: 34 };
+  };
+
   // 输入绑定（cellAt 由渲染坐标反查棋盘格);返回拖拽状态句柄(果冻拖拽,M6)
   // nudgeLock(F7 续审):点选无效弹回期间仅锁 a/b 两格,其他格照常可操作
   const nudgeLock = (cell) => {
@@ -130,28 +169,27 @@ function boot() {
     return !!nf && ((cell.r === nf.a.r && cell.c === nf.a.c) || (cell.r === nf.b.r && cell.c === nf.b.c));
   };
   const input = attachInput(canvas, {
-    // 忙态丢弃整次手势(F7 续审;M9 修订):演出期可操作忙态放行(RESOLVING 并行交换/
-    // FALLING 预输入缓冲,由 engine.trySwap 分支承接),仅瘫痪等不可操作忙态仍丢弃
+    // 忙态丢弃整次手势(F7 续审;M9 修订):演出期可操作忙态放行(RESOLVING/FALLING 并行交换
+    // 由 engine.trySwap 即时受理),仅瘫痪/暂停等不可操作忙态仍丢弃
     busy: () => engine.state !== 'IDLE' || engine.paralyzed,
     canActInBusy: () => !engine.paralyzed && engine.state !== 'IDLE',
-    // 果冻拖拽预判定(02 文档 2.3;REQ-M6-04 F7;M9 修订):仅 IDLE 预判成消(RESOLVING 交给引擎——
-    // 并行位占用时引擎直接转预输入缓冲(M9-F4:预判不得早于占用分支,否则「当前无效、落定后可能
-    // 有效」的拖拽被误拒);RESOLVING 非占用时引擎内部判成消,无效 false→跟手/松手回弹);
-    // 含道具格走引擎换位分支;FALLING/SWAPPING/REBOUND 走预输入缓冲(不预判——落定后 grid 变化再判)
+    // 果冻拖拽预判定(02 文档 2.3;REQ-M6-04 F7;M9 修订):仅 IDLE 预判成消(RESOLVING/FALLING
+    // 交给引擎——M11 任意相邻非空对即时受理,槽满转预输入缓冲;无效 IDLE 拖拽仍预判拒绝跟手);
+    // 含道具格走引擎换位分支
     tryDragSwap: (a, b) => {
-      if (screen !== 'playing' || battle.phase !== 'FIGHTING') return false;
+      if (screen !== 'playing' || battle.phase !== 'FIGHTING' || paused) return false;
       if (nudgeLock(a) || nudgeLock(b)) return false;
       if (!engine.grid[a.r]?.[a.c] || !engine.grid[b.r]?.[b.c]) return false;
       const st = engine.state;
       const itemInvolved = isItem(engine.grid[a.r][a.c]) || isItem(engine.grid[b.r][b.c]);
       if (st === 'IDLE' && !itemInvolved && !swapCreatesMatch(engine.grid, a.r, a.c, b.r, b.c)) return false;
       if (!engine.trySwap(a, b)) return false;
-      showToast(st === 'IDLE' ? '交换' : st === 'RESOLVING' ? '连锁中交换' : '已预约:落定后执行');
+      showToast(st === 'IDLE' ? '交换' : '连锁中交换');
       sfx.swap();
       return true;
     },
-    // M4 路由拦截:选关界面/胜负弹层全屏接管(按钮在棋盘几何区之上)
-    interceptDown: () => screen === 'menu' || battle.phase !== 'FIGHTING',
+    // M11 五屏路由拦截:非战斗屏/胜负结算/暂停全屏接管
+    interceptDown: () => screen !== 'playing' || battle.phase !== 'FIGHTING' || paused,
     cellAt: (x, y) => {
       if (y < BOARD_Y) return null;
       const c = Math.floor(x / CELL), r = Math.floor((y - BOARD_Y) / CELL);
@@ -159,32 +197,89 @@ function boot() {
       return { r, c };
     },
     onBlankDown: (p) => {
-      // 选关界面:养成面板(FR-10)或关卡按钮
+      // ---- M11 通用浮层(设置/关于;开始/暂停共用) ----
+      if (panel === 'settings') {
+        if (hit(p, UI.settings.sfxBtn)) { toggleSfx(); return; }
+        if (hit(p, UI.settings.fxBtn)) { toggleFx(); return; }
+        if (hit(p, UI.settings.closeBtn)) { panel = null; sfx.item(); return; }
+        return;
+      }
+      if (panel === 'about') {
+        if (hit(p, UI.about.closeBtn)) { panel = null; sfx.item(); return; }
+        return;
+      }
+      // ---- 01 开始界面 ----
+      if (screen === 'start') {
+        if (hit(p, UI.start.playBtn)) { screen = 'menu'; sfx.item(); return; }
+        if (hit(p, UI.start.settingsBtn)) { panel = 'settings'; sfx.item(); return; }
+        if (hit(p, UI.start.aboutBtn)) { panel = 'about'; sfx.item(); return; }
+        return;
+      }
+      // ---- 02 选关界面 ----
       if (screen === 'menu') {
         if (growPanel) { handleGrowClick(p); return; }
-        if (p.x >= 290 && p.x <= 430 && p.y >= 800 && p.y <= 860) {
-          growPanel = true; sfx.item();
-          return;
-        }
-        for (const b of LEVEL_BUTTONS) {
-          if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
-            sfx.item();
-            startLevel(b.level);
+        if (hit(p, UI.menu.backBtn)) { screen = 'start'; sfx.item(); return; }
+        if (hit(p, UI.menu.growBtn)) { growPanel = true; sfx.item(); return; }
+        for (let L = 1; L <= 5; L++) {
+          if (hit(p, cardBtnOf(L))) {
+            if (!canPlay(progress, L)) { showToast('关卡未解锁'); sfx.invalid(); return; }
+            openLoadout(L); sfx.item();
             return;
           }
         }
         return;
       }
-      // 胜负结算弹层:DEFEAT → 重开本关;VICTORY → 返回选关(FR-1.4/FR-6)
-      if (battle.phase !== 'FIGHTING') {
-        if (battle.phase === 'DEFEAT') {
-          retryLevel(); // REQ-M6-04 F3:统一重试初始化(池/预约/产出水位/临时状态全清)
-        } else {
-          screen = 'menu';
+      // ---- 03 备战界面 ----
+      if (screen === 'loadout') {
+        if (hit(p, UI.loadout.backBtn)) { screen = 'menu'; sfx.item(); return; }
+        for (let i = 0; i < 4; i++) {
+          if (hit(p, slotRectOf(i))) { selSlot = i; sfx.item(); return; }
         }
-        victoryHandled = false; // 整改 F3:重试后允许再次结算解锁
+        for (let i = 0; i < SKILL_LIBRARY.length; i++) {
+          if (!hit(p, libRectOf(i))) continue;
+          const sk = SKILL_LIBRARY[i];
+          if (sk.unlockLevel > profile.level) { showToast(`Lv.${sk.unlockLevel} 解锁`); sfx.invalid(); return; }
+          if (caster.loadout.includes(sk.id) && caster.loadout[selSlot] !== sk.id) { showToast('该技能已装配'); sfx.invalid(); return; }
+          caster.loadout[selSlot] = sk.id;
+          persistProfile(); // 装配变更写档(D13)
+          showToast(`槽位 ${selSlot + 1} 换装 → ${sk.name}(立即生效)`);
+          sfx.item();
+          return;
+        }
+        if (hit(p, UI.loadout.fightBtn)) { startLevel(selLevel); sfx.item(); return; }
         return;
       }
+      // ---- 战斗中:暂停面板 ----
+      if (paused) {
+        if (hit(p, UI.pause.resumeBtn)) { paused = false; sfx.item(); return; }
+        if (hit(p, UI.pause.sfxBtn)) { toggleSfx(); return; }
+        if (hit(p, UI.pause.fxBtn)) { toggleFx(); return; }
+        if (hit(p, UI.pause.quitBtn)) { paused = false; panel = null; screen = 'menu'; sfx.item(); return; }
+        return;
+      }
+      // ---- 05 结算(胜利/失败按钮组;M11 重做) ----
+      if (battle.phase !== 'FIGHTING') {
+        if (battle.phase === 'VICTORY') {
+          const R = UI.result.victory;
+          if (hit(p, R.mainBtn)) {
+            if (battle.level >= 5) { screen = 'menu'; } // 第 5 关通关:完成返回
+            else startLevel(battle.level + 1); // 下一关(通关已解锁 L+1)
+            sfx.item(); return;
+          }
+          if (hit(p, R.retryBtn)) { retryLevel(); sfx.item(); return; }
+          if (hit(p, R.backBtn)) { screen = 'menu'; sfx.item(); return; }
+        } else {
+          const R = UI.result.defeat;
+          if (hit(p, R.mainBtn)) { retryLevel(); sfx.item(); return; } // 再战一次(第 1 波重来)
+          if (hit(p, R.loadoutBtn)) { openLoadout(battle.level); sfx.item(); return; } // 去备战
+          if (hit(p, R.backBtn)) { screen = 'menu'; sfx.item(); return; }
+        }
+        return;
+      }
+      // ---- 战斗中:底栏 ⏸/⚙ + 联动栏换装(FR-3.3) ----
+      // ⚙ 设置=暂停+设置面板(render 路由:playing 屏设置面板随 paused 绘制;关闭→暂停浮层→继续)
+      if (hit(p, UI.battle.pauseBtn)) { paused = true; sfx.item(); return; }
+      if (hit(p, UI.battle.settingsBtn)) { paused = true; panel = 'settings'; sfx.item(); return; }
       if (p.y >= 448 && p.y <= 504) {
         const slot = SLOT_HITBOX(p.x);
         if (slot >= 0) {
@@ -196,19 +291,19 @@ function boot() {
       }
     },
     onSwipe: (a, b) => {
-      if (screen !== 'playing' || battle.phase !== 'FIGHTING') return; // 结算弹层期间棋盘输入冻结
+      if (screen !== 'playing' || battle.phase !== 'FIGHTING' || paused) return; // 非战斗/暂停期间棋盘输入冻结
       if (engine.trySwap(a, b)) { showToast('交换'); sfx.swap(); }
       else sfx.invalid();
     },
     onCellDown: () => {},
     onTap: (cell) => {
-      if (screen !== 'playing' || battle.phase !== 'FIGHTING') return;
-      // M9 修订:忙态放行点选(RESOLVING 并行交换/FALLING 预输入由 engine.trySwap 承接);
-      // 瘫痪仍丢弃;道具点击仍限 IDLE(engine.tapItem 自拦,忙时返回 null)
+      if (screen !== 'playing' || battle.phase !== 'FIGHTING' || paused) return;
+      // M9/M11 修订:忙态放行点选(RESOLVING/FALLING 任意交换/道具点击由 engine 承接);
+      // 瘫痪仍丢弃
       if (engine.paralyzed) return;
       // 弹回中的 a/b 两格锁定(F7 续审:只锁回弹格,其他格照常)
       if (nudgeLock(cell)) return;
-      // 道具点击优先(道具格不参与点选交换)
+      // 道具点击优先(道具格不参与点选交换;M11 演出期也可点,engine.tapItem 自拦瘫痪)
       const it = engine.grid[cell.r]?.[cell.c];
       if (it && it.item !== undefined) {
         const item = engine.tapItem(cell);
@@ -290,7 +385,12 @@ function boot() {
   let prevShakeT = 0; // 上一帧 battle.shakeT(边沿触发,避免每帧重置震动延长时长)
   startLoop(
     (dt) => {
-      if (screen !== 'playing') { parallax.update(dt); return; } // 选关界面只推背景动效
+      // M11:暂停门控(底栏 ⏸)——冻结模拟推进,仅保留输入(继续/设置按钮)与渲染
+      if (screen === 'playing' && paused) {
+        input.update(dt);
+        return;
+      }
+      if (screen !== 'playing') { parallax.update(dt); return; } // 非战斗屏只推背景动效
       // FR-3.3 局界契约(REQ-M6-05 F3):引擎推进/事件入池/技能释放以 FIGHTING 为门控;
       // **帧内终局**(battle.update 本帧转 DEFEAT/VICTORY)后不再消费事件/建预约/释放——
       // 以 battle.update 之后的实时相位为准;终局即时清空与棋盘收口见下方结算分支
@@ -303,6 +403,7 @@ function boot() {
         for (const e of engine.drainEvents()) {
           if (e.type === 'match_cleared') {
             clearedTotal += e.count; // FR-7 底栏消除计数
+            if (e.chain > maxChain) maxChain = e.chain; // M11:最高连锁统计(结算展示)
             const gain = charge.feed({ ...e, t: battle.clock }); // 消除充能(t0=演出起点,03 文档 4.0)
             // 逐事件选技+原子建预约(F2);回填本块实际预约结果供段③图标按块显示(F8)
             // resKey=预约唯一 id(REQ-08 F8):入口/存续回写/执行记录三路幂等互认,不重复认领
@@ -403,4 +504,12 @@ function boot() {
 }
 
 // 调试/验证句柄(只读状态;CDP 验证与自动化测试用)
-window.__ssww = { engine, charge, caster, battle, parallax, profile: () => profile, progress: () => progress, screen: () => screen, startLevel, toast: () => (hud.toast ? hud.toast.text : null), swapCreatesMatch };
+window.__ssww = {
+  engine, charge, caster, battle, parallax,
+  profile: () => profile, progress: () => progress, screen: () => screen,
+  startLevel, toast: () => (hud.toast ? hud.toast.text : null), swapCreatesMatch,
+  // M11 五屏导航与状态(CDP 驱动;仅改 UI 态,不写档)
+  nav: (s) => { if (['start', 'menu', 'loadout', 'playing'].includes(s)) screen = s; },
+  openLoadout, uiState: () => ({ screen, selLevel, selSlot, panel, paused, maxChain }),
+  toggleSfx, toggleFx, setPaused: (v) => { paused = !!v; },
+};

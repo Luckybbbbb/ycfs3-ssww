@@ -22,7 +22,8 @@ export function enemyFrameList(type) {
 }
 
 // 图标清单(M10 接入:codex 生图 animal-island 风格——五行棋子 5 张+技能图标 15 张;
-// FR-9 预载校验,缺图停载;render.js GEM_IMG/SKILL_IMG 消费)
+// M11 追加消耗品道具 6 张(heal/invincible/cd × 普通/premium);
+// FR-9 预载校验,缺图停载;render.js GEM_IMG/SKILL_IMG/ITEM_IMG 消费)
 export function iconList() {
   const list = [];
   for (const el of ['metal', 'wood', 'water', 'fire', 'earth']) {
@@ -34,6 +35,11 @@ export function iconList() {
     'fire_pulse', 'water_field', 'wood_aura', 'metal_pulse', 'earth_pulse',
   ]) {
     list.push({ key: `icon:skills:${id}`, url: `assets/icons/skills/${id}.png`, entity: id });
+  }
+  // M11 消耗品道具图标(普通 + 高级 premium 各一套)
+  for (const it of ['heal', 'invincible', 'cd']) {
+    list.push({ key: `icon:items:${it}`, url: `assets/icons/items/${it}.png`, entity: `item-${it}` });
+    list.push({ key: `icon:items:${it}_premium`, url: `assets/icons/items/${it}_premium.png`, entity: `item-${it}-premium` });
   }
   return list;
 }

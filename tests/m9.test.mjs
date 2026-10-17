@@ -95,23 +95,27 @@ test('M9 下落 RUSH:fallT 按 rushScale(chain) 缩放(消除环 chain 的补位
   assert.ok(Math.abs(e.fallT - 2 * 0.08 * 0.85) < 1e-9, `fallT=${e.fallT} 期望 ${2 * 0.08 * 0.85}(2 格×80ms×0.85)`);
 });
 
-// ---- M9 演出期并行交换(RESOLVING) ----
-test('M9 并行交换:RESOLVING 中有效交换立即写回 grid+parallelSwap 动画;无效交换拒绝', () => {
+// ---- M9/M11 演出期并行交换(RESOLVING;M11 任意相邻非空对受理+多槽) ----
+test('M11 并行交换:RESOLVING 中任意相邻非空对立即受理写回 grid(不成消=断连锁策略);动画槽满 3 转缓冲', () => {
   const e = inject(new BoardEngine(7));
   e.chain = 1;
   e._beginRound(); // 金三连 → RESOLVING
   assert.equal(e.state, 'RESOLVING');
   assert.equal(e.grid[6][6].el, 2, '注入自检:(6,6) 基础 el=2');
-  // 无效交换(不成消)拒绝:(7,0)↔(7,1) 换后 [3,2,4,...] 无三连(先于并行交换,无占用)
-  assert.equal(e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }), false, '无效交换拒绝(IDLE 同语义)');
+  // 不成消的交换也受理(M11:任何时刻都可操作;(7,0)↔(7,1) 换后无三连=主动断连锁策略空间)
+  assert.equal(e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }), true, '不成消交换受理(断连锁策略)');
+  assert.notEqual(e.grid[7][0].el, 2, 'grid 已即时交换');
+  assert.equal(e.parallelSwaps.length, 1, '并行动画槽登记 1 条');
   // 交换 (6,5)↔(6,6):换后行 6 (6,3)(6,4)(6,5) el=2 成三连
-  assert.equal(e.trySwap(SWAP_A, SWAP_B), true, 'RESOLVING 中有效交换放行');
+  assert.equal(e.trySwap(SWAP_A, SWAP_B), true, 'RESOLVING 中成消交换放行');
   assert.equal(e.grid[6][5].el, 2, 'grid 已即时交换((6,5)=2)');
   assert.equal(e.grid[6][6].el, 1, 'grid 已即时交换((6,6)=原(6,5) 基础 1)');
-  assert.ok(e.parallelSwap && e.parallelSwap.t > 0, '并行交换动画登记');
+  assert.equal(e.parallelSwaps.length, 2, '并行动画槽 2 条');
   assert.equal(e.state, 'RESOLVING', '状态机主转移不受影响(不进 SWAPPING)');
-  // 并行位占用 → 预输入缓冲(不判成消)
-  assert.equal(e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }), true, '并行位占用 → 进缓冲');
+  // 补满第 3 槽 → 第 4 次交换转预输入缓冲(PARALLEL_MAX=3)
+  assert.equal(e.trySwap({ r: 0, c: 4 }, { r: 0, c: 5 }), true, '第 3 槽受理');
+  assert.equal(e.parallelSwaps.length, 3, '动画槽满 3');
+  assert.equal(e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }), true, '槽满仍受理(转缓冲)');
   assert.deepEqual(e.swapBuffer.a, { r: 7, c: 0 }, '缓冲记录最新意图');
 });
 
@@ -135,44 +139,47 @@ test('M9 并行交换匹配并入连锁下一环:交换形成的三连在 chain2
   assert.equal(e.state, 'IDLE', '终局回 IDLE');
 });
 
-// ---- M9 预输入缓冲(FALLING/SWAPPING/REBOUND) ----
-test('M9 预输入缓冲:FALLING 中 trySwap 记录意图(不预判);回 IDLE 自动执行(作为新一轮交换消除)', () => {
+// ---- M11 演出期可操作(FALLING 即时受理) ----
+test('M11 FALLING 即时交换:任意相邻非空对立即写回 grid+并行动画(不再静默缓冲);成消并入连锁下一环', () => {
   const e = inject(new BoardEngine(7));
   e.chain = 1;
   e._beginRound();
   let guard = 0;
   while (e.state === 'RESOLVING' && guard++ < 600) e.update(1 / 60);
   assert.equal(e.state, 'FALLING');
-  // FALLING 中交换 (6,5)↔(6,6)(行 6 布局不受第一环影响,落定后仍成消)
-  assert.equal(e.trySwap(SWAP_A, SWAP_B), true, 'FALLING 中滑动进缓冲(即时受理)');
-  assert.ok(e.swapBuffer, '缓冲记录');
-  assert.equal(e.grid[6][5].el, 1, 'FALLING 中 grid 未交换(落定后执行)');
-  let sawBufferSwapResolve = false;
+  // FALLING 中交换 (6,5)↔(6,6):立即写回(M11;修复前静默进缓冲,回 IDLE 才执行=「无法操作」卡手)
+  assert.equal(e.trySwap(SWAP_A, SWAP_B), true, 'FALLING 中交换即时受理');
+  assert.equal(e.swapBuffer, null, '不进预输入缓冲(M11 即时语义)');
+  assert.equal(e.grid[6][5].el, 2, 'FALLING 中 grid 已即时交换((6,5)=2)');
+  assert.equal(e.parallelSwaps.length, 1, '并行动画槽登记(FALLING 同 RESOLVING)');
+  let sawChain2Clear = false;
   guard = 0;
   while (e.state !== 'IDLE' && guard++ < 3000) {
     e.update(1 / 60);
     for (const ev of e.drainEvents()) {
-      // flush 执行后走正常交换流程:SWAPPING→_beginRound(交换三连消除;chain 重置 1)
-      if (ev.type === 'match_cleared' && e.clearing?.some(cl => cl.r === SWAP_A.r && cl.c === SWAP_A.c)) sawBufferSwapResolve = true;
+      // 下落完成后 _beginRound 按新布局判定:交换三连在连锁环被消除
+      if (ev.type === 'match_cleared' && ev.chain >= 2 && e.clearing?.some(cl => cl.r === SWAP_A.r && cl.c === SWAP_A.c)) sawChain2Clear = true;
     }
   }
-  assert.ok(sawBufferSwapResolve, '回 IDLE 时缓冲自动执行,交换形成的三连被消除');
+  assert.ok(sawChain2Clear, 'FALLING 中交换形成的三连在连锁下一环被消除(chain≥2)');
   assert.equal(e.state, 'IDLE', '整轮完成回 IDLE');
-  assert.equal(e.swapBuffer, null, '缓冲已清空');
 });
 
-test('M9 缓冲只留最新意图;无效缓冲回 IDLE 后走 nudge 弹回(不误交换)', () => {
+test('M11 缓冲只留最新意图(槽满溢出);无效缓冲回 IDLE 后走 nudge 弹回(不误交换)', () => {
   const e = inject(new BoardEngine(7));
   e.chain = 1;
   e._beginRound();
-  let guard = 0;
-  while (e.state === 'RESOLVING' && guard++ < 600) e.update(1 / 60);
-  e.trySwap(SWAP_A, SWAP_B); // 第一次意图
-  e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }); // 第二次意图(覆盖)
+  // 连发 5 次交换:前 3 次占满动画槽,第 4/5 次溢出进缓冲(只留最新)
+  e.trySwap(SWAP_A, SWAP_B);
+  e.trySwap(SWAP_C, SWAP_D);
+  e.trySwap({ r: 0, c: 4 }, { r: 0, c: 5 });
+  assert.equal(e.parallelSwaps.length, 3, '动画槽满 3');
+  e.trySwap({ r: 2, c: 0 }, { r: 2, c: 1 }); // 第 4 次(溢出)
+  e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }); // 第 5 次(覆盖)
   assert.deepEqual(e.swapBuffer.b, { r: 7, c: 1 }, '只留最新');
-  guard = 0;
+  let guard = 0;
   while (e.state !== 'IDLE' && guard++ < 3000) e.update(1 / 60);
-  // (7,0)↔(7,1) 换后不成消 → flush 判定失败 → nudge 弹回,grid 不变
+  // (7,0)↔(7,1) 在 IDLE flush 判定不成消 → nudge 弹回,grid 不变
   assert.equal(e.state, 'IDLE');
   assert.ok(e.nudgeFx, '无效缓冲走表现层弹回');
   assert.equal(e.grid[7][0].el, 2, 'grid 未交换(基础值)');
@@ -293,7 +300,7 @@ test('M9-F3 并行动画:交换内容从对方位置滑向本位(起点偏移=±
   assert.ok(b.offsetX < -80, `B 格偏移≈-90(从 A 位置出发;实得 ${b.offsetX.toFixed(1)})`);
   e.clearing.forEach(cl => { cl.t = 0; });
   e._afterClear();
-  assert.equal(e.parallelSwap, null, '演出结束并行动画收口(不按旧坐标作用于下落后新内容)');
+  assert.equal(e.parallelSwaps.length, 0, '演出结束并行动画收口(不按旧坐标作用于下落后新内容)');
   assert.equal(e.state, 'FALLING');
 });
 
@@ -302,12 +309,15 @@ test('M9-F4 main 拖拽预判仅 IDLE(RESOLVING 交给引擎:占用转缓冲优�
   const src = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(src.includes("st === 'IDLE' && !itemInvolved"), '预判仅 IDLE');
   assert.ok(!src.includes("st === 'RESOLVING' && !itemInvolved"), 'RESOLVING 预判已移除(F4:修复前占用时的无效拖拽被误拒)');
-  // 引擎侧语义回归:占用时无效交换也进 buffer(不判成消)
+  // 引擎侧语义回归(M11):动画槽满 3 后任意相邻交换进 buffer(不判成消)
   const e = inject(new BoardEngine(7));
   e.chain = 1;
   e._beginRound();
   e.trySwap(SWAP_A, SWAP_B); // 占用并行位
-  assert.equal(e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }), true, '占用时任意相邻交换进缓冲(引擎分支)');
+  e.trySwap(SWAP_C, SWAP_D);
+  e.trySwap({ r: 0, c: 4 }, { r: 0, c: 5 });
+  assert.equal(e.parallelSwaps.length, 3, '动画槽满 3');
+  assert.equal(e.trySwap({ r: 7, c: 0 }, { r: 7, c: 1 }), true, '槽满时任意相邻交换进缓冲(引擎分支)');
   assert.ok(e.swapBuffer);
 });
 
@@ -589,4 +599,70 @@ test('M9-03 F7 中断终态契约:非均匀步长(模拟中断/帧率抖动)+相
   const sig = (list) => list.map(x => (x.op ? x.op : x.el + ':c' + x.chain)).join('>');
   assert.equal(sig(b.accepted), sig(a.accepted), `受理操作序列一致(显式输入逐条对应;A=${sig(a.accepted)} B=${sig(b.accepted)})`);
   assert.equal(b.board, a.board, '完整棋盘状态逐格一致(含道具格与剩余时间;TDD 第 15 条/02 文档第 7 节)');
+});
+
+// ==================== M11 演出期全时可操作(需求方 2026-10-17) ====================
+test('M11 RESOLVING 断连锁:不成消交换并入下一环判定→无匹配回 IDLE(主动断连锁策略空间)', () => {
+  const e = inject(new BoardEngine(7));
+  e.chain = 1;
+  e._beginRound(); // 金三连 RESOLVING
+  // 换走成消子:(6,4)(el2)↔(6,5)(el1) → (6,4)=1,行 6 变 2,1,2 不成三连(预留 (6,3) 断链)
+  assert.equal(e.trySwap({ r: 6, c: 4 }, { r: 6, c: 5 }), true);
+  assert.equal(e.grid[6][4].el, 1, 'grid 已即时交换((6,4)=原(6,5) 基础 1)');
+  let guard = 0, sawRow6Clear = false;
+  while (e.state !== 'IDLE' && guard++ < 3000) {
+    e.update(1 / 60);
+    for (const ev of e.drainEvents()) if (ev.type === 'match_cleared' && e.clearing?.some(cl => cl.r === 6 && (cl.c === 3 || cl.c === 4))) sawRow6Clear = true;
+  }
+  assert.equal(e.state, 'IDLE', '断连锁后整轮收口回 IDLE');
+  assert.ok(!sawRow6Clear, '预留两连被拆散不成消(断链成功)');
+});
+
+test('M11 道具演出期可点:RESOLVING 移除随本轮 _applyFalls 合并补位;FALLING 原地即时补新', () => {
+  // 场景 1:RESOLVING 中点道具 → 格置空,落定后与被消格一起补位(无永久空洞)
+  const e = inject(new BoardEngine(7));
+  e.grid[5][0] = { item: 'heal', expire: 9 };
+  e.chain = 1;
+  e._beginRound();
+  const it = e.tapItem({ r: 5, c: 0 });
+  assert.ok(it && it.item === 'heal', 'RESOLVING 中道具点击生效(修复前仅 IDLE)');
+  assert.equal(e.grid[5][0], null, '道具格已置空');
+  let guard = 0;
+  while (e.state !== 'IDLE' && guard++ < 3000) { e.update(1 / 60); e.drainEvents(); }
+  assert.ok(e.grid.every(row => row.every(c => c !== null)), 'RESOLVING 移除的格随本轮补位(无空洞)');
+  // 场景 2:FALLING 中点道具 → 原地即时补新(棋盘无空洞)
+  const e2 = inject(new BoardEngine(7));
+  e2.grid[5][1] = { item: 'cd', premium: true, expire: 8 };
+  e2.chain = 1;
+  e2._beginRound();
+  guard = 0;
+  while (e2.state === 'RESOLVING' && guard++ < 600) e2.update(1 / 60);
+  assert.equal(e2.state, 'FALLING');
+  const it2 = e2.tapItem({ r: 5, c: 1 });
+  assert.ok(it2 && it2.item === 'cd', 'FALLING 中道具点击生效');
+  assert.ok(e2.grid[5][1] && e2.grid[5][1].el !== undefined, 'FALLING 移除后原地补新棋子');
+  guard = 0;
+  while (e2.state !== 'IDLE' && guard++ < 3000) { e2.update(1 / 60); e2.drainEvents(); }
+  assert.ok(e2.grid.every(row => row.every(c => c !== null)), 'FALLING 补新后终态无空洞');
+  // 场景 3:PARALYZED 不可点(恢复链自管)
+  const e3 = new BoardEngine(7);
+  e3.paralyzed = true;
+  e3.grid[0][0] = { item: 'heal', expire: 9 };
+  assert.equal(e3.tapItem({ r: 0, c: 0 }), null, '瘫痪中道具点击拒绝');
+});
+
+test('M11 SWAPPING/REBOUND 仍走预输入缓冲(0.15s 短动画语义保留);回 IDLE 自动执行', () => {
+  const e = inject(new BoardEngine(7));
+  assert.equal(e.trySwap(SWAP_A, SWAP_B), true, 'IDLE 交换 → SWAPPING');
+  assert.equal(e.state, 'SWAPPING');
+  assert.equal(e.trySwap({ r: 2, c: 0 }, { r: 2, c: 1 }), true, 'SWAPPING 中滑动进缓冲');
+  assert.ok(e.swapBuffer, '缓冲记录');
+  assert.equal(e.grid[2][0].el, 2, 'SWAPPING 中 grid 未交换');
+  let guard = 0, sawMatch = false;
+  while (e.state !== 'IDLE' && guard++ < 3000) {
+    e.update(1 / 60);
+    for (const ev of e.drainEvents()) if (ev.type === 'match_cleared') sawMatch = true;
+  }
+  assert.equal(e.swapBuffer, null, '回 IDLE 缓冲已消费');
+  assert.ok(e.grid[2][0].el !== undefined, '缓冲交换已执行(2,0 内容变化)');
 });
