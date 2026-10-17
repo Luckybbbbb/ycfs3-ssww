@@ -643,16 +643,20 @@ function drawFlipH(ctx, img, x, y, w, h) {
 }
 
 function drawEnemy(ctx, e, t, scale) {
+  // M11-04:表空(单测/兜底路径未 bindImages)→ 走椭圆兜底,不再让 seqFrame 吃 undefined
   const frames = ENEMY_FRAMES[e.name] || ENEMY_FRAMES.slime;
+  const hasFrames = Array.isArray(frames) && frames.length > 0;
   // 攻击动画:开火后 animDur 内按 2×fps 单次正播;其余时间按原 fps 慢速循环(待机)
-  let f;
-  if (e.attackAnimT > 0 && e.animDur > 0) {
-    const p = 1 - e.attackAnimT / e.animDur;
-    f = frames[Math.min(frames.length - 1, Math.floor(p * frames.length))];
-  } else {
-    // M8-F1:待机帧用受击者自身动画时钟 e.animClock(enemy 构造初始化、update 非冻结帧累积,
-    // 卡肉期不推进→待机帧定格;取代全局 worldT——REQ-M8-02 F1:构造即初始化,无回退分支)
-    f = seqFrame(frames, e.animClock + e.y, t.fps);
+  let f = null;
+  if (hasFrames) {
+    if (e.attackAnimT > 0 && e.animDur > 0) {
+      const p = 1 - e.attackAnimT / e.animDur;
+      f = frames[Math.min(frames.length - 1, Math.floor(p * frames.length))];
+    } else {
+      // M8-F1:待机帧用受击者自身动画时钟 e.animClock(enemy 构造初始化、update 非冻结帧累积,
+      // 卡肉期不推进→待机帧定格;取代全局 worldT——REQ-M8-02 F1:构造即初始化,无回退分支)
+      f = seqFrame(frames, e.animClock + e.y, t.fps);
+    }
   }
   const w = t.srcW * t.scale * scale, h = t.srcH * t.scale * scale;
   // M8 受击反馈(03 文档 6.7):白闪=贴图白色剪影(filter 亮度归零反相)+ 冻结期水平微抖(SF/DNF 口径)
