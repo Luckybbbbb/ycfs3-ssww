@@ -6,7 +6,7 @@
 // 素材: player/slime/fox/zombie/snake/tiger/boss 序列帧复用 godot-roguelike(04 文档第 6 节);宝石见 gems/LICENSE.md
 
 import { BOARD_W, BOARD_H, BOARD_Y, CELL, ELEMENTS, isItem } from '../board/grid.js';
-import { roundRect } from './draw_util.js';
+import { roundRect, GEM_COLORS as GEM_SRC } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
 import { skillById, SKILL_LIBRARY } from '../skills/library.js';
 import { levelUpCost, skillUpCost, SKILL_LEVEL_CAP } from '../meta/economy.js';
@@ -15,7 +15,6 @@ import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
-const GEM_SRC = { metal: '#ccccff', wood: '#44ff44', water: '#4488ff', fire: '#ff4444', earth: '#cc8844' };
 const GEM_IMG = {};
 const GEM_DIR = new URL('../../assets/sprites/gems/', import.meta.url);
 for (const el of ELEMENTS) {
@@ -83,9 +82,11 @@ export function render(ctx, engine, hud) {
       roundRect(ctx, bx - 2, by - 2, bw + 4, 10, 5); ctx.fill();
       ctx.fillStyle = '#e5484d';
       roundRect(ctx, bx, by, Math.max(0, bw * e.hp / e.maxHp), 6, 3); ctx.fill();
-      // 灼烧/减速标记
+      // 状态标记(03 文档 6.2b:4 种——灼烧🔥/减速❄/束缚🌿/眩晕💫;字段非零显示、清零消失)
       if (e.burn) { ctx.fillStyle = '#ff7744'; ctx.font = '16px sans-serif'; ctx.fillText('🔥', e.x + 30, e.y - t.srcH * t.scale / 2 - 24); }
       if (e.slowT > 0) { ctx.fillStyle = '#88ccff'; ctx.font = '16px sans-serif'; ctx.fillText('❄', e.x - 38, e.y - t.srcH * t.scale / 2 - 24); }
+      if (e.bindT > 0) { ctx.fillStyle = '#88dd88'; ctx.font = '16px sans-serif'; ctx.fillText('🌿', e.x - 57, e.y - t.srcH * t.scale / 2 - 24); }
+      if (e.stunT > 0) { ctx.fillStyle = '#eecc88'; ctx.font = '16px sans-serif'; ctx.fillText('💫', e.x - 19, e.y - t.srcH * t.scale / 2 - 24); }
     }
     // ===== 敌方弹幕(暗红光点,FR-1.2) =====
     for (const b of battle.ebolts) {
@@ -404,8 +405,9 @@ export function render(ctx, engine, hud) {
     ctx.textAlign = 'center';
   }
 
-  // 特效层
-  if (hud.fx) hud.fx.draw(ctx);
+  // 特效层(REQ-M7-01 F5:关动效 fxEnabled=false 时**停止绘制**存量粒子/冒字——
+  // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
+  if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx);
 
   // 事件提示浮层
   if (hud.toast && hud.toast.t > 0) {

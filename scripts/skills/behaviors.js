@@ -6,9 +6,25 @@
 // 相对路径: scripts/skills/behaviors.js
 
 import { TIER_MULT } from './registry.js';
-import { tiered } from './library.js';
+import { tiered, skillById } from './library.js';
 
 const TM = (tier) => TIER_MULT[tier - 1];
+
+// ---- 减速提示跃迁判定(03 文档 6.2b,REQ-SSWW-DESIGN-v0.3-02 裁决 F1):----
+// 领域内每帧 slowT 被续 0.1s(battle 逐帧扣减)——「时长增加」不可作提示条件;
+// 仅四种状态跃迁冒字:①首次生效/失效重入(无标记)②换源 ③幅度增强 ④主动重放(gen 变化)。
+// 调用方(applyHit water / tickZones slow)在跃迁为真时产 slowMark 冒字事件。
+export function markSlow(e, srcId, pct, gen = 0) {
+  if (!e.slowMarkSrc || e.slowMarkSrc !== srcId) {
+    e.slowMarkSrc = srcId; e.slowMarkPct = pct; e.slowMarkGen = gen;
+    return true; // 首次生效 / 失效后重入 / 换源
+  }
+  if (pct > (e.slowMarkPct || 0) || gen !== e.slowMarkGen) {
+    e.slowMarkPct = pct; e.slowMarkGen = gen;
+    return true; // 幅度增强 / 主动重放(同技能 zone 重新释放,pushZone gen+1)
+  }
+  return false; // 同源同幅持续(逐帧续时):不冒字
+}
 
 // ---- 寒冰锁链(water_chain):主目标 + ⌊2+tier/2⌋ 个邻近,各 ATK×0.6×档位倍率 ----
 // 4.5 数字例:tier2 总 4(额外 3)、tier5 总 5(额外 ⌊4.5⌋=4)
@@ -27,6 +43,13 @@ export function applyChain(ctx, skill, tier) {
   }
   for (const e of picked) {
     const r = e.hurt(dmg);
+    // 伤害冒字(03 文档 6.5:锁链直呼 e.hurt 不经 applyHit——行为内核产事件;元素来源=skill.el)
+    // 方向=中心敌→被击敌;中心自身方向缺省(向上)
+    ctx.floatEvent({
+      kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: skill.el,
+      fromAngle: e === primary ? null : Math.atan2(e.y - primary.y, e.x - primary.x),
+      importance: 1,
+    });
     if (r.killed) ctx.registerKill(e); // 统一击杀登记(F2)
   }
   return picked.length;
@@ -39,6 +62,9 @@ export function applyBind(ctx, skill, tier) {
   e.bindT = skill.params.bindTime;                 // 消费(停止移动/攻击)在 enemy 接线
   e.bindDps = ctx.atk * skill.params.dpsCoef * TM(tier);
   e.bindUntil = ctx.clock + skill.params.bindTime;
+  e.bindEl = skill.el;                             // 跳伤冒字元素来源(6.2a:🌿N 木色)
+  // 束缚施加标记(6.2b):施加=一次冒字;重复施加刷新 bindUntil→再冒 1 条
+  ctx.floatEvent({ kind: 'bindMark', x: e.x, y: e.y, importance: 1 });
   return e;
 }
 // 束缚 DOT 逐整秒跳伤(与灼烧同口径:先跳后清)
@@ -75,7 +101,11 @@ export function applyMulti(ctx, skill, tier) {
 export function applyShieldSpell(ctx, skill, tier) {
   const add = Math.round(tiered(skill, ctx.atk, tier));
   const cap = Math.round(ctx.maxHp * 0.3);
+  const before = ctx.shield;
   ctx.shield = Math.min(cap, ctx.shield + add);
+  const gained = ctx.shield - before;
+  // 冒字(6.5:石甲直加盾不经 applyHit——行为内核产事件;N=实际增量,盾满 0 不产;6.4)
+  if (gained > 0) ctx.floatEvent({ kind: 'shieldGain', x: ctx.px ?? 110, y: 280, n: gained, importance: 1 });
   return { add, shield: ctx.shield, cap };
 }
 
@@ -91,8 +121,19 @@ export function applyPulse(ctx, skill, tier) {
     const dx = e.x - center.x, dy = e.y - center.y;
     if (dx * dx + dy * dy <= skill.params.r * skill.params.r) {
       const r = e.hurt(dmg);
+      // 伤害冒字(6.5:脉冲直呼 e.hurt 不经 applyHit;元素来源=skill.el;方向=中心→被击敌)
+      ctx.floatEvent({
+        kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: skill.el,
+        fromAngle: e === center ? null : Math.atan2(e.y - center.y, e.x - center.x),
+        importance: 1,
+      });
       if (r.killed) ctx.registerKill(e); // 统一击杀登记(F2)
-      if (skill.params.stunTime) e.stunT = Math.max(e.stunT || 0, skill.params.stunTime);
+      if (skill.params.stunTime) {
+        const stronger = !e.stunT || skill.params.stunTime > e.stunT;
+        e.stunT = Math.max(e.stunT || 0, skill.params.stunTime);
+        // 眩晕标记(6.2b):施加=一次冒字;仅更强覆盖时再冒 1 条
+        if (stronger) ctx.floatEvent({ kind: 'stunMark', x: e.x, y: e.y, importance: 1 });
+      }
       hits++;
     }
   }
@@ -101,14 +142,19 @@ export function applyPulse(ctx, skill, tier) {
 
 // ---- 区域(dotzone/field)与光环(aura):状态为纯数据,由 battle 接线每帧 tick ----
 // zones: [{kind:'dot'|'slow', x, y, r, dpsFloat?, slowPct?, until}](同种区域刷新不叠加,4.4)
+// zone 重放代数:模块级全局递增(REQ-M7-01 F4 修正——按存活旧区生成会在区域到期删除后
+// 重置为 1,与敌侧残留标记 gen 撞车导致重放漏提示;全局递增跨区域销毁仍可区分)
+let ZONE_GEN = 0;
+
 export function pushZone(ctx, skill, tier, center) {
   ctx.zones = ctx.zones || [];
   const p = skill.params;
+  const old = ctx.zones.find(z => z.skillId === skill.id);
   const zone = skill.kind === 'dotzone'
     ? { kind: 'dot', x: center.x, y: center.y, r: p.r, dpsFloat: ctx.atk * p.dpsCoef * TM(tier), until: ctx.clock + p.duration, skillId: skill.id }
     : { kind: 'slow', x: center.x, y: center.y, r: p.r, slowPct: p.slowPct, until: ctx.clock + p.duration, skillId: skill.id };
-  const old = ctx.zones.findIndex(z => z.skillId === skill.id);
-  if (old >= 0) ctx.zones[old] = zone; // 刷新:时长/效果按新档位,不叠加
+  zone.gen = ++ZONE_GEN; // 每次释放(新建或重放)都是新代数
+  if (old) ctx.zones[ctx.zones.indexOf(old)] = zone; // 刷新:时长/效果按新档位,不叠加
   else ctx.zones.push(zone);
   return zone;
 }
@@ -132,10 +178,15 @@ export function tickZones(zones, prevClock, clock, enemies, ctx = null) {
     if (z.kind === 'dot') {
       const from = Math.floor(prevClock + 1e-9) + 1;
       const to = Math.min(Math.floor(clock + 1e-9), Math.floor(z.until + 1e-9));
+      const zoneEl = skillById(z.skillId)?.el || 'fire'; // 冒字元素来源(6.5:zone.skillId→skillById)
       for (let s = from; s <= to; s++) {
         for (const e of inR) {
           const r = e.hurt(Math.round(z.dpsFloat));
           dotDamage += r.applied;
+          // 灼烧区跳伤冒字(6.2a:每整秒每敌 `-N`,方向=区域中心→被击敌,importance 0)
+          if (r.applied > 0 && ctx?.floatEvent) {
+            ctx.floatEvent({ kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: zoneEl, fromAngle: Math.atan2(e.y - z.y, e.x - z.x), importance: 0 });
+          }
           if (r.killed && ctx?.registerKill) ctx.registerKill(e); // 击杀登记(F2)
         }
       }
@@ -143,6 +194,10 @@ export function tickZones(zones, prevClock, clock, enemies, ctx = null) {
       for (const e of inR) {
         e.slowT = Math.max(e.slowT || 0, 0.1); // 区内持续减速;离开后自然到期
         e.slowPct = z.slowPct;
+        // 减速提示跃迁判定(6.2b):逐帧续时不冒字;首用/重入/增强/重放(zone.gen)才冒
+        if (markSlow(e, z.skillId, z.slowPct, z.gen || 0) && ctx?.floatEvent) {
+          ctx.floatEvent({ kind: 'slowMark', x: e.x, y: e.y, importance: 0 });
+        }
         slowed++;
       }
     }
@@ -169,7 +224,10 @@ export function tickAura(aura, prevClock, clock, ctx) {
     const h = Math.round(aura.healFloat);
     const before = ctx.hp;
     ctx.hp = Math.min(ctx.maxHp, ctx.hp + h);
-    heal += ctx.hp - before;
+    const gained = ctx.hp - before;
+    heal += gained;
+    // 光环回血冒字(6.2a:每跳 `+N`,N=实际回复量,满血 0 不产;6.4 光环例 265 maxHP t5=+12/Lv3=+14)
+    if (gained > 0 && ctx.floatEvent) ctx.floatEvent({ kind: 'aura', x: ctx.px ?? 110, y: 280, n: gained, importance: 0 });
   }
   if (clock > aura.until + 1e-9) ctx.aura = null;
   return heal;

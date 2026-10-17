@@ -148,3 +148,35 @@ test('F8 render 接线(REQ-08):同元素双块单候选——已认领块显技�
   assert.ok(rec.fillTexts.some(t => t.includes(name)), `b0 段③显示预约技能名,实际: ${JSON.stringify(rec.fillTexts)}`);
   assert.ok(rec.fillTexts.some(t => t.includes('蓄能')), 'b1 显示蓄能+池档(未被同预约误标)');
 });
+
+test('M7 状态图标(REQ-M7-01 F7):束缚🌿/眩晕💫头顶图标经 render 入口显示与消失;关动效不绘制冒字', () => {
+  // battle 桩:render 敌循环所需最小字段
+  const mkBattleStub = (e) => ({
+    phase: 'FIGHTING', enemies: [e], ebolts: [], bolts: [], zones: [],
+    clock: 0, kills: 0, level: 1, coinsGained: 0, matsGained: 0, hp: 100, maxHp: 100, shield: 0,
+    expGained: 0, wave: 1, shakeT: 0, hurtT: 0, log: [],
+  });
+  const mkFoe = () => ({
+    name: 'slime', x: 400, y: 280, hp: 50, maxHp: 50, alive: true, deathT: 0,
+    scale: 1, srcW: 64, srcH: 64, burn: null, slowT: 0, bindT: 0, stunT: 0,
+  });
+  const e = mkFoe();
+  e.bindT = 1.2; e.stunT = 0.4;
+  let { ctx, rec } = mkCtx();
+  render(ctx, mkStage(true), { ...mkHud(mkStage(true)), battle: mkBattleStub(e), fx: null });
+  assert.ok(rec.fillTexts.includes('🌿'), '束缚 🌿 图标显示(bindT>0)');
+  assert.ok(rec.fillTexts.includes('💫'), '眩晕 💫 图标显示(stunT>0)');
+  // 消失:字段清零
+  e.bindT = 0; e.stunT = 0;
+  ({ ctx, rec } = mkCtx());
+  render(ctx, mkStage(true), { ...mkHud(mkStage(true)), battle: mkBattleStub(e), fx: null });
+  assert.ok(!rec.fillTexts.includes('🌿') && !rec.fillTexts.includes('💫'), '字段清零 → 图标消失');
+  // 关动效:存量冒字不绘制(fxEnabled=false 门控,REQ-M7-01 F5)
+  const engine = mkStage(true);
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'dmg', x: 300, y: 300, n: 9, el: 'fire', jitter: 0 });
+  engine.fxEnabled = false;
+  ({ ctx, rec } = mkCtx());
+  render(ctx, engine, { ...mkHud(engine), battle: mkBattleStub(mkFoe()), fx });
+  assert.ok(!rec.fillTexts.some(t => t.includes('-9')), '关动效 → 存量冒字不绘制(特效层门控)');
+});

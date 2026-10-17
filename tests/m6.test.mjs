@@ -23,6 +23,7 @@ function mockCtx(atk = 10, clock = 0) {
     nearestAlive() { return this.enemies.find(e => e.alive) || null; },
     makeBolt(el, tier, dmg, target) { return { el, tier, dmg, target }; },
     registerKill() { return false; },
+    floatEvent(ev) { (this.floats = this.floats || []).push(ev); }, // v0.3 冒字事件(behaviors 行为内核调用)
     // F6 同一提交:发射成功返回 true(有存活目标),失败返回 null——与 battle.launch 同语义
     launch(used) {
       const t = this.enemies.find(e => e.alive);

@@ -7,11 +7,11 @@
 
 import { Enemy, ENEMY_SPAWN_X, MIN_QUEUE_GAP } from './enemy.js';
 import { advanceBolt, findHitTargets, advanceEnemyBolt, enemyBoltHitsPlayer } from './projectile.js';
-import { PLAYER_X, boltDamage, BURN_COEFF, LEECH_PCT, SHIELD_ATK, SLOW_PCT } from '../skills/registry.js';
+import { PLAYER_X, BOLT_SPEED, boltDamage, BURN_COEFF, LEECH_PCT, SHIELD_ATK, SLOW_PCT } from '../skills/registry.js';
 import { buildWave, ENEMY_TYPES,
          enemyHp, enemyDmg, barrageDmg, enemySpd, attackInterval, barrageCount, fanAngle, barrageSpeed } from './wave.js';
 import { ENEMY_STOP_X } from '../skills/registry.js';
-import { tickZones, tickAura, tickBind } from '../skills/behaviors.js';
+import { tickZones, tickAura, tickBind, markSlow } from '../skills/behaviors.js';
 import { killReward } from '../meta/economy.js';
 
 export const PHASE = { FIGHTING: 'FIGHTING', VICTORY: 'VICTORY', DEFEAT: 'DEFEAT' };
@@ -31,6 +31,7 @@ export class Battle {
     this.expGained = 0;      // M2 演示口径保留(单测依赖);v0.2 局内产出如下
     this.coinsGained = 0;    // M6 v0.2 击杀产出(货币 2+w_global,Boss ×20;03 文档 2.2)
     this.matsGained = 0;     // M6 v0.2 击杀产出(材料普通 1/Boss 20)
+    this.floatTexts = [];    // v0.3 伤害冒字事件队列(纯数据;03 文档 6.5——battle 不 import ui,main 每帧 drainFloatTexts 转发 fx)
     this.expPerKill = expPerKill;
     this.log = [];            // 数字例复核用事件流水
     // M3 波次状态(FR-4)
@@ -74,6 +75,7 @@ export class Battle {
     this.shakeT = 0;      // 清受击震动
     this.coinsGained = 0; // 清本局经济产出累计(新局重计)
     this.matsGained = 0;
+    this.floatTexts = []; // 清冒字事件队列(跨局不残留)
     this.phase = PHASE.FIGHTING;
     this.nextWave();
   }
@@ -159,7 +161,20 @@ export class Battle {
     this.coinsGained += rw.coins;
     this.matsGained += rw.mats;
     this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss });
+    this.floatEvent({ kind: 'kill', x: e.x, y: e.y, importance: 2 }); // `击破`(每次击杀固定 1 条;03 文档 6.2a)
     return true;
+  }
+
+  // ===== v0.3 伤害冒字事件队列(03 文档 6.5):battle 产纯数据事件,main 转发 fx 层绘制 =====
+  // ev={kind, x, y, n?, el?, fromAngle?, jitter?, importance?};颜色/文案映射在 fx 层(FT_STYLE),
+  // 方向缺省(跳伤/主角处增益)由 fx 默认向上 ±0.8rad;弹道类由调用方给 fromAngle(弹速/源点→被击敌)。
+  floatEvent(ev) {
+    this.floatTexts.push(ev);
+  }
+  drainFloatTexts() {
+    const out = this.floatTexts;
+    this.floatTexts = [];
+    return out;
   }
 
   // 击杀经验:固定 expPerKill(M2)或 2+w_global(Boss ×20,05 文档第 5 节)
@@ -208,17 +223,30 @@ export class Battle {
     // atkEff:发射时刻有效攻击(atk×skill_mult,REQ-M6-04 F5);null(行为内核造弹)时命中按 this.atk
     return {
       el, tier, rawDmg: raw, atkEff, x: PLAYER_X, y: target.y,
+      vx: BOLT_SPEED, vy: 0, // 弹速方向(直线匀速水平右;直击冒字 fromAngle=atan2(vy,vx),6.3/REQ-M7-01 F1)
       t: 0, target, lastDt: 0,
       hitSet: new Set(), done: false, blastR: 0, aoeAll: false, splash: null, blasted: false,
     };
   }
 
   // 命中一个目标:伤害+元素能力(命中点/目标为作用中心)
-  applyHit(b, e, mult = 1) {
+  // center:范围/溅射形态的爆炸中心(REQ-M7-01 F1:溅射与 tier4/5 范围伤害的方向=中心→被击敌,
+  // 不用帧末弹位置——帧末弹已越过命中点,方向失真);直击缺省用弹速方向
+  applyHit(b, e, mult = 1, center = null) {
     const dmg = Math.round(b.rawDmg * mult);
     const r = e.hurt(dmg);
     this.log.push({ t: this.clock, ev: 'hit', el: b.el, tier: b.tier, dmg, mult, hpAfter: e.hp, killed: r.killed, target: this.enemies.indexOf(e) });
     if (r.killed) this.registerKill(e);
+    // 伤害冒字(v0.3 6.2a/6.4):N=本次结算实际 applied(致死溢出受剩余 HP 限制,enemy.hurt min(hp,dmg));
+    // 方向(6.3,REQ-M7-01 F1):溅射/范围=爆炸中心→被击敌;直击=弹速方向(makeBolt vx/vy 真实弹速)
+    const isSplash = mult !== 1 && b.splash;
+    this.floatEvent({
+      kind: isSplash ? 'splash' : 'dmg', x: e.x, y: e.y, n: r.applied, el: b.el,
+      fromAngle: center
+        ? Math.atan2(e.y - center.y, e.x - center.x)
+        : (typeof b.vx === 'number' || typeof b.vy === 'number' ? Math.atan2(b.vy || 0, b.vx == null ? -1 : b.vx) : null),
+      importance: isSplash ? 0 : 1,
+    });
     // 元素能力(4.3;灼烧刷新=覆盖 dpsFloat 并只延长 until,不重置跳伤时钟——4.4)
     // 有效攻击取发射时刻快照 b.atkEff(REQ-M6-04 F5:技能等级乘数覆盖命中时刻计算)
     const atkEff = b.atkEff ?? this.atk;
@@ -231,34 +259,56 @@ export class Battle {
     if (b.el === 'water') {
       e.slowT = Math.max(e.slowT, 2); // 减速 2s
       e.slowPct = SLOW_PCT[b.tier - 1]; // 幅度按档位(03 文档 4.3;M3 移动/弹速消费)
+      // 减速施加冒字:状态跃迁判定(03 文档 6.2b——首用/换源/增强才冒;逐帧续时/同幅刷新不冒)
+      if (markSlow(e, b.skillId || `${b.el}_bolt`, e.slowPct, 0)) {
+        this.floatEvent({ kind: 'slowMark', x: e.x, y: e.y, importance: 0 });
+      }
     }
     if (b.el === 'wood') {
       const heal = Math.round(dmg * LEECH_PCT[b.tier - 1] / 100);
+      const hpBefore = this.hp;
       this.hp = Math.min(this.maxHp, this.hp + heal);
+      const gained = this.hp - hpBefore;
       this.log.push({ t: this.clock, ev: 'leech', heal });
+      if (gained > 0) this.floatEvent({ kind: 'leech', x: PLAYER_X, y: 280, n: gained, importance: 1 }); // 实际回复,满血 0 不产(6.4)
     }
     if (b.el === 'earth') {
       const add = Math.round(atkEff * SHIELD_ATK[b.tier - 1]);
       const cap = Math.round(this.maxHp * 0.3);
+      const shBefore = this.shield;
       this.shield = Math.min(cap, this.shield + add);
+      const gained = this.shield - shBefore;
       this.log.push({ t: this.clock, ev: 'shield', add, shield: this.shield, cap });
+      if (gained > 0) this.floatEvent({ kind: 'shieldGain', x: PLAYER_X, y: 280, n: gained, importance: 1 }); // 实际增量,盾满 0 不产
     }
     return r;
   }
 
   // 主角受击:护盾先吸收,余量入 HP(03 文档第 3 节土行护盾语义;FR-1.4 失败判定)
-  hurtPlayer(dmg) {
+  // fromAngle:敌弹方向(受击冒字,REQ-M7-01 F1;缺省向上)
+  hurtPlayer(dmg, fromAngle = null) {
     if (this.invincibleT > 0) {
       this.log.push({ t: this.clock, ev: 'invincible_block', dmg });
+      this.floatEvent({ kind: 'immune', x: PLAYER_X, y: 280, importance: 2 }); // `免伤`(无敌;6.2a)
       return 0;
     }
+    const hpBefore = this.hp;
     const toShield = Math.min(this.shield, dmg);
     this.shield -= toShield;
     const rest = dmg - toShield;
     this.hp = Math.max(0, this.hp - rest);
+    const realDmg = hpBefore - this.hp; // 主角受击 N=结算前后 HP 差值(裁决 F3:hurtPlayer 返回伤害额非实扣)
     this.hurtT = 0.2;   // 受击闪白反馈
     this.shakeT = 0.12; // screenshake 4px/120ms(00 文档 3.1)
     this.log.push({ t: this.clock, ev: 'player_hurt', dmg, toShield, hp: this.hp });
+    // 受击冒字拆分(6.4;REQ-M7-01 F2 修正):**部分吸收**→`🛡N`+`-N` 并显;
+    // **完全吸收/实扣 0→仅 `免伤`**(不产 absorb);实扣>0 无盾→仅 `-N`
+    if (realDmg > 0) {
+      if (toShield > 0) this.floatEvent({ kind: 'absorb', x: PLAYER_X, y: 280, n: toShield, importance: 1 });
+      this.floatEvent({ kind: 'hurt', x: PLAYER_X, y: 280, n: realDmg, fromAngle, importance: 1 });
+    } else if (toShield > 0) {
+      this.floatEvent({ kind: 'immune', x: PLAYER_X, y: 280, importance: 2 });
+    }
     if (this.hp <= 0 && this.phase === PHASE.FIGHTING) {
       this.phase = PHASE.DEFEAT; // FR-1.4:失败不扣等级不扣解锁(D14,存档 M4 接)
       this.log.push({ t: this.clock, ev: 'defeat' });
@@ -308,7 +358,7 @@ export class Battle {
             const dx = e.x - cand.x, dy = e.y - cand.y;
             if (dx * dx + dy * dy <= b.blastR * b.blastR) {
               b.hitSet.add(e);
-              this.applyHit(b, e, 1);
+              this.applyHit(b, e, 1, cand); // 方向=爆炸中心(命中点)→被击敌(REQ-M7-01 F1)
             }
           }
         } else if (b.splash) {
@@ -318,7 +368,7 @@ export class Battle {
             const dx = e.x - cand.x, dy = e.y - cand.y;
             if (dx * dx + dy * dy <= 60 * 60) {
               b.hitSet.add(e);
-              this.applyHit(b, e, b.splash.mult);
+              this.applyHit(b, e, b.splash.mult, cand); // 方向=爆炸中心(命中点)→被溅射敌(REQ-M7-01 F1)
             }
           }
         }
@@ -326,17 +376,22 @@ export class Battle {
       }
     }
     this.bolts = this.bolts.filter(b => !b.done && b.x < 780);
-    // 2) 周期跳伤 + 状态生命周期(减速到期)+ 束缚 DOT(M4 行为内核)
+    // 2) 周期跳伤 + 状态生命周期(减速到期:slowT 归零清提示标记,重入可再提示)+ 束缚 DOT(M4 行为内核)
     for (const e of this.enemies) {
-      if (e.slowT > 0) e.slowT = Math.max(0, e.slowT - dt);
+      if (e.slowT > 0) {
+        e.slowT = Math.max(0, e.slowT - dt);
+        if (e.slowT === 0) { e.slowMarkSrc = null; e.slowMarkGen = 0; } // 失效清标记(6.2b 重入跃迁的前置)
+      }
       const burnDmg = e.tickBurn(prevClock, this.clock);
       const bindDmg = tickBind(e, prevClock, this.clock);
       if (burnDmg > 0) {
         this.log.push({ t: this.clock, ev: 'burn', hpAfter: e.hp });
+        this.floatEvent({ kind: 'burn', x: e.x, y: e.y, n: burnDmg, fromAngle: null, importance: 0 }); // 🔥N 每整秒(60fps 单帧至多跨 1 整秒;卡顿跨多跳时合并为合计一条)
         this.registerKill(e); // 幂等:合杀时另一路径已登记则跳过(REQ-M4-02 整改 F2)
       }
       if (bindDmg > 0) {
         this.log.push({ t: this.clock, ev: 'bind', hpAfter: e.hp });
+        this.floatEvent({ kind: 'bindDot', x: e.x, y: e.y, n: bindDmg, el: e.bindEl || 'wood', fromAngle: null, importance: 0 }); // 🌿N 每整秒(元素=绑定时刻 skill.el)
         this.registerKill(e); // 同上
       }
     }
@@ -371,7 +426,7 @@ export class Battle {
       advanceEnemyBolt(eb, dt);
       if (enemyBoltHitsPlayer(eb, PLAYER_X, 280)) {
         eb.done = true;
-        this.hurtPlayer(eb.dmg);
+        this.hurtPlayer(eb.dmg, Math.atan2(eb.vy, eb.vx)); // 受击冒字方向=敌弹方向(6.3,REQ-M7-01 F1)
       }
     }
     this.ebolts = this.ebolts.filter(b => !b.done && b.x > -40 && b.x < 780 && b.y > -40 && b.y < 490);

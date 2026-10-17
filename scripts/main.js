@@ -334,6 +334,11 @@ function boot() {
       // 再进入下方结算持久化(否则首关 Boss 同帧通关少记 240 币/20 材料)
       if (battle.coinsGained > coinsSeen) { profile.coins += battle.coinsGained - coinsSeen; coinsSeen = battle.coinsGained; }
       if (battle.matsGained > matsSeen) { profile.materials += battle.matsGained - matsSeen; matsSeen = battle.matsGained; }
+      // v0.3 伤害冒字(03 文档 6.5):**相位无关**转发(终局帧击杀/受击的冒字照常)——
+      // battle 事件队列→fx 层;fxEnabled=false 时事件照样排空仅不绘制(6.1 同步关闭口径)
+      for (const ev of battle.drainFloatTexts()) {
+        if (engine.fxEnabled) hud.fx.combatFloat(ev);
+      }
       // M4 FR-6:通关结算(解锁 L+1/写进度档/submitRun);失败不扣任何档内字段(D14)
       if ((battle.phase === 'VICTORY' || battle.phase === 'DEFEAT') && !victoryHandled) {
         // 终局即时清空(REQ-M6-05 F3,03 文档 4.0):池/预约/CD/临时状态立即归零,
