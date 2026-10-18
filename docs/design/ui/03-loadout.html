@@ -2,8 +2,48 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>线稿 03 · 备战界面</title>
+<title>线稿 03 · 备战界面（v2 重设计）</title>
 <link rel="stylesheet" href="wireframe.css">
+<style>
+/* ===== v2 交互演示 ===== */
+.wx { display:flex; align-items:center; justify-content:center; border-radius:50%; color:#333; font-weight:800; }
+.wx.fire { background:var(--wx-fire); } .wx.water { background:var(--wx-water); }
+.wx.wood { background:var(--wx-wood); } .wx.metal { background:var(--wx-metal); }
+.wx.earth { background:var(--wx-earth); }
+
+/* 槽位 */
+.slot { position:relative; width:140px; height:140px; border-radius:20px; background:var(--ai-bg-2nd);
+  border:3px dashed var(--ai-border); display:flex; align-items:center; justify-content:center; cursor:pointer;
+  box-shadow:var(--clay-inset); transition:transform .15s; }
+.slot:active { transform:scale(.95); }
+.slot.filled { border-style:solid; border-color:var(--ai-border); background:#fff; box-shadow:var(--clay-shadow-sm); }
+.slot .skill-icon { width:96px; height:96px; font-size:40px; }
+.slot .slot-tag { position:absolute; bottom:-38px; left:0; right:0; text-align:center; font-size:20px; font-weight:700; color:var(--ai-text-2nd); }
+
+/* tips 浮层 */
+.tips { position:absolute; display:none; z-index:30; width:420px; background:#fff; border:3px solid var(--ai-border);
+  border-radius:var(--radius); box-shadow:var(--clay-shadow); padding:20px 24px; font-size:22px; line-height:1.6; }
+.tips.show { display:block; animation:pop .18s ease-out; }
+.tips b { font-size:26px; }
+.tips .cd { color:var(--ai-text-2nd); font-size:20px; }
+@keyframes pop { from { transform:scale(.85); opacity:0; } to { transform:scale(1); opacity:1; } }
+
+/* 换装抽屉 */
+.drawer-mask { position:absolute; inset:0; background:var(--ai-mask); z-index:40; display:none; }
+.drawer { position:absolute; left:0; right:0; bottom:0; z-index:41; background:#fff; border-radius:var(--radius) var(--radius) 0 0;
+  padding:28px 32px 40px; display:none; box-shadow:0 -8px 24px rgba(61,52,40,.2); }
+.drawer-mask.show, .drawer.show { display:block; }
+.drawer.show { animation:slideup .25s ease-out; }
+@keyframes slideup { from { transform:translateY(100%); } to { transform:translateY(0); } }
+.drawer h3 { font-size:30px; margin-bottom:6px; }
+.drawer p { font-size:20px; color:var(--ai-text-2nd); margin-bottom:18px; }
+.dgrid { display:grid; grid-template-columns:repeat(5,1fr); gap:18px; }
+.dskill { display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; font-size:20px; font-weight:700; }
+.dskill .skill-icon { width:88px; height:88px; font-size:36px; }
+.dskill.locked { opacity:.4; pointer-events:none; }
+.dskill.sel .skill-icon { outline:4px solid var(--ai-primary); outline-offset:3px; }
+.skill-icon { display:flex; align-items:center; justify-content:center; border-radius:50%; color:#333; font-weight:800; }
+</style>
 </head>
 <body>
 
@@ -16,83 +56,106 @@
     <div class="chip" style="background:#fff;">Lv.12</div>
   </div>
 
-  <!-- 主角面板 -->
-  <div style="position:absolute;left:32px;top:140px;width:400px;height:330px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:20px;">
-    <div class="ph" style="width:160px;height:270px;float:left;margin-right:20px;">主角<br>立绘<br>player<br>idle</div>
-    <div style="font-size:30px;font-weight:900;">赤狐 · Lv.12</div>
-    <div style="font-size:24px;margin-top:10px;">HP <b>265</b> / 265</div>
-    <div class="bar hp" style="margin-top:8px;"><i style="width:100%"></i></div>
-    <div style="font-size:24px;margin-top:14px;">ATK <b>21</b></div>
-    <div style="font-size:22px;color:var(--ai-text-2nd);margin-top:14px;line-height:1.5;">升级：Lv.12 → 13<br>还需 682 经验</div>
-  </div>
-
-  <!-- 出战信息 -->
-  <div style="position:absolute;left:460px;top:140px;right:32px;height:352px;background:var(--ai-bg-2nd);border:3px solid var(--ai-border);border-radius:var(--radius);padding:20px;">
-    <div style="font-size:28px;font-weight:900;">出战信息</div>
-    <div style="font-size:20px;line-height:1.35;margin-top:10px;">
-      关卡：第 4 关 · 雾隐山道<br>
-      波次：10 波，第 10 波为关底 Boss<br>
-      敌人：slime / fox / zombie /<br>
-      　　　snake / tiger<br>
-      建议等级：Lv.30+
-    </div>
-    <div class="chip" style="margin-top:10px;font-size:20px;">⚠ 等级低于建议</div>
-  </div>
-
-  <!-- 4 装配槽（D6） -->
-  <div style="position:absolute;left:32px;top:500px;right:32px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);padding:20px 24px;">
-    <div style="font-size:28px;font-weight:900;margin-bottom:16px;">技能装配 <span style="font-size:22px;color:var(--ai-text-2nd);font-weight:400;">（4 槽 · 点击槽位从下方技能库更换）</span></div>
-    <div style="display:flex;gap:20px;justify-content:space-between;">
-      <div class="wx fire" style="width:120px;height:120px;font-size:26px;flex-direction:column;">火<div style="font-size:18px;font-weight:700;">火弹</div></div>
-      <div class="wx water" style="width:120px;height:120px;font-size:26px;flex-direction:column;">水<div style="font-size:18px;font-weight:700;">寒冰锁链</div></div>
-      <div class="wx wood" style="width:120px;height:120px;font-size:26px;flex-direction:column;">木<div style="font-size:18px;font-weight:700;">藤蔓束缚</div></div>
-      <div class="wx earth" style="width:120px;height:120px;font-size:26px;flex-direction:column;">土<div style="font-size:18px;font-weight:700;">石甲术</div></div>
-    </div>
-  </div>
-  <div class="callout" style="left:10px;top:530px;">装配槽 120×120<br>五行色圆底 + 技能名<br>对应联动栏 4 图标</div>
-
-  <!-- 技能库列表 -->
-  <div style="position:absolute;left:32px;top:800px;right:32px;bottom:150px;overflow:hidden;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);padding:20px 24px;">
-    <div style="font-size:28px;font-weight:900;margin-bottom:14px;">技能库 <span style="font-size:22px;color:var(--ai-text-2nd);font-weight:400;">（Lv 解锁 · 灰=未解锁）</span></div>
-    <div style="display:flex;flex-direction:column;gap:12px;font-size:23px;">
-      <div style="display:flex;gap:16px;align-items:center;border:2px solid var(--ai-border-light);border-radius:var(--radius-sm);padding:10px 16px;">
-        <div class="wx metal" style="width:56px;height:56px;font-size:22px;">金</div>
-        <div style="flex:1;"><b>金弹</b> · 穿透 ×1.3 <span style="color:var(--ai-text-2nd);font-size:20px;">｜CD 2.0s｜Lv1</span></div>
-        <div class="btn ghost" style="width:110px;height:56px;font-size:22px;">装配</div>
-      </div>
-      <div style="display:flex;gap:16px;align-items:center;border:2px solid var(--ai-border-light);border-radius:var(--radius-sm);padding:10px 16px;">
-        <div class="wx metal" style="width:56px;height:56px;font-size:22px;">金</div>
-        <div style="flex:1;"><b>贯日连珠</b> · 3 发各 ×0.7 <span style="color:var(--ai-text-2nd);font-size:20px;">｜CD 4.0s｜Lv3</span></div>
-        <div class="btn ghost" style="width:110px;height:56px;font-size:22px;">装配</div>
-      </div>
-      <div style="display:flex;gap:16px;align-items:center;border:2px solid var(--ai-border-light);border-radius:var(--radius-sm);padding:10px 16px;opacity:.55;">
-        <div class="wx earth" style="width:56px;height:56px;font-size:22px;">土</div>
-        <div style="flex:1;"><b>召唤类技能</b> · 预留扩展位 <span style="color:var(--ai-text-2nd);font-size:20px;">｜Lv10+｜原型期未开放</span></div>
-        <div class="btn disabled" style="width:110px;height:56px;font-size:22px;">🔒</div>
-      </div>
-      <div class="ph" style="height:90px;">↓ 更多技能（纵向滚动，15 技能池见 03 文档 5.2）</div>
+  <!-- 主角面板（v2：只留战斗概览，升级细节归养成面板） -->
+  <div style="position:absolute;left:32px;top:140px;width:656px;height:300px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:24px;display:flex;gap:24px;">
+    <div class="ph" style="width:200px;height:250px;flex:none;">主角<br>立绘<br>player<br>idle</div>
+    <div style="flex:1;padding-top:8px;">
+      <div style="font-size:32px;font-weight:900;">赤狐 · Lv.12</div>
+      <div style="font-size:24px;margin-top:16px;">HP <b>265</b> / 265</div>
+      <div class="bar hp" style="margin-top:8px;"><i style="width:100%"></i></div>
+      <div style="font-size:24px;margin-top:18px;">ATK <b>21</b></div>
+      <div style="font-size:21px;color:var(--ai-text-2nd);margin-top:18px;">升级 / 技能升级 / 抽卡 → 养成面板</div>
     </div>
   </div>
 
-  <!-- 出战按钮 -->
-  <div class="btn" style="position:absolute;left:160px;top:1140px;width:400px;height:110px;font-size:38px;">出 战</div>
+  <!-- 出战信息（v2：横向窄卡，敌人中文名 chips） -->
+  <div style="position:absolute;left:32px;top:470px;width:656px;height:150px;background:var(--ai-bg-2nd);border:3px solid var(--ai-border);border-radius:var(--radius);padding:22px 28px;">
+    <div style="font-size:28px;font-weight:900;">出战信息 <span style="font-size:21px;font-weight:400;color:var(--ai-text-2nd);">第 4 关 · 雾隐山道</span></div>
+    <div style="display:flex;gap:14px;margin-top:16px;flex-wrap:wrap;">
+      <div class="chip" style="background:#fff;font-size:21px;">10 波 · 末波 Boss</div>
+      <div class="chip" style="background:#fff;font-size:21px;">敌人：幽灵 狐妖 僵尸 蛇妖 虎妖</div>
+      <div class="chip" style="background:#fff;font-size:21px;color:var(--ai-error);">建议 Lv.30+</div>
+    </div>
+  </div>
+  <div class="callout" style="left:10px;top:490px;">v2 精简：升级细节移养成，<br>敌人改中文名 chips</div>
+
+  <!-- 技能装配 4 槽（v2：更大更醒目，单击图标出 tips，点槽位换装） -->
+  <div style="position:absolute;left:32px;top:660px;width:656px;height:330px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);padding:26px 28px;">
+    <div style="font-size:28px;font-weight:900;margin-bottom:48px;">技能装配 <span style="font-size:21px;color:var(--ai-text-2nd);font-weight:400;">（点图标看说明 · 点槽位换技能）</span></div>
+    <div style="display:flex;gap:32px;justify-content:space-between;">
+      <div class="slot filled" data-skill="fire"><div class="wx fire skill-icon">火</div><div class="slot-tag">火弹</div></div>
+      <div class="slot filled" data-skill="chain"><div class="wx water skill-icon">水</div><div class="slot-tag">寒冰锁链</div></div>
+      <div class="slot filled" data-skill="bind"><div class="wx wood skill-icon">木</div><div class="slot-tag">藤蔓束缚</div></div>
+      <div class="slot filled" data-skill="shield"><div class="wx earth skill-icon">土</div><div class="slot-tag">石甲术</div></div>
+    </div>
+  </div>
+  <div class="callout" style="left:10px;top:700px;">槽位 140×140（原 120）<br>技能库列表已移除<br>换装=点槽位弹底部抽屉</div>
+
+  <!-- 出战按钮（v2 上移：库区移除后空间释放） -->
+  <div class="btn" style="position:absolute;left:160px;top:1050px;width:400px;height:120px;font-size:40px;">出 战</div>
+
+  <!-- 技能 tips 浮层（点装配槽图标显示；点其它区域关闭） -->
+  <div class="tips" id="tips" style="left:56px;top:540px;"></div>
+
+  <!-- 换装抽屉 -->
+  <div class="drawer-mask" id="mask"></div>
+  <div class="drawer" id="drawer">
+    <h3>更换技能</h3>
+    <p>点选替换当前槽位（灰 = 等级未解锁）</p>
+    <div class="dgrid">
+      <div class="dskill sel"><div class="wx fire skill-icon">火</div>火弹</div>
+      <div class="dskill"><div class="wx metal skill-icon">金</div>金弹</div>
+      <div class="dskill"><div class="wx water skill-icon">水</div>水弹</div>
+      <div class="dskill locked"><div class="wx earth skill-icon">土</div>地裂波</div>
+      <div class="dskill locked"><div class="wx wood skill-icon">木</div>荆棘环</div>
+      <div class="dskill"><div class="wx fire skill-icon">火</div>灼烧领域</div>
+      <div class="dskill locked"><div class="wx metal skill-icon">金</div>万剑归宗</div>
+      <div class="dskill locked"><div class="wx water skill-icon">水</div>寒潮脉冲</div>
+    </div>
+    <div class="btn ghost" style="position:absolute;right:32px;top:24px;width:120px;height:64px;font-size:24px;" onclick="closeDrawer()">关闭</div>
+  </div>
 </div>
 </div>
 
-<div style="max-width:420px;font-size:15px;line-height:1.8;">
-  <h2 style="color:#794f27;">03 · 备战界面</h2>
-  <p><b>职责：</b>装配管理（FR-3.3，D6 4 槽）+ 出战确认。</p>
+<div style="max-width:420px;font-size:15px;line-height:1.9;">
+  <h2 style="color:#794f27;">03 · 备战界面 v2（重设计）</h2>
   <ul style="padding-left:20px;">
-    <li>主角面板：立绘 + 等级/HP/ATK + 升级缺口（读 profile）</li>
-    <li>出战信息：目标关卡的波次/敌编成/建议等级；低于建议给警告 chip（不禁止出战）</li>
-    <li>装配槽 4 个：五行色圆底 = 联动栏图标同源；点击槽位 → 弹技能库选择</li>
-    <li>技能库：全部 15 技能，未解锁灰显 + 显示解锁等级；已装配标记防重复装配</li>
-    <li>换装立即写 <code>ssww.profile.loadout</code>（FR-8）</li>
+    <li><b>技能库列表移除</b>——15 技能池不再平铺在备战页</li>
+    <li><b>技能 tips 改单击图标显示</b>：点装配槽图标弹浮层（名称/CD/等级/效果说明），点其它区域关闭（本样板可直接试）</li>
+    <li><b>换装=点槽位</b>：底部抽屉弹已解锁技能网格，点选即替换（样板按住 Shift 点槽位演示抽屉）</li>
+    <li>主角面板只留 HP/ATK 概览，升级细节归养成面板</li>
+    <li>出战信息横向窄卡：敌人中文名 chips（幽灵/狐妖/僵尸/蛇妖/虎妖）</li>
+    <li>出战按钮上移至 1050px，下方留白呼吸感</li>
   </ul>
 </div>
 
 <script>
-/* #fit=WxH：仅保留第一个 .phone 并等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
+// 演示交互：点图标→tips；Shift+点槽位→抽屉（区分两种意图；实现时可用长按/双击或拖拽细分）
+const tips = document.getElementById('tips');
+const drawer = document.getElementById('drawer');
+const mask = document.getElementById('mask');
+const TIPS = {
+  fire: '<b>🔥 火弹 <span class="cd">｜CD 2.0s｜Lv.2</span></b><div style="margin-top:8px;">发射一枚火弹，造成 130% ATK 火焰伤害。消除火元素越多伤害越高。</div>',
+  chain: '<b>❄️ 寒冰锁链 <span class="cd">｜CD 4.0s｜Lv.1</span></b><div style="margin-top:8px;">连锁弹射 3 名敌人，各受 80% ATK 水属性伤害并减速 30%，持续 2 秒。</div>',
+  bind: '<b>🌿 藤蔓束缚 <span class="cd">｜CD 5.0s｜Lv.1</span></b><div style="margin-top:8px;">束缚最近敌人 1.5 秒，附加每 0.5 秒 25% ATK 的持续伤害。</div>',
+  shield: '<b>🛡️ 石甲术 <span class="cd">｜CD 8.0s｜Lv.1</span></b><div style="margin-top:8px;">获得等同于 60% 最大 HP 的护盾，持续 6 秒；护盾存在期间免疫击退。</div>',
+};
+document.querySelectorAll('.slot').forEach(slot => {
+  slot.addEventListener('click', (e) => {
+    const id = slot.dataset.skill;
+    if (e.shiftKey) { openDrawer(); return; }
+    tips.innerHTML = TIPS[id];
+    tips.classList.add('show');
+  });
+});
+document.addEventListener('click', (e) => {
+  if (!tips.contains(e.target) && !e.target.closest('.slot')) tips.classList.remove('show');
+});
+function openDrawer() { drawer.classList.add('show'); mask.classList.add('show'); }
+function closeDrawer() { drawer.classList.remove('show'); mask.classList.remove('show'); }
+mask.addEventListener('click', closeDrawer);
+
+/* #fit=WxH：等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
 (function(){
   const m = location.hash.match(/fit=(\d+)x(\d+)/);
   if (!m) return;

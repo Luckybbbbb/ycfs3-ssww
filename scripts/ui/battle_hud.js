@@ -143,56 +143,59 @@ export class BattleHudView {
 
   draw(ctx, hud) {
     const s = this._snapshot(hud);
+    // 需求方 2026-10-19:战斗区顶部新增货币栏条带(0~TOPBAR_H),战斗区 HUD 整体下移,
+    // 与该条带不再重叠。TOPBAR_H 与 render.js 中的战斗区货币栏条带高度保持一致。
+    const TOPBAR_H = 44;
     // ===== 左上角:头像+头像框 =====
     // 需求方 2026-10-18 反馈:专用生图头像与主角立绘发色不符「不太像」——
     // 改为立绘裁头部(与喊话演出同一形象,发色/帽饰完全一致);ui:hero_avatar 已移出清单
     const hero = hud.heroImg;
     if (hero && hero.complete && hero.naturalWidth) {
       ctx.save();
-      ctx.beginPath(); ctx.arc(52, 52, 36, 0, Math.PI * 2); ctx.clip();
-      ctx.drawImage(hero, 160, 40, 320, 320, 16, 16, 72, 72);
+      ctx.beginPath(); ctx.arc(52, 52 + TOPBAR_H, 36, 0, Math.PI * 2); ctx.clip();
+      ctx.drawImage(hero, 160, 40, 320, 320, 16, 16 + TOPBAR_H, 72, 72);
       ctx.restore();
     }
     const av = HUD_IMG.avatarFrame;
-    if (av && av.complete && av.naturalWidth) ctx.drawImage(av, 16, 16, 72, 72);
-    else { ctx.strokeStyle = '#f0e8d8'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(52, 52, 34, 0, Math.PI * 2); ctx.stroke(); }
+    if (av && av.complete && av.naturalWidth) ctx.drawImage(av, 16, 16 + TOPBAR_H, 72, 72);
+    else { ctx.strokeStyle = '#f0e8d8'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(52, 52 + TOPBAR_H, 34, 0, Math.PI * 2); ctx.stroke(); }
     // 血条(主条+残影)+ 数值
-    this.hero.draw(ctx, 96, 46, 128, 22);
+    this.hero.draw(ctx, 96, 46 + TOPBAR_H, 128, 22);
     ctx.fillStyle = '#fff';
     ctx.font = "13px 'Nunito','Noto Sans SC',sans-serif";
     ctx.textAlign = 'center';
-    ctx.fillText(`${Math.max(0, Math.ceil(s.hp))}/${s.maxHp}`, 160, 62);
+    ctx.fillText(`${Math.max(0, Math.ceil(s.hp))}/${s.maxHp}`, 160, 62 + TOPBAR_H);
     ctx.textAlign = 'left';
     // 护盾条(需求方 2026-10-18:原血条下蓝条=earth_shield 护盾值,补回;有盾才画)
     if (s.shield > 0) {
       ctx.fillStyle = 'rgba(0,0,0,.25)';
-      _rr(ctx, 94, 71, 132, 12, 5); ctx.fill();
+      _rr(ctx, 94, 71 + TOPBAR_H, 132, 12, 5); ctx.fill();
       ctx.fillStyle = '#8fd3e8';
-      _rr(ctx, 96, 73, Math.max(0, 128 * Math.min(1, s.shield / s.shieldCap)), 8, 4); ctx.fill();
+      _rr(ctx, 96, 73 + TOPBAR_H, Math.max(0, 128 * Math.min(1, s.shield / s.shieldCap)), 8, 4); ctx.fill();
     }
     // 等级标识(头像右上角小徽标,替代 demo 的 Lv.6 文字条)
     ctx.fillStyle = 'rgba(248,248,240,.94)';
-    _rr(ctx, 96, 18, 64, 22, 8); ctx.fill();
+    _rr(ctx, 96, 18 + TOPBAR_H, 64, 22, 8); ctx.fill();
     ctx.fillStyle = '#794f27';
     ctx.font = "13px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(`Lv.${s.profileLv}`, 104, 34);
+    ctx.fillText(`Lv.${s.profileLv}`, 104, 34 + TOPBAR_H);
 
     // ===== 顶部中央:关卡名 =====
     ctx.fillStyle = 'rgba(248,248,240,.94)';
-    _rr(ctx, 236, 16, 248, 40, 14); ctx.fill();
+    _rr(ctx, 236, 16 + TOPBAR_H, 248, 40, 14); ctx.fill();
     ctx.fillStyle = '#794f27';
     ctx.font = "17px 'Nunito','Noto Sans SC',sans-serif";
     ctx.textAlign = 'center';
-    ctx.fillText(`第 ${s.level} 关 ${hud.levelName ? hud.levelName() : ''}`, 360, 42);
+    ctx.fillText(`第 ${s.level} 关 ${hud.levelName ? hud.levelName() : ''}`, 360, 42 + TOPBAR_H);
     ctx.textAlign = 'left';
 
     // ===== BOSS 血条:关卡名下方,仅 Boss 波(需求方 2026-10-18:非 Boss 波不显示) =====
     if (s.isBossWave && s.bossMax > 0) {
-      this.boss.draw(ctx, 220, 80, 280, 26);
+      this.boss.draw(ctx, 220, 80 + TOPBAR_H, 280, 26);
       ctx.fillStyle = '#fff';
       ctx.font = "14px 'Nunito','Noto Sans SC',sans-serif";
       ctx.textAlign = 'center';
-      ctx.fillText(`BOSS  ${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`, 360, 99);
+      ctx.fillText(`BOSS  ${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`, 360, 99 + TOPBAR_H);
       ctx.textAlign = 'left';
     }
 

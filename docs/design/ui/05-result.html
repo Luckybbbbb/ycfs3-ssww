@@ -2,91 +2,248 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>线稿 05 · 结算（胜利 / 失败）</title>
+<title>线稿 05 · 结算（胜利 / 失败 · 动效音效演示版）</title>
 <link rel="stylesheet" href="wireframe.css">
+<style>
+/* ===== 结算动效（时间轴口径见页尾说明；Canvas 实装按同一拍点） ===== */
+.overlay { position:absolute; inset:0; opacity:0; transition:opacity .25s; }
+.overlay.on { opacity:1; }
+
+/* 横幅：胜利 spring 弹入（0.6→1.1→1 overshoot）；失败缓慢淡入+下沉 */
+.banner { opacity:0; }
+.phone-inner.play .banner.win {
+  animation:bannerPop .55s cubic-bezier(.34,1.56,.64,1) .35s forwards;
+}
+.phone-inner.play .banner.lose {
+  animation:bannerLose .6s ease-out .35s forwards;
+}
+@keyframes bannerPop {
+  0% { opacity:0; transform:scale(.6); }
+  60% { opacity:1; transform:scale(1.1); }
+  100% { opacity:1; transform:scale(1); }
+}
+@keyframes bannerLose {
+  0% { opacity:0; transform:translateY(-24px); }
+  100% { opacity:.92; transform:translateY(0); }
+}
+
+/* 统计行 stagger：每行延迟由 JS 设 --d */
+.rrow { opacity:0; transform:translateX(-28px); }
+.phone-inner.play .rrow { animation:rowIn .32s ease-out forwards; animation-delay:var(--d); }
+@keyframes rowIn { to { opacity:1; transform:translateX(0); } }
+
+/* 按钮/结尾元素弹入 */
+.late { opacity:0; transform:scale(.85); }
+.phone-inner.play .late { animation:lateIn .3s ease-out forwards; animation-delay:var(--d, 1.3s); }
+@keyframes lateIn { to { opacity:1; transform:scale(1); } }
+
+/* 胜利彩带：五行色纸屑（JS 生成，落 1.6~2.6s） */
+.confetti { position:absolute; top:-24px; width:14px; height:20px; border-radius:3px; z-index:25;
+  animation:fall var(--t) linear var(--dl) forwards; opacity:0; }
+@keyframes fall {
+  0% { opacity:1; transform:translateY(0) rotate(0) rotateY(0); }
+  100% { opacity:.9; transform:translateY(1320px) rotate(720deg) rotateY(540deg); }
+}
+
+/* 失败态整体降饱和渐入 */
+.phone-inner.lose-dim .phone-stage { filter:saturate(.65) brightness(.97); transition:filter .8s .3s; }
+.phone-inner.lose-dim.play .phone-stage { filter:saturate(.65) brightness(.97); }
+.phone-stage { transition:filter .8s; }
+
+/* 演示控制条 */
+.demo-bar { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:99; display:flex; gap:10px; }
+.demo-bar button { font-family:var(--font); font-size:14px; padding:6px 14px; border:2px solid var(--ai-border);
+  border-radius:12px; background:#fff; cursor:pointer; color:var(--ai-text); font-weight:700; }
+.num { display:inline-block; min-width:2ch; }
+</style>
 </head>
 <body>
 
+<div class="demo-bar">
+  <button onclick="replay()">▶ 重播动效</button>
+  <button id="muteBtn" onclick="toggleMute()">🔊 音效开</button>
+</div>
+
 <!-- ===== 胜利态 ===== -->
 <div class="phone">
-<div class="phone-inner" style="background:linear-gradient(#e8f6e0 0 40%, #f8f8f0 40% 100%);">
-  <!-- 背景遮罩上的战斗画面剪影 -->
+<div class="phone-inner" id="win">
+<div class="phone-stage" style="position:absolute;inset:0;background:linear-gradient(#e8f6e0 0 40%, #f8f8f0 40% 100%);">
+  <!-- 战斗画面定格剪影 -->
   <div style="position:absolute;inset:0;background:rgba(248,248,240,.55);"></div>
+  <div class="overlay" id="winOverlay" style="background:rgba(232,246,224,.4);"></div>
 
-  <div style="position:absolute;left:90px;top:130px;width:540px;height:150px;background:var(--ai-success);border-radius:var(--radius);box-shadow:var(--clay-shadow);display:flex;align-items:center;justify-content:center;color:#fff;font-size:64px;font-weight:900;letter-spacing:12px;border:4px solid rgba(255,255,255,.6);">通 关 ！</div>
-  <div class="callout" style="left:650px;top:150px;">胜利横幅<br>success 绿 + 彩带粒子</div>
+  <div class="banner win" style="position:absolute;left:90px;top:130px;width:540px;height:150px;background:var(--ai-success);border-radius:var(--radius);box-shadow:var(--clay-shadow);display:flex;align-items:center;justify-content:center;color:#fff;font-size:64px;font-weight:900;letter-spacing:12px;border:4px solid rgba(255,255,255,.6);">通 关 ！</div>
 
   <!-- 经验结算卡 -->
   <div style="position:absolute;left:60px;top:340px;width:600px;height:580px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:24px;">
     <div style="font-size:30px;font-weight:900;text-align:center;">第 3 关 · 结算</div>
-    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:14px;"><span>击杀敌人</span><b>129 只</b></div>
-    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:12px;"><span>最高连锁</span><b>×4</b></div>
-    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:12px;"><span>击杀经验累计</span><b>+4226 exp</b></div>
-    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:12px;"><span>通关奖励（50×3）</span><b>+150 exp</b></div>
-    <div style="border-top:2px dashed var(--ai-border);margin-top:16px;padding-top:16px;">
+    <div class="rrow" style="--d:.70s;display:flex;justify-content:space-between;font-size:26px;margin-top:14px;"><span>击杀敌人</span><b><span class="num" data-to="129">0</span> 只</b></div>
+    <div class="rrow" style="--d:.83s;display:flex;justify-content:space-between;font-size:26px;margin-top:12px;"><span>最高连锁</span><b>×<span class="num" data-to="4">0</span></b></div>
+    <div class="rrow" style="--d:.96s;display:flex;justify-content:space-between;font-size:26px;margin-top:12px;"><span>击杀经验累计</span><b>+<span class="num" data-to="4226">0</span> exp</b></div>
+    <div class="rrow" style="--d:1.09s;display:flex;justify-content:space-between;font-size:26px;margin-top:12px;color:var(--ai-warning);"><span style="color:var(--ai-text);">通关奖励（50×3）</span><b>+<span class="num" data-to="150">0</span> exp</b></div>
+    <div class="rrow" style="--d:1.22s;border-top:2px dashed var(--ai-border);margin-top:16px;padding-top:16px;">
       <div style="display:flex;justify-content:space-between;font-size:28px;"><span><b>Lv.12 → 16</b></span><b style="color:var(--ai-warning);">连升 4 级</b></div>
       <div class="bar exp" style="margin-top:12px;"><i style="width:31%"></i></div>
-      <div style="font-size:20px;color:var(--ai-text-2nd);margin-top:8px;">升级回满 HP · 共得 4376，扣 831/937/1048/1162 → Lv.16 余 398 · 距 Lv.17 还需 882（条 31%）</div>
+      <div style="font-size:20px;color:var(--ai-text-2nd);margin-top:8px;">升级回满 HP · 距 Lv.17 还需 882（条 31%）</div>
     </div>
-    <div class="ph" style="height:56px;margin-top:14px;font-size:22px;">升级动效占位（金光 / 弹跳）</div>
+    <div class="late" style="--d:1.35s;margin-top:14px;"><div class="ph" style="height:56px;font-size:22px;">升级动效占位（金光 / Lv 徽章弹跳）</div></div>
   </div>
 
   <!-- 解锁提示 -->
-  <div style="position:absolute;left:150px;top:950px;" class="chip">🎉 解锁第 4 关 · 雾隐山道</div>
+  <div class="late" style="--d:1.45s;position:absolute;left:150px;top:950px;" ><div class="chip">🎉 解锁第 4 关 · 雾隐山道</div></div>
 
   <!-- 按钮组 -->
-  <div class="btn" style="position:absolute;left:110px;top:1010px;width:500px;height:110px;font-size:36px;">下一关 ▶</div>
-  <div class="btn ghost" style="position:absolute;left:110px;top:1140px;width:240px;height:90px;font-size:28px;">重打本关</div>
-  <div class="btn ghost" style="position:absolute;left:370px;top:1140px;width:240px;height:90px;font-size:28px;">返回选关</div>
+  <div class="late" style="--d:1.55s;position:absolute;left:110px;top:1010px;width:500px;height:110px;"><div class="btn" style="width:100%;height:100%;font-size:36px;">下一关 ▶</div></div>
+  <div class="late" style="--d:1.65s;position:absolute;left:110px;top:1140px;width:240px;height:90px;"><div class="btn ghost" style="width:100%;height:100%;font-size:28px;">重打本关</div></div>
+  <div class="late" style="--d:1.70s;position:absolute;left:370px;top:1140px;width:240px;height:90px;"><div class="btn ghost" style="width:100%;height:100%;font-size:28px;">返回选关</div></div>
+
+  <!-- 彩带容器（JS 填充） -->
+  <div id="confettiBox" style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"></div>
+</div>
 </div>
 </div>
 
-<div style="max-width:420px;font-size:15px;line-height:1.8;">
-  <h2 style="color:#794f27;">05 · 结算（胜利态）</h2>
+<div style="max-width:420px;font-size:15px;line-height:1.9;">
+  <h2 style="color:#794f27;">05 · 结算 · 胜利态（动效时间轴）</h2>
   <ul style="padding-left:20px;">
-    <li>半透明遮罩盖在定格的战斗画面上</li>
-    <li>统计行逐条浮现（击杀/最高连锁/奖励），数字滚动</li>
-    <li>升级段独立区块：Lv 徽章弹跳 + 金光动效占位</li>
-    <li>主按钮「下一关」；已通关卡可「重打本关」刷级（D14）</li>
-    <li>解锁提示 chip：通关 L → 解锁 L+1（FR-6）</li>
-    <li>结算同时写档：<code>unlockedLevel</code> / <code>exp</code></li>
+    <li><b>0.00s</b> 遮罩淡入 0.25s（战斗定格）——终局后延迟 0.5s 再弹结算，留「杀死 Boss」的余韵</li>
+    <li><b>0.35s</b> 横幅 spring 弹入（0.6→1.1→1，overshoot）；落地帧配 thump 低音+轻震屏</li>
+    <li><b>0.70s~1.22s</b> 统计行逐条左滑入（间隔 130ms），数字滚动计数（经验行滚动配上行音阶 tick）</li>
+    <li><b>0.8s</b> 五行色彩带 ~120 粒顶部落下（仅胜利）</li>
+    <li><b>1.55s</b> 按钮组弹入并变为可点；<b>全程任意点按 = 跳过动画直达可操作态</b>（重复刷关不强制看）</li>
+    <li>音效：胜利号角上行琶音（C-E-G-C）+ 彩带哗啦；结算音乐随遮罩淡入</li>
   </ul>
 </div>
 
 <!-- ===== 失败态 ===== -->
 <div class="phone">
-<div class="phone-inner" style="background:linear-gradient(#f3e2e0 0 40%, #f8f8f0 40% 100%);">
+<div class="phone-inner lose-dim" id="lose">
+<div class="phone-stage" style="position:absolute;inset:0;background:linear-gradient(#f3e2e0 0 40%, #f8f8f0 40% 100%);">
   <div style="position:absolute;inset:0;background:rgba(248,248,240,.6);"></div>
+  <div class="overlay" id="loseOverlay" style="background:rgba(243,226,224,.4);"></div>
 
-  <div style="position:absolute;left:90px;top:130px;width:540px;height:150px;background:var(--ai-error);border-radius:var(--radius);box-shadow:var(--clay-shadow);display:flex;align-items:center;justify-content:center;color:#fff;font-size:64px;font-weight:900;letter-spacing:12px;border:4px solid rgba(255,255,255,.6);">战 败</div>
+  <div class="banner lose" style="position:absolute;left:90px;top:130px;width:540px;height:150px;background:var(--ai-error);border-radius:var(--radius);box-shadow:var(--clay-shadow);display:flex;align-items:center;justify-content:center;color:#fff;font-size:64px;font-weight:900;letter-spacing:12px;border:4px solid rgba(255,255,255,.6);opacity:.92;">战 败</div>
 
   <div style="position:absolute;left:60px;top:340px;width:600px;height:430px;background:#fff;border:3px solid var(--ai-border);border-radius:var(--radius);box-shadow:var(--clay-shadow-sm);padding:24px;">
     <div style="font-size:30px;font-weight:900;text-align:center;">第 4 关 · 第 6 波</div>
-    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:20px;"><span>本局击杀</span><b>53 只</b></div>
-    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:14px;"><span>本局获得经验</span><b>+1884 exp（保留）</b></div>
-    <div style="display:flex;justify-content:space-between;font-size:26px;margin-top:14px;"><span>剩余主角 HP</span><b style="color:var(--ai-error);">0</b></div>
-    <div class="ph" style="height:110px;margin-top:20px;font-size:24px;">鼓励文案占位<br>（「练到 Lv.14 再来挑战！」）</div>
-    <div style="font-size:22px;color:var(--ai-text-2nd);margin-top:14px;">失败无惩罚：等级/经验/解锁全部保留（D14）</div>
+    <div class="rrow" style="--d:.70s;display:flex;justify-content:space-between;font-size:26px;margin-top:20px;"><span>本局击杀</span><b><span class="num" data-to="53">0</span> 只</b></div>
+    <div class="rrow" style="--d:.83s;display:flex;justify-content:space-between;font-size:26px;margin-top:14px;"><span>本局获得经验</span><b>+<span class="num" data-to="1884">0</span> exp（保留）</b></div>
+    <div class="rrow" style="--d:.96s;display:flex;justify-content:space-between;font-size:26px;margin-top:14px;"><span>剩余主角 HP</span><b style="color:var(--ai-error);">0</b></div>
+    <div class="late" style="--d:1.2s;margin-top:20px;"><div class="ph" style="height:110px;font-size:24px;">鼓励文案占位（「练到 Lv.14 再来挑战！」）</div></div>
+    <div class="late" style="--d:1.3s;font-size:22px;color:var(--ai-text-2nd);margin-top:14px;">失败无惩罚：等级/经验/解锁全部保留（D14）</div>
   </div>
 
-  <div class="btn" style="position:absolute;left:110px;top:870px;width:500px;height:110px;font-size:36px;">再战一次</div>
-  <div class="btn ghost" style="position:absolute;left:110px;top:1000px;width:240px;height:90px;font-size:28px;">去备战</div>
-  <div class="btn ghost" style="position:absolute;left:370px;top:1000px;width:240px;height:90px;font-size:28px;">返回选关</div>
+  <div class="late" style="--d:1.3s;position:absolute;left:110px;top:870px;width:500px;height:110px;"><div class="btn" style="width:100%;height:100%;font-size:36px;">再战一次</div></div>
+  <div class="late" style="--d:1.4s;position:absolute;left:110px;top:1000px;width:240px;height:90px;"><div class="btn ghost" style="width:100%;height:100%;font-size:28px;">去备战</div></div>
+  <div class="late" style="--d:1.45s;position:absolute;left:370px;top:1000px;width:240px;height:90px;"><div class="btn ghost" style="width:100%;height:100%;font-size:28px;">返回选关</div></div>
+</div>
 </div>
 </div>
 
-<div style="max-width:420px;font-size:15px;line-height:1.8;">
-  <h2 style="color:#794f27;">05 · 结算（失败态）</h2>
+<div style="max-width:420px;font-size:15px;line-height:1.9;">
+  <h2 style="color:#794f27;">05 · 结算 · 失败态</h2>
   <ul style="padding-left:20px;">
-    <li>失败横幅用 error 红；底色偏暖灰</li>
-    <li>「本局获得经验（保留）」明示宽松取向，降低挫败</li>
-    <li>鼓励文案可读取「距建议等级差距」动态生成</li>
-    <li>主按钮「再战一次」（从本关第 1 波重来）；「去备战」跳 03 调整装配</li>
+    <li><b>无彩带</b>——彩带是胜利专属情绪符号；失败改用整体降饱和（saturate .65）缓入</li>
+    <li>横幅缓慢淡入下沉（不弹跳——失败不庆祝），音效下行两音（A3→E3）低沉短促，<b>时长 &lt;0.8s 快速给「再战」路径</b></li>
+    <li>「经验（保留）」+ 鼓励文案降低挫败；主按钮「再战一次」最大且最先可点</li>
+    <li>同样支持点按跳过；失败态建议不循环播放音效</li>
+  </ul>
+  <h2 style="color:#794f27;margin-top:18px;">Canvas 实装映射要点</h2>
+  <ul style="padding-left:20px;">
+    <li>时间轴用 <code>resultT</code>（结算秒表）驱动：横幅 scale=overshoot 曲线、行 alpha/x=分段线性；跳过=把 resultT 直接推到末值</li>
+    <li>彩带=屏幕空间粒子（120 粒上限，五行色，重力+旋转），复用 fx.js 粒子池</li>
+    <li>数字滚动=显示值向目标值指数逼近（8/s），到账帧触发一次 tick 音</li>
+    <li>音效走 sfx 模块新增 <code>resultWin()</code> / <code>resultLose()</code>（WebAudio 合成，不受 BGM 开关影响、受音效开关门控）</li>
   </ul>
 </div>
 
 <script>
-/* #fit=WxH：仅保留第一个 .phone 并等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
+/* ===== 演示驱动 ===== */
+const WIN = document.getElementById('win');
+const LOSE = document.getElementById('lose');
+
+function playIn(root) {
+  root.classList.remove('play');
+  void root.offsetWidth; // 重触发动画
+  root.classList.add('play');
+  // 数字滚动
+  root.querySelectorAll('.num').forEach(el => {
+    const to = +el.dataset.to; const t0 = performance.now() + 700; const dur = 900;
+    el.textContent = '0';
+    const tick = () => {
+      const p = Math.min(1, (performance.now() - t0) / dur);
+      el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3)));
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    setTimeout(() => requestAnimationFrame(tick), 700);
+  });
+}
+
+function makeConfetti() {
+  const box = document.getElementById('confettiBox');
+  box.innerHTML = '';
+  const colors = ['#ff4444', '#4488ff', '#44ff44', '#ccccff', '#cc8844', '#f5c31c'];
+  for (let i = 0; i < 120; i++) {
+    const c = document.createElement('i');
+    c.className = 'confetti';
+    c.style.left = (Math.random() * 100) + '%';
+    c.style.background = colors[i % colors.length];
+    c.style.setProperty('--t', (1.6 + Math.random() * 1.0) + 's');
+    c.style.setProperty('--dl', (0.8 + Math.random() * 0.8) + 's');
+    c.style.transform = 'rotate(' + (Math.random() * 360) + 'deg)';
+    box.appendChild(c);
+  }
+}
+
+function replay() {
+  playIn(WIN); playIn(LOSE);
+  makeConfetti();
+  sfxWin();
+}
+function replayLose() { playIn(LOSE); sfxLose(); }
+
+/* ===== WebAudio 音效合成（实现时移入 sfx 模块） ===== */
+let AC = null, muted = false;
+function ac() { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); return AC; }
+function note(f, t0, dur, type = 'triangle', gain = 0.12) {
+  const a = ac(); const o = a.createOscillator(); const g = a.createGain();
+  o.type = type; o.frequency.value = f;
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g).connect(a.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function sfxWin() { // 上行号角琶音 C5-E5-G5-C6 + 低音 thump
+  if (muted) return; const t = ac().currentTime;
+  note(523.25, t + 0.35, 0.22); note(659.25, t + 0.52, 0.22);
+  note(783.99, t + 0.69, 0.22); note(1046.5, t + 0.86, 0.5, 'triangle', 0.16);
+  note(130.8, t + 0.35, 0.3, 'sine', 0.2);
+}
+function sfxLose() { // 下行两音 A3→E3 低沉
+  if (muted) return; const t = ac().currentTime;
+  note(220, t + 0.4, 0.35, 'sawtooth', 0.07); note(164.8, t + 0.75, 0.55, 'sawtooth', 0.07);
+}
+function toggleMute() {
+  muted = !muted;
+  document.getElementById('muteBtn').textContent = muted ? '🔇 音效关' : '🔊 音效开';
+}
+
+/* 自动首播（需用户手势解锁 AudioContext；实现时由战斗终局触发） */
+replayLose();
+setTimeout(replay, 600);
+document.addEventListener('pointerdown', () => { try { ac().resume(); } catch {} }, { once: true });
+
+/* 点按跳过：动画期间点击立即呈现终态 */
+document.querySelectorAll('.phone-inner').forEach(root => {
+  root.addEventListener('pointerdown', () => {
+    root.querySelectorAll('.rrow,.late,.banner').forEach(el => {
+      el.style.animationDuration = '0s'; el.style.animationDelay = '0s';
+    });
+    root.querySelectorAll('.num').forEach(el => el.textContent = el.dataset.to);
+  }, { once: false });
+});
+
+/* #fit=WxH：等比缩放 fit 视口（布局回归截图用，正常浏览不受影响） */
 (function(){
   const m = location.hash.match(/fit=(\d+)x(\d+)/);
   if (!m) return;

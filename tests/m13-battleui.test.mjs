@@ -224,7 +224,14 @@ test('M13 布局迁移:BOARD_Y=448;底栏 1168~1280 全高;底栏按钮 y=1176;�
   // M12M13-ACCEPT F5:底栏 1168~1280 全高铺底(112px),不再只画 56px
   assert.ok(rSrc.includes('ctx.fillRect(0, 1168, 720, 112)'), '底栏画满 1168~1280(112px)');
   assert.ok(!rSrc.includes('ctx.fillRect(0, 1168, 720, 56)'), '半截底栏(56px)已废弃');
-  assert.ok(rSrc.includes("pauseBtn: { x: 24, y: 1176, w: 70, h: 40 }"), '⏸ 按钮 y=1176');
+  // 需求方 2026-10-19:⏸/⚙ 迁至战斗区主角血条正下方(原底栏位废弃);战斗区 HUD 因顶部
+  // 货币栏条带整体下移 44px,按钮随之落到 y=134
+  assert.ok(rSrc.includes('pauseBtn: { x: 96, y: 134, w: 56, h: 44 }'), '⏸ 按钮移至血条下方 y=134');
+  assert.ok(rSrc.includes('settingsBtn: { x: 158, y: 134, w: 56, h: 44 }'), '⚙ 按钮移至血条下方 y=134');
+  // 需求方 2026-10-19:底栏「第几关/击杀/货币」行移除;货币移至战斗区上方货币栏条带
+  assert.ok(!rSrc.includes('· 击杀 ${battle ? battle.kills : 0} · 消除'), '底栏击杀/消除统计行已移除');
+  assert.ok(!rSrc.includes('prof0.coins'), '底栏货币显示已移除');
+  assert.ok(rSrc.includes('战斗区货币栏条带'), '战斗区上方货币栏条带已实装');
   assert.ok(!rSrc.includes('ctx.fillRect(0, 448, 720, 56)'), '联动栏底色已移除');
   assert.ok(!rSrc.includes('HP ${battle.hp}/${battle.maxHp}'), '旧文字血条已移除');
   assert.ok(!rSrc.includes('5 行档位条'), '档位条已移除');
@@ -240,7 +247,7 @@ test('M13 布局迁移:BOARD_Y=448;底栏 1168~1280 全高;底栏按钮 y=1176;�
   const bhSrc = fs.readFileSync(new URL('../scripts/ui/battle_hud.js', import.meta.url), 'utf-8');
   assert.ok(bhSrc.includes('_rr(ctx, 16, 414, 688, 28, 12)'), '波次条奶油药丸底(样板一致,文字可读)');
   assert.ok(bhSrc.includes("fillText('BOSS', 679, 432)"), 'Boss 标记 BOSS 字样(样板一致,明显标识)');
-  assert.ok(bhSrc.includes('ctx.drawImage(hero, 160, 40, 320, 320, 16, 16, 72, 72)'), '头像=立绘裁头部(发色一致)');
+  assert.ok(bhSrc.includes('ctx.drawImage(hero, 160, 40, 320, 320, 16, 16 + TOPBAR_H, 72, 72)'), '头像=立绘裁头部(发色一致;随货币栏条带下移)');
   assert.ok(bhSrc.includes("#8fd3e8"), '护盾条蓝 #8fd3e8(需求方反馈:血条下蓝条补回)');
   const mSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(mSrc.includes('hud.battleHud.update(dt, hud,'), '主循环推进 battleHud');

@@ -93,6 +93,8 @@ export function attachInput(canvas, handlers) {
     if (!downXY) return;
     const p = toLogical(pos(e));
     curXY = p;
+    // 空白/拦截手势移动路由(养成技能列表滚动拖拽等;downCell 为空=非棋盘格手势)
+    if (!downCell && handlers.onBlankMove) { handlers.onBlankMove(p, downXY); e.preventDefault(); return; }
     if (Math.hypot(p.x - downXY.x, p.y - downXY.y) > 12) moved = true;
     // 手势进行中引擎进入「不可操作忙态」→ 作废本次手势的预判定(M9:演出期可操作忙态
     // 不作废——RESOLVING 并行交换/FALLING 预输入都由引擎 trySwap 分支承接)
@@ -117,6 +119,8 @@ export function attachInput(canvas, handlers) {
   }
 
   function onUp(e) {
+    // 空白/拦截手势收尾(养成列表滚动:位移小=原地点按;有位移=滚动结束不触发点击)
+    if (!downCell && handlers.onBlankUp) { handlers.onBlankUp(curXY || downXY, moved); }
     // REQ-M6-06 F7:作废手势(忙态跨越)不得在松手/恢复 IDLE 后以点选形式重新生效
     if (downCell && !moved && !gestureVoid && !longPressFired) {
       handlers.onTap(downCell);

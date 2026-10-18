@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>线稿 06 · 养成界面（v2 重设计 · 动效音效演示版）</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+/* ===== v2 养成界面(顶部货币栏 + 卡片化 + 升级动效音效) ===== */
+.wx { display:flex; align-items:center; justify-content:center; border-radius:50%; color:#333; font-weight:800; }
+.wx.fire { background:var(--wx-fire); } .wx.water { background:var(--wx-water); }
+.wx.wood { background:var(--wx-wood); } .wx.metal { background:var(--wx-metal); }
+.wx.earth { background:var(--wx-earth); }
+
+/* 顶部货币栏(通用组件:所有界面置顶;数字滚动由 JS 驱动) */
+.wallet { position:absolute; left:0; right:0; top:0; height:96px; background:var(--ai-primary-bg);
+  border-bottom:3px solid var(--ai-border-light); display:flex; align-items:center; padding:0 28px; gap:16px; z-index:20; }
+.wallet .wtitle { font-size:34px; font-weight:900; flex:1; }
+.coin-item { display:flex; align-items:center; gap:8px; background:#fff; border:2px solid var(--ai-border-light);
+  border-radius:20px; padding:6px 16px; font-size:24px; font-weight:800; }
+.coin-item .ico { width:36px; height:36px; }
+.coin-item.deducting { animation:coinShake .4s; }
+.coin-item.deducting .val { color:var(--ai-error); }
+@keyframes coinShake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-4px); } 75% { transform:translateX(4px); } }
+
+/* 角色卡 */
+.hero-card { position:absolute; left:32px; top:126px; width:656px; height:290px; background:#fff;
+  border:3px solid var(--ai-border); border-radius:var(--radius); box-shadow:var(--clay-shadow-sm); overflow:hidden; }
+.hero-card .lv-badge { position:absolute; right:22px; top:18px; width:110px; height:110px; border-radius:50%;
+  background:linear-gradient(160deg,#ffd76e,#f5a623); color:#fff; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; font-weight:900; box-shadow:var(--clay-shadow-sm); }
+.lv-badge .lvnum { font-size:44px; line-height:1; }
+.lv-badge .lvlab { font-size:18px; }
+.lv-badge.bounce { animation:lvBounce .6s cubic-bezier(.34,1.56,.64,1); }
+@keyframes lvBounce { 0% { transform:scale(1); } 35% { transform:scale(1.35) rotate(-6deg); } 70% { transform:scale(.92); } 100% { transform:scale(1); } }
+/* 升级光柱 + 粒子 */
+.burst { position:absolute; inset:0; pointer-events:none; opacity:0; }
+.burst.on { animation:burstFade .8s ease-out; }
+@keyframes burstFade { 0% { opacity:1; } 100% { opacity:0; } }
+.ray { position:absolute; left:50%; top:-40px; width:120px; height:400px; transform-origin:bottom center;
+  background:linear-gradient(to top, rgba(255,215,110,0), rgba(255,215,110,.85), rgba(255,255,255,.9));
+  clip-path:polygon(45% 100%, 55% 100%, 78% 0, 22% 0); filter:blur(2px); }
+.burst.on .ray { animation:rayGrow .7s ease-out; }
+@keyframes rayGrow { 0% { transform:scaleY(.1); opacity:0; } 40% { opacity:1; } 100% { transform:scaleY(1); opacity:0; } }
+.spark { position:absolute; width:12px; height:12px; border-radius:50%; }
+/* 属性 +N 冒字 */
+.float-up { position:absolute; font-weight:900; color:#3f9b0f; font-size:28px; pointer-events:none;
+  animation:floatUp 1s ease-out forwards; text-shadow:0 2px 0 #fff; }
+.float-up.cost { color:var(--ai-error); }
+@keyframes floatUp { 0% { opacity:0; transform:translateY(10px); } 25% { opacity:1; } 100% { opacity:0; transform:translateY(-56px); } }
+
+/* 技能升级卡(两列) */
+.skill-grid { position:absolute; left:32px; top:446px; width:656px; height:520px; background:#fff;
+  border:3px solid var(--ai-border); border-radius:var(--radius); padding:22px 24px; overflow:hidden; }
+.skill-row { display:flex; align-items:center; gap:14px; border:2px solid var(--ai-border-light);
+  border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:12px; }
+.skill-row .wx { width:64px; height:64px; font-size:26px; flex:none; }
+.skill-row .sinfo { flex:1; min-width:0; }
+.skill-row .sname { font-size:23px; font-weight:800; }
+.skill-row .slv { font-size:18px; color:var(--ai-text-2nd); margin-top:2px; }
+.upbtn { flex:none; width:120px; height:64px; border-radius:14px; background:#7ba86f; color:#fff; font-size:21px;
+  font-weight:800; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 0 rgba(121,79,39,.18); }
+.upbtn:active { transform:translateY(2px); box-shadow:0 2px 0 rgba(121,79,39,.18); }
+.upbtn.max { background:#c4b89e; pointer-events:none; }
+.upbtn.poor { background:#c4b89e; }
+.upbtn.pop { animation:upPop .35s ease-out; }
+@keyframes upPop { 0% { transform:scale(1); } 40% { transform:scale(1.18); } 100% { transform:scale(1); } }
+
+/* 抽卡 */
+.gacha { position:absolute; left:160px; top:1000px; width:400px; height:110px; }
+.gacha.pop { animation:gachaPop .5s cubic-bezier(.34,1.56,.64,1); }
+@keyframes gachaPop { 0% { transform:scale(.9); } 50% { transform:scale(1.06); } 100% { transform:scale(1); } }
+
+/* 新技能获得浮层(抽卡演示) */
+.gain-mask { position:absolute; inset:0; background:var(--ai-mask); z-index:50; display:none; align-items:center; justify-content:center; }
+.gain-mask.show { display:flex; }
+.gain-card { width:380px; background:#fff; border-radius:var(--radius); box-shadow:var(--clay-shadow);
+  padding:36px 28px; text-align:center; animation:gainIn .5s cubic-bezier(.34,1.56,.64,1); }
+@keyframes gainIn { 0% { transform:scale(.4) rotate(-8deg); opacity:0; } 100% { transform:scale(1) rotate(0); opacity:1; } }
+.gain-card .wx { width:140px; height:140px; font-size:56px; margin:0 auto 18px; animation:gainSpin 1s .3s; }
+@keyframes gainSpin { 0% { transform:rotateY(0); } 100% { transform:rotateY(720deg); } }
+
+/* 演示控制 */
+.demo-bar { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:99; display:flex; gap:10px; }
+.demo-bar button { font-family:var(--font); font-size:14px; padding:6px 14px; border:2px solid var(--ai-border);
+  border-radius:12px; background:#fff; cursor:pointer; color:var(--ai-text); font-weight:700; }
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <button onclick="toggleMute()" id="muteBtn">🔊 音效开</button>
+  <button onclick="resetDemo()">↺ 重置演示</button>
+</div>
+
+<div class="phone">
+<div class="phone-inner" style="background:var(--ai-bg);">
+
+  <!-- 顶部货币栏(通用组件,全界面置顶;消耗时数字滚动扣除+红闪) -->
+  <div class="wallet">
+    <div class="wtitle">养 成</div>
+    <div class="coin-item" id="walletCoins"><div class="wx metal ico">💰</div><span class="val" id="coinVal">1240</span></div>
+    <div class="coin-item" id="walletMats"><div class="wx earth ico">⛏</div><span class="val" id="matVal">86</span></div>
+  </div>
+  <div class="callout" style="left:10px;top:30px;">货币栏置顶通用<br>消耗=数字滚动扣除<br>+红闪+抖动+「嗒」声</div>
+
+  <!-- 角色卡:升级动效(光柱+粒子+Lv 徽章弹跳+属性冒字) -->
+  <div class="hero-card">
+    <div class="ph" style="position:absolute;left:20px;top:20px;width:210px;height:250px;">主角<br>立绘<br>player<br>idle</div>
+    <div style="position:absolute;left:256px;top:28px;">
+      <div style="font-size:32px;font-weight:900;">赤狐 <span id="lvText">Lv.12</span></div>
+      <div style="font-size:23px;margin-top:14px;">HP <b id="hpText">265</b> <span id="hpDelta" style="color:#3f9b0f;font-weight:800;"></span></div>
+      <div class="bar hp" style="width:300px;margin-top:8px;"><i style="width:100%"></i></div>
+      <div style="font-size:23px;margin-top:16px;">ATK <b id="atkText">21</b> <span id="atkDelta" style="color:#3f9b0f;font-weight:800;"></span></div>
+      <div style="font-size:20px;color:var(--ai-text-2nd);margin-top:14px;">升级消耗材料:<b id="upCost">18</b></div>
+    </div>
+    <div class="lv-badge" id="lvBadge"><div class="lvnum" id="lvNum">12</div><div class="lvlab">LEVEL</div></div>
+    <div class="burst" id="burst"><div class="ray"></div></div>
+    <div class="btn" id="heroUp" style="position:absolute;right:22px;bottom:20px;width:230px;height:76px;font-size:26px;">升 级</div>
+  </div>
+
+  <!-- 技能升级(两列卡片;点「−18」扣材料+动效音效) -->
+  <div class="skill-grid">
+    <div style="font-size:28px;font-weight:900;margin-bottom:16px;">技能升级 <span style="font-size:20px;font-weight:400;color:var(--ai-text-2nd);">(已拥有 6 / 15 · 点按钮消耗材料)</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 18px;">
+      <div class="skill-row"><div class="wx fire">火</div><div class="sinfo"><div class="sname">火弹</div><div class="slv">Lv.<span class="slvnum">2</span> · 伤害 130%</div></div><div class="upbtn" data-cost="12">−12</div></div>
+      <div class="skill-row"><div class="wx water">水</div><div class="sinfo"><div class="sname">寒冰锁链</div><div class="slv">Lv.<span class="slvnum">1</span> · 弹射 3 人</div></div><div class="upbtn" data-cost="18">−18</div></div>
+      <div class="skill-row"><div class="wx wood">木</div><div class="sinfo"><div class="sname">藤蔓束缚</div><div class="slv">Lv.<span class="slvnum">1</span> · 束缚 1.5s</div></div><div class="upbtn" data-cost="18">−18</div></div>
+      <div class="skill-row"><div class="wx earth">土</div><div class="sinfo"><div class="sname">石甲术</div><div class="slv">Lv.<span class="slvnum">3</span> · 护盾 60%</div></div><div class="upbtn" data-cost="24">−24</div></div>
+      <div class="skill-row"><div class="wx metal">金</div><div class="sinfo"><div class="sname">金弹</div><div class="slv">Lv.<span class="slvnum">5</span> · 穿透 1.3×</div></div><div class="upbtn" data-cost="36">−36</div></div>
+      <div class="skill-row"><div class="wx fire">火</div><div class="sinfo"><div class="sname">灼烧领域</div><div class="slv">Lv.<span class="slvnum">4</span> · DoT 区域</div></div><div class="upbtn max">已满级</div></div>
+    </div>
+    <div class="ph" style="height:44px;font-size:19px;">↓ 已拥有技能纵向滚动(15 技能池,抽卡解锁新技能)</div>
+  </div>
+
+  <!-- 抽卡入口 -->
+  <div class="btn gacha" id="gachaBtn" style="font-size:30px;">✦ 抽卡 · 100 币/次</div>
+  <div class="btn ghost" style="position:absolute;left:32px;top:1000px;width:110px;height:110px;font-size:34px;" onclick="history.back()">←</div>
+  <div class="callout" style="left:10px;top:1010px;">抽卡=飞行金币弧线<br>入钱包+新技能卡翻转</div>
+
+  <!-- 新技能获得浮层(抽卡演示) -->
+  <div class="gain-mask" id="gainMask">
+    <div class="gain-card">
+      <div style="font-size:26px;font-weight:900;color:var(--ai-warning);margin-bottom:12px;">✦ 获得新技能 ✦</div>
+      <div class="wx wood">木</div>
+      <div style="font-size:30px;font-weight:900;margin-top:8px;">荆棘环</div>
+      <div style="font-size:20px;color:var(--ai-text-2nd);margin-top:10px;line-height:1.6;">脉冲环 · 对周围敌人造成<br>110% ATK 木属性伤害</div>
+      <div class="btn" style="width:200px;height:70px;margin:22px auto 0;font-size:24px;" onclick="closeGain()">收下</div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div style="max-width:420px;font-size:15px;line-height:1.9;">
+  <h2 style="color:#794f27;">06 · 养成界面 v2(重设计)</h2>
+  <ul style="padding-left:20px;">
+    <li><b>顶部货币栏</b>:金币/材料置顶通用(选关/备战/养成共享);<b>消耗=数字向下滚动扣除+红闪+横抖+「嗒」声</b>(可点上面任意「−N」/升级/抽卡试)</li>
+    <li><b>角色升级动效</b>:光柱冲屏+金粒迸溅+Lv 徽章 overshoot 弹跳+「+12 HP / +2 ATK」绿色冒字(试点「升 级」)</li>
+    <li><b>技能升级</b>:卡片式两列(原纯文字行),按钮按压下沉反馈,升级时按钮 pop+等级数字翻牌</li>
+    <li>升级按钮显示<b>升级后预览值</b>(+HP/+ATK),材料不足灰显「材料不足」</li>
+    <li><b>抽卡</b>=金币飞行弧线入钱包→新技能卡旋转登场浮层(试「抽卡」);满池置灰「技能已集齐」</li>
+    <li>音效(WebAudio 合成,受音效开关门控):升级=上行琶音+shimmer 闪音;扣除=低频短「嗒」;技能升级=中频「叮」;抽卡开卡=纸翻+闪亮琶音</li>
+  </ul>
+  <h2 style="color:#794f27;margin-top:16px;">Canvas 实装映射要点</h2>
+  <ul style="padding-left:20px;">
+    <li>货币栏并入 battle_hud 顶栏同源绘制;数值显示值向真实值指数逼近(8/s),扣除方向向下</li>
+    <li>升级光柱/粒子复用 fx.js 粒子池(屏幕空间,~40 粒/次);Lv 徽章 scale=overshoot 曲线</li>
+    <li>属性冒字=浮动文字粒子(已有伤害冒字同款通道,绿色变体)</li>
+    <li>sfx 模块新增 levelUp() / deduct() / skillUp() / gachaOpen(),全部走音效开关门控</li>
+  </ul>
+</div>
+
+<script>
+/* ===== 演示驱动(实现时映射到 Canvas/sfx 模块,口径见页尾说明) ===== */
+let coins = 1240, mats = 86, lv = 12, hp = 265, atk = 21, upCost = 18;
+let AC = null, muted = false;
+const ac = () => (AC ||= new (window.AudioContext || window.webkitAudioContext)());
+function note(f, t0, dur, type = 'triangle', gain = 0.1) {
+  if (muted) return; const a = ac(); const o = a.createOscillator(); const g = a.createGain();
+  o.type = type; o.frequency.value = f;
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(gain, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g).connect(a.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+}
+const sfxDeduct = () => { if (!muted) note(220, ac().currentTime, 0.08, 'square', 0.05); }; // 扣除「嗒」
+const sfxSkillUp = () => { if (!muted) { note(880, ac().currentTime, 0.15); note(1174, ac().currentTime + 0.08, 0.2); } }; // 「叮」
+function sfxLevelUp() { // 上行琶音+shimmer
+  if (muted) return; const t = ac().currentTime;
+  [523, 659, 784, 1046].forEach((f, i) => note(f, t + i * 0.09, 0.25));
+  note(2093, t + 0.4, 0.5, 'sine', 0.06);
+}
+function sfxGacha() { if (muted) return; const t = ac().currentTime; note(660, t, 0.1); note(880, t + 0.1, 0.12); note(1318, t + 0.25, 0.4); }
+
+// 数字滚动(方向:扣除向下;显示值向真实值指数逼近)
+function rollTo(el, to, dir = 1) {
+  const from = parseInt(el.textContent.replace(/\D/g, '')) || 0;
+  const t0 = performance.now(), dur = 600;
+  const tick = () => {
+    const p = Math.min(1, (performance.now() - t0) / dur);
+    const v = Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+    el.textContent = v;
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+function deduct(walletEl, valEl, cost, pool) {
+  if (pool < cost) return false;
+  sfxDeduct();
+  walletEl.classList.remove('deducting'); void walletEl.offsetWidth; walletEl.classList.add('deducting');
+  rollTo(valEl, pool - cost);
+  return true;
+}
+
+// 角色升级演示
+document.getElementById('heroUp').addEventListener('click', () => {
+  const m = parseInt(document.getElementById('matVal').textContent);
+  if (m < upCost) return;
+  deduct(document.getElementById('walletMats'), document.getElementById('matVal'), upCost, m);
+  mats = m - upCost;
+  lv++; hp += 12; atk += 2;
+  sfxLevelUp();
+  const badge = document.getElementById('lvBadge');
+  badge.classList.remove('bounce'); void badge.offsetWidth; badge.classList.add('bounce');
+  document.getElementById('lvNum').textContent = lv;
+  document.getElementById('lvText').textContent = 'Lv.' + lv;
+  document.getElementById('hpText').textContent = hp;
+  document.getElementById('atkText').textContent = atk;
+  document.getElementById('upCost').textContent = upCost = Math.round(upCost * 1.15);
+  // 光柱+粒子
+  const burst = document.getElementById('burst');
+  burst.classList.remove('on'); void burst.offsetWidth; burst.classList.add('on');
+  const colors = ['#ffd76e', '#fff3c4', '#f5a623'];
+  for (let i = 0; i < 24; i++) {
+    const s = document.createElement('i');
+    s.className = 'spark';
+    s.style.cssText = `left:${300 + Math.random() * 320}px;top:${80 + Math.random() * 160}px;background:${colors[i % 3]};animation:floatUp ${0.6 + Math.random() * 0.5}s ease-out ${Math.random() * 0.2}s forwards;`;
+    burst.appendChild(s);
+  }
+  setTimeout(() => burst.querySelectorAll('.spark').forEach(e => e.remove()), 1200);
+  // 属性冒字
+  [['hpDelta', '+12'], ['atkDelta', '+2']].forEach(([id, t]) => {
+    const d = document.getElementById(id);
+    d.textContent = t; d.style.animation = 'none'; void d.offsetWidth; d.style.animation = 'floatUp 1s ease-out';
+    setTimeout(() => d.textContent = '', 1100);
+  });
+});
+
+// 技能升级演示
+document.querySelectorAll('.upbtn[data-cost]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const cost = +btn.dataset.cost;
+    const m = parseInt(document.getElementById('matVal').textContent);
+    if (m < cost) return;
+    deduct(document.getElementById('walletMats'), document.getElementById('matVal'), cost, m);
+    btn.classList.remove('pop'); void btn.offsetWidth; btn.classList.add('pop');
+    sfxSkillUp();
+    const lvEl = btn.closest('.skill-row').querySelector('.slvnum');
+    lvEl.textContent = +lvEl.textContent + 1;
+    btn.dataset.cost = Math.round(cost * 1.3);
+    btn.textContent = '−' + btn.dataset.cost;
+    if (+lvEl.textContent >= 5) { btn.classList.add('max'); btn.textContent = '已满级'; btn.removeAttribute('data-cost'); }
+  });
+});
+
+// 抽卡演示
+document.getElementById('gachaBtn').addEventListener('click', () => {
+  const c = parseInt(document.getElementById('coinVal').textContent);
+  if (c < 100) return;
+  deduct(document.getElementById('walletCoins'), document.getElementById('coinVal'), 100, c);
+  const g = document.getElementById('gachaBtn');
+  g.classList.remove('pop'); void g.offsetWidth; g.classList.add('pop');
+  sfxGacha();
+  setTimeout(() => document.getElementById('gainMask').classList.add('show'), 450);
+});
+function closeGain() { document.getElementById('gainMask').classList.remove('show'); }
+function toggleMute() { muted = !muted; document.getElementById('muteBtn').textContent = muted ? '🔇 音效关' : '🔊 音效开'; }
+function resetDemo() { coins = 1240; mats = 86; lv = 12; hp = 265; atk = 21; upCost = 18;
+  document.getElementById('coinVal').textContent = coins; document.getElementById('matVal').textContent = mats;
+  document.getElementById('lvNum').textContent = lv; document.getElementById('lvText').textContent = 'Lv.' + lv;
+  document.getElementById('hpText').textContent = hp; document.getElementById('atkText').textContent = atk;
+  document.getElementById('upCost').textContent = upCost;
+  document.querySelectorAll('.upbtn').forEach((b, i) => { b.classList.remove('max'); const costs = [12, 18, 18, 24, 36]; if (i < costs.length) { b.dataset.cost = costs[i]; b.textContent = '−' + costs[i]; } });
+  document.querySelectorAll('.slvnum').forEach((e, i) => e.textContent = [2, 1, 1, 3, 5, 4][i]);
+  closeGain();
+}
+document.addEventListener('pointerdown', () => { try { ac().resume(); } catch {} }, { once: true });
+
+/* #fit=WxH:等比缩放 fit 视口(布局回归截图用,正常浏览不受影响) */
+(function(){
+  const m = location.hash.match(/fit=(\d+)x(\d+)/);
+  if (!m) return;
+  const W = +m[1], H = +m[2], s = Math.min(W/720, H/1280);
+  document.body.classList.add('preview-mode');
+  document.body.style.overflow = 'hidden';
+  const phone = document.querySelector('.phone');
+  phone.style.cssText = 'width:'+W+'px;height:'+H+'px;position:relative;overflow:hidden;';
+  const inner = phone.querySelector('.phone-inner');
+  inner.style.position = 'absolute';
+  inner.style.left = '50%';
+  inner.style.top = '0';
+  inner.style.transformOrigin = 'top center';
+  inner.style.transform = 'translateX(-50%) scale(' + s + ')';
+})();
+</script>
+</body>
+</html>

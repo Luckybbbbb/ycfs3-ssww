@@ -13,7 +13,7 @@ globalThis.Image = class {
   get complete() { return this._complete && !!this.naturalWidth; }
   setLoaded(w = 144, h = 144) { this.naturalWidth = w; this.naturalHeight = h; this._complete = true; }
 };
-const { render, UI } = await import('../scripts/ui/render.js');
+const { render, UI, resultSkip } = await import('../scripts/ui/render.js');
 const { FxLayer } = await import('../scripts/ui/fx.js');
 const { attachInput } = await import('../scripts/core/input.js');
 
@@ -150,25 +150,25 @@ test('M11 备战界面:主角面板/出战信息/4 装配槽/技能库(解锁灰
   const r = mkCtx();
   render(r.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout' }));
   assert.ok(r.rec.fillTexts.some(t => t.includes('备战 · 第 2 关')), '标题带目标关');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('赤狐 · Lv.3')), '主角面板');
+  assert.ok(r.rec.fillTexts.some(t => t.includes('Lv.3')), '主角面板(需求方 2026-10-19:常驻名「赤狐」移除,只留 Lv)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('出战信息')), '出战信息卡');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('建议等级:Lv.4+')), '建议等级(LEVEL_META)');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('⚠ 等级低于建议')), '低等级警告 chip(Lv3<建议4)');
+  // v2:建议等级 chips 化(低等级=红色描边 chip,文字仍为「建议 Lv.X+」)
+  assert.ok(r.rec.fillTexts.some(t => t.includes('建议 Lv.4+')), '建议等级 chip(LEVEL_META;Lv3<4 红色呈现)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('技能装配')), '装配槽区');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('火弹')), '技能库行(已装配)');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('烈焰环')), 'Lv6 技能行存在');
-  // M11-02 F4:等级够但未拥有 → 「未拥有」灰显(装配门控与 cast.js 释放条件一致)
-  assert.ok(r.rec.fillTexts.some(t => t.includes('未拥有')), '未拥有技能灰显标注');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('●')), '已装配●标记');
+  assert.ok(r.rec.fillTexts.some(t => t.includes('火弹')), '装配槽已装配技能');
+  assert.ok(r.rec.fillTexts.some(t => t.includes('升级 / 技能升级 / 抽卡 → 养成面板')), 'v2 主角面板精简说明');
+  assert.ok(r.rec.fillTexts.some(t => t.includes('点图标看说明 · 右上「更换」换技能')), 'v2 槽区说明');
+  assert.ok(!r.rec.fillTexts.some(t => t.includes('技能库')), 'v2 技能库列表已移除(需求方 2026-10-19)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('出 战')), '出战按钮');
-  // 高等级无警告
+  // 高等级:建议 chip 仍显示(颜色差由绘制样式承载,文字层两态一致)
   const r2 = mkCtx();
   render(r2.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout', profile: () => ({ level: 10, coins: 0, materials: 0, expTotal: 500, ownedSkills: [], skillLevels: {}, loadout: [], settings: { effects: true } }) }));
-  assert.ok(!r2.rec.fillTexts.some(t => t.includes('⚠ 等级低于建议')), 'Lv10≥建议4 无警告');
+  assert.ok(r2.rec.fillTexts.some(t => t.includes('建议 Lv.4+')), 'Lv10 建议 chip 常显(无红色警告语义由样式承载)');
 });
 
 test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与失败(战败横幅/鼓励文案/按钮组)', () => {
   const battle = { phase: 'VICTORY', level: 3, kills: 129, expGained: 4226, coinsGained: 240, matsGained: 20, victoryCoins: 150, victoryMats: 30, wave: 10, enemies: [], ebolts: [], bolts: [], zones: [] };
+  resultSkip(); // M15 结算 v2:跳过=直达完整呈现(时间轴末态,数字显示终值)
   const r = mkCtx();
   render(r.ctx, mkEngineStub(), mkHud({ battle }));
   assert.ok(r.rec.fillTexts.includes('通 关 !'), '胜利横幅');
@@ -184,7 +184,7 @@ test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与�
   assert.ok(r2.rec.fillTexts.includes('战 败'), '失败横幅');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('第 4 关 · 第 6 波')), '败因定位(波次)');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('练到 Lv.12 再来挑战!')), '鼓励文案(距建议差距)');
-  assert.ok(r2.rec.fillTexts.some(t => t.includes('失败无惩罚')), '宽松取向说明');
+  assert.ok(r2.rec.fillTexts.some(t => t.includes('失败不扣任何进度')), '宽松取向说明(M15 v2 文案);');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('再战一次')), '再战按钮');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('去备战')), '去备战按钮');
 });
@@ -244,7 +244,7 @@ test('M11-03 F7 编成/按钮区域互斥:五关 chips 矩形均不与卡片按�
 });
 
 // ---- M11-4 接线源码断言 ----
-test('M11 接线:main 五屏路由/暂停门控/道具图标;manifest 26 张;levels 元数据', () => {
+test('M11 接线:main 五屏路由/暂停门控/道具图标;manifest 图标清单;levels 元数据', () => {
   const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(mainSrc.includes("screen = 'start'"), '初始屏=开始界面');
   assert.ok(mainSrc.includes("openLoadout"), '备战流转入口');
@@ -281,26 +281,30 @@ test('M11-02 F1 预载接线:bindImages 以预载实例替换渲染表;main 消�
   assert.ok(r.rec.draws.some(d => d.img === 'stub://invincible_premium.png'), '道具格实绘=预载注入实例');
 });
 
-test('M11-02 F2 技能库布局:两列 8 行(15 技能坐标全有限);命中区 ui* helper 与绘制同源', async () => {
-  const { uiCardBtn, uiSlotRect, uiLibRect } = await import('../scripts/ui/render.js');
-  // 15 技能库坐标全部有限且在界面内(修复前第 15 个 col=2 → x=undefined NaN)
-  for (let i = 0; i < 15; i++) {
-    const r = uiLibRect(i);
-    assert.ok(Number.isFinite(r.x) && Number.isFinite(r.y), `技能 ${i + 1} 坐标有限`);
-    assert.ok(r.x >= 0 && r.x + r.w <= 720 && r.y >= 0 && r.y + r.h <= 1280, `技能 ${i + 1} 行在界面内`);
+test('M15 v2 命中区同源:4 大槽步进 172/换装抽屉两列坐标有限;卡片按钮在屏内', async () => {
+  const { uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, UI: UIC } = await import('../scripts/ui/render.js');
+  // 4 槽:x0=32 步进 172(140+32),全部在屏内
+  for (let i = 0; i < 4; i++) {
+    const s0 = uiSlotRect(i);
+    assert.equal(s0.x, 32 + i * 172, `槽 ${i + 1} x 命中与绘制同源(v2)`);
+    assert.ok(s0.x + s0.w <= 720 && s0.y + s0.h <= 1280, `槽 ${i + 1} 在屏内`);
   }
-  const r15 = uiLibRect(14);
-  assert.equal(r15.x, uiLibRect(13).x, '第 15 项与第 14 项同列(两列装下)');
+  // 换装抽屉两列 6 行:15 技能去已装配 ≤11 行,坐标全有限且在抽屉容器内
+  const rows = uiPickRows(['fire_bolt', 'water_bolt', 'wood_bolt', 'earth_bolt'], [], 3);
+  for (let i = 0; i < rows.length; i++) {
+    const rc = rows[i].rect;
+    assert.ok(Number.isFinite(rc.x) && Number.isFinite(rc.y), `抽屉行 ${i + 1} 坐标有限`);
+    assert.ok(rc.x >= 32 && rc.x + rc.w <= 720 && rc.y >= UIC.loadout.pickTop && rc.y + rc.h <= 1280, `抽屉行 ${i + 1} 在容器内`);
+  }
   for (let L = 1; L <= 5; L++) {
     const b = uiCardBtn(L);
     assert.ok(Number.isFinite(b.x) && Number.isFinite(b.y) && b.y + b.h <= 1280, `L${L} 卡片按钮命中有限且在屏内`);
   }
   for (let i = 0; i < 4; i++) {
-    const s = uiSlotRect(i);
-    assert.ok(Number.isFinite(s.x) && Number.isFinite(s.y), `槽 ${i + 1} 命中有限`);
+    const sb = uiSlotSwapBtn(i);
+    assert.ok(Number.isFinite(sb.x) && Number.isFinite(sb.y), `槽 ${i + 1} 更换按钮有限`);
   }
 });
-
 test('M11-02 F3/F4/F5/F6 接线:persistProfile 同步装配;owned 门控;sfx 写档;toast 无连锁级数', () => {
   const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(mainSrc.includes('profile.loadout = [...caster.loadout]'), 'F3:persistProfile/boot 同步装配内存态(render 读 profile.loadout)');
@@ -361,23 +365,25 @@ test('M11-06 备战交互:槽位更换按钮命中区/换装列表过滤已装�
   assert.equal(fireDot.unlocked, true, 'Lv3+已拥有 → 可用');
   const waterBolt = rows.find(r => r.sk.id === 'metal_bolt');
   assert.equal(waterBolt.unlocked, false, '未拥有 → 不可用');
-  // 行矩形:逐行下移、宽 600、在面板内
+  // 行矩形:v2 两列 6 行——同列逐行下移,第 7 行起换列(列距 310)
   for (let i = 1; i < rows.length; i++) {
-    assert.equal(rows[i].rect.y, rows[i - 1].rect.y + UIC.loadout.pickRowH, `行 ${i} 逐行下移`);
+    if (i % 6 === 0) {
+      assert.equal(rows[i].rect.x, rows[i - 6].rect.x + 310, `行 ${i + 1} 换列(列距 310)`);
+      assert.ok(rows[i].rect.y < rows[i - 1].rect.y, `行 ${i + 1} 回到抽屉行顶`);
+    } else {
+      assert.equal(rows[i].rect.y, rows[i - 1].rect.y + UIC.loadout.pickRowH, `行 ${i + 1} 逐行下移`);
+    }
   }
   // 绘制:skillPick 面板(标题+行+关闭)+skillTips 浮层(名称+档位数值+关闭提示)
+  // (自定义档:fire_dotzone 已拥有未装配 → 行小字=「Lv.2 · CD 6s」;其余未拥有行=灰显标注)
   const r1 = mkCtx();
-  render(r1.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout', loadout: () => ({ selLevel: 2, selSlot: 0, panel: 'skillPick', pickSlot: 1, tipsSlot: -1 }) }));
+  render(r1.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout', loadout: () => ({ selLevel: 2, selSlot: 0, panel: 'skillPick', pickSlot: 1, tipsSlot: -1 }), profile: () => ({ level: 3, coins: 0, materials: 0, expTotal: 0, ownedSkills: ['fire_bolt', 'fire_dotzone'], skillLevels: { fire_dotzone: 2 }, loadout: ['fire_bolt', 'water_bolt', 'wood_bolt', 'earth_bolt'], settings: { effects: true } }) }));
   assert.ok(r1.rec.fillTexts.some(t => t.includes('选择技能 → 槽位 2')), 'pick 面板标题带目标槽位');
   assert.ok(r1.rec.fillTexts.some(t => t.includes('关 闭')), 'pick 关闭按钮');
   assert.ok(r1.rec.fillTexts.some(t => t.includes('未拥有')), '未拥有灰显标注');
-  // F13 整改:数值列按技能类型口径——ATK=10/Lv3(mkHud 档):基础弹(伤害)T1=10、盾 20、火弹已装配不在列
-  assert.equal(r1.rec.fillTexts.filter(t => ['伤害', '护盾值', '直击伤害', '每秒回复', '减速效果', '每秒伤害'].includes(t)).length, 11, '列表 11 行(已装配 4 项过滤后)各带类型化数值标签(F13)');
-  assert.ok(r1.rec.fillTexts.includes('12'), '基础弹 T1 伤害=ATK12×1.0=12(F13 修复前 dmgCoef 缺省按 0 显示 0)');
-  // F13 残留整改:bind(藤蔓束缚)=每秒 ATK×0.3×档(ATK=12)——首档 4(修复前误按 dmgCoef=1 显示 12)
-  assert.ok(r1.rec.fillTexts.includes('每秒伤害'), 'bind 行类型化标签=每秒伤害');
-  assert.ok(r1.rec.fillTexts.includes('4'), '藤蔓束缚 T1 每秒伤害=12×0.3×1.0→4(F13 残留修复前显示 12)');
-  assert.ok(r1.rec.fillTexts.some(t => t.includes('每秒 ATK×0.3')), 'bind 描述含每秒系数');
+  // 需求方 2026-10-19:抽屉行按 03 样板网格实装(图标+名+Lv/CD 小字)——长描述/数值列
+  // 移入 tips 浮层承载(F13 数值口径由下方 r2 tips 断言守护),抽屉行只保留选择所需信息
+  assert.ok(r1.rec.fillTexts.some(t => t.includes('Lv.2 · CD 6s')), '抽屉行小字=Lv/CD(样板网格口径)');
   const r2 = mkCtx();
   render(r2.ctx, mkEngineStub(), mkHud({ screen: () => 'loadout', loadout: () => ({ selLevel: 2, selSlot: 0, panel: 'skillTips', pickSlot: -1, tipsSlot: 0 }) }));
   assert.ok(r2.rec.fillTexts.some(t => t.includes('火弹')), 'tips 显示槽位技能名');
@@ -425,5 +431,81 @@ test('M11-06 长按:input.update ≥500ms 触发一次 onLongPress;位移取消;
     assert.equal(calls.longPress.length, 0, '位移后不触发长按');
   } finally {
     performance.now = realNow;
+  }
+});
+
+// ---- UIV2-01 整改守护(codex REJECTED 八项 + 需求方 2026-10-19 实测反馈)----
+test('UIV2-01 F1/F2 整改:养成技能列表滚动(15 技能全可升级)/抽卡浮层守卫导出', async () => {
+  const { GROW_LAYOUT, render, growListScrollState, growListScrollTo, growGachaVisible, growGachaDismiss, growGachaFx } = await import('../scripts/ui/render.js');
+  assert.equal(GROW_LAYOUT.btnOff, 183, '升级按钮右移(名字区留 83px,四字名不被覆盖)');
+  const owned = ['fire_bolt', 'water_bolt', 'wood_bolt', 'metal_bolt', 'earth_bolt', 'fire_dotzone', 'water_chain', 'wood_bind', 'metal_multi', 'earth_shield', 'fire_pulse', 'water_field', 'wood_aura', 'metal_pulse', 'earth_pulse'];
+  const r = mkCtx();
+  render(r.ctx, mkEngineStub(), mkHud({ screen: () => 'menu', growPanel: () => true, profile: () => ({ level: 10, coins: 0, materials: 9999, expTotal: 0, ownedSkills: owned, skillLevels: {}, loadout: [], settings: { effects: true } }) }));
+  assert.equal(growListScrollState().max, 424, '15 技能(8 行)溢出 424px=可滚动(F1:不再截断前 8;可见区=listBottom-listTop=440)');
+  growListScrollTo(9999);
+  assert.equal(growListScrollState().scroll, 424, '滚动钳制到上限');
+  growListScrollTo(0); // 复位,避免残留影响后续渲染断言
+  assert.equal(growGachaVisible(), false, '浮层初始不可见');
+  growGachaFx('fire_bolt');
+  assert.equal(growGachaVisible(), true, '抽卡后浮层可见(F2 守卫依据)');
+  growGachaDismiss();
+  assert.equal(growGachaVisible(), false, '关闭导出生效(main 点击路由先于背后按钮拦截)');
+});
+
+test('UIV2-01 F4 整改:跳过=完整终态(2.01s 末按钮入场完成)', async () => {
+  const { resultRestart, resultSkip, resultReady } = await import('../scripts/ui/render.js');
+  resultRestart();
+  assert.equal(resultReady(), false, '起始未就绪');
+  resultSkip();
+  assert.equal(resultReady(), true, '跳过即达完整终态(不再有 1.85s 半程态)');
+});
+
+test('UIV2-01 F7 整改:失败音效调度末音收尾 <0.8s', async () => {
+  const stops = [];
+  globalThis.window = globalThis.window || globalThis;
+  const mkOsc = () => ({ type: '', frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect(o) { return o; }, start() {}, stop(t) { stops.push(t); } });
+  const mkGain = () => ({ gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect(o) { return o; } });
+  window.AudioContext = function () { this.currentTime = 0; this.state = 'running'; this.resume = () => {}; this.destination = {}; this.createOscillator = mkOsc; this.createGain = mkGain; };
+  const { sfx } = await import('../scripts/ui/audio.js');
+  sfx.enabled = true;
+  sfx.resultLose();
+  assert.ok(stops.length >= 2, '两音都已调度');
+  assert.ok(Math.max(...stops) < 0.8, `末音收尾 ${Math.max(...stops).toFixed(2)}s < 0.8s(F7)`);
+});
+
+test('需求方 2026-10-19:换装抽屉关闭按钮收进面板内;战斗区货币栏存在', async () => {
+  const { UI: UIC } = await import('../scripts/ui/render.js');
+  const cb = UIC.loadout.pickCloseBtn;
+  assert.ok(cb.x >= 40 && cb.x + cb.w <= 680, `关闭按钮在面板 x 带内(${cb.x}..${cb.x + cb.w})`);
+  assert.ok(cb.y >= UIC.loadout.pickTop && cb.y + cb.h <= 1200, '关闭按钮在面板 y 带内(面板高已收进屏)');
+  const rSrc = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(rSrc.includes('战斗区货币栏条带'), '货币/材料以货币栏形式显示在战斗区上方条带(需求方 2026-10-19)');
+});
+
+test('UIV2-02 F2 整改:滚动纯函数帧率无关(同壁钟时间点显示值相同,扣 5/100 轨迹)', async () => {
+  const { rollToward } = await import('../scripts/ui/render.js');
+  // 可控时间戳:同壁钟总时长 1.0s,三种帧率(30/60/120fps)的 dt 序列
+  const seqs = [
+    { fps: 30, dts: Array(30).fill(1 / 30) },
+    { fps: 60, dts: Array(60).fill(1 / 60) },
+    { fps: 120, dts: Array(120).fill(1 / 120) },
+  ];
+  for (const [target, name] of [[5, '扣 5'], [100, '扣 100']]) {
+    const tracks = seqs.map(({ dts }) => {
+      let cur = 0; const track = [];
+      for (const dt of dts) { cur = rollToward(cur, target, dt); track.push(Math.round(cur)); }
+      return track;
+    });
+    // 同壁钟时间点(每 0.1s 取样)显示值三种帧率相同(容差 1:取整相位差)
+    for (let k = 1; k <= 10; k++) {
+      const idx30 = Math.min(29, Math.round(k * 3) - 1);
+      const idx60 = Math.min(59, Math.round(k * 6) - 1);
+      const idx120 = Math.min(119, Math.round(k * 12) - 1);
+      const vs = [tracks[0][idx30], tracks[1][idx60], tracks[2][idx120]];
+      const spread = Math.max(...vs) - Math.min(...vs);
+      assert.ok(spread <= 1, `${name} 帧率无关:@${(k / 10).toFixed(1)}s 显示值轨迹 30/60/120fps=${vs} 差 ${spread} ≤1`);
+    }
+    // 终值=目标
+    for (const tr of tracks) assert.equal(tr[tr.length - 1], target, `${name} 终值=${target}`);
   }
 });

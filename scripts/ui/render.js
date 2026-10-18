@@ -47,6 +47,9 @@ import { LEVEL_META, WAVES_PER_LEVEL } from '../meta/levels.js'; // M11 UI 设�
 import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶栏经验条
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
+// M14 界面图标贴图(assets/icons/ui/*.png 替换 emoji;表初始空,生产唯一填充入口=bindImages;
+// miss 时回退原 emoji 文字,不阻塞渲染)
+const UI_IMG = {};
 // 道具图标贴图(assets/icons/items/<item>[_premium].png 144×144;缺图回退 emoji 原样式;
 // 预载校验见 assets/manifest.js iconList)
 // ===== M11-03 F1 残留整改:生产导入路径零顶层加载 =====
@@ -97,6 +100,10 @@ export function bindImages(map) {
       if (img) { ENEMY_FRAMES[type][j] = img; n++; }
     });
   }
+  for (const name of ['pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun']) {
+    const img = map.get(`icon:ui:${name}`);
+    if (img) { UI_IMG[name] = img; n++; } // M14:界面图标(替换 emoji)
+  }
   return n;
 }
 // 技能一句话说明(备战界面技能库行;03 文档 5.2 kind 口径)
@@ -106,6 +113,8 @@ const SKILL_BRIEF = {
 };
 // M11-06:元素中文名(tips/换装列表)
 const ELEMENT_NAME = { fire: '火', water: '水', wood: '木', metal: '金', earth: '土' };
+// M14:敌人中文名(关卡选择 chips 与备战信息卡敌人行;需求方口径 slime=幽灵)
+const ENEMY_NAME = { slime: '幽灵', fox: '狐妖', zombie: '僵尸', snake: '蛇妖', tiger: '虎妖', boss: '妖王' };
 // M11-03 F1:显式兜底入口(幂等)——把渲染消费的全部贴图按 manifest 同款路径自建加载。
 // 仅限单测/无 main 的演示环境显式调用;生产路径唯一入口=bindImages(preload Map)。
 export function ensureFallbackImages() {
@@ -137,9 +146,21 @@ const PLAYER_ATK_FRAMES = [];  // 主角攻击 walk_start 3 帧
 const ENEMY_FRAMES = {};       // 六类敌人序列帧(缺图椭圆兜底)
 const seqFrame = (frames, t, fps) => frames[Math.floor(t * fps) % frames.length];
 
+// M14:行内资产图标+数字(coin/pick 贴图;返回文字起点 x 供继续排布;miss 回退 emoji 文字)
+function drawAssetIcon(ctx, key, emoji, x, y, size = 20) {
+  const img = UI_IMG[key];
+  if (img && img.complete && img.naturalWidth) {
+    ctx.drawImage(img, x, y - size + 3, size, size);
+    return x + size + 6;
+  }
+  ctx.fillText(`${emoji} `, x, y);
+  return x + ctx.measureText(`${emoji} `).width;
+}
+
+
 let worldT = 0; // 表现层动画时钟
 
-export function render(ctx, engine, hud) {
+export function render(ctx, engine, hud, dt = 1 / 60) {
   worldT += 1 / 60;
   ctx.clearRect(0, 0, 720, 1280);
   const battle = hud.battle;
@@ -181,10 +202,18 @@ export function render(ctx, engine, hud) {
       hv.draw(ctx, bx, by, bw, 6);
       // 状态标记(03 文档 6.2b:4 种——灼烧🔥/减速❄/束缚🌿/眩晕💫;字段非零显示、清零消失;
       // M8 配色整改:颜色引用 GEM_SRC 单一定义源,与元素语义一致)
-      if (e.burn) { ctx.fillStyle = GEM_SRC.fire; ctx.font = '16px sans-serif'; ctx.fillText('🔥', e.x + 30, e.y - t.srcH * t.scale / 2 - 24); }
-      if (e.slowT > 0) { ctx.fillStyle = GEM_SRC.water; ctx.font = '16px sans-serif'; ctx.fillText('❄', e.x - 38, e.y - t.srcH * t.scale / 2 - 24); }
-      if (e.bindT > 0) { ctx.fillStyle = GEM_SRC.wood; ctx.font = '16px sans-serif'; ctx.fillText('🌿', e.x - 57, e.y - t.srcH * t.scale / 2 - 24); }
-      if (e.stunT > 0) { ctx.fillStyle = GEM_SRC.earth; ctx.font = '16px sans-serif'; ctx.fillText('💫', e.x - 19, e.y - t.srcH * t.scale / 2 - 24); }
+      // M14:状态标记改贴图(assets/icons/ui/;缺图回退 emoji 原样式)
+      const markY = e.y - t.srcH * t.scale / 2 - 24;
+      const drawMark = (cond, key, x, fallback, fill) => {
+        if (!cond) return;
+        const img = UI_IMG[key];
+        if (img && img.complete && img.naturalWidth) ctx.drawImage(img, x - 11, markY - 11, 22, 22);
+        else { ctx.fillStyle = fill; ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(fallback, x, markY); ctx.textAlign = 'left'; }
+      };
+      drawMark(e.burn, 'burn', e.x + 30, '🔥', GEM_SRC.fire);
+      drawMark(e.slowT > 0, 'slow', e.x - 38, '❄', GEM_SRC.water);
+      drawMark(e.bindT > 0, 'bind', e.x - 57, '🌿', GEM_SRC.wood);
+      drawMark(e.stunT > 0, 'stun', e.x - 19, '💫', GEM_SRC.earth);
     }
     // ===== 敌方弹幕(暗红光点,FR-1.2) =====
     for (const b of battle.ebolts) {
@@ -244,7 +273,39 @@ export function render(ctx, engine, hud) {
     }
   }
   ctx.restore(); // 视差/震动变换结束(联动栏与棋盘不参与 screenshake)
-  // M13 战斗区 HUD(头像/二段血条/关卡名/BOSS 条/技能框/波次进度;draw 自带快照,只读)
+  // ===== 战斗区货币栏条带(需求方 2026-10-19:货币统一放在战斗区域更上一层,以货币栏
+  // 形式显示货币/材料;底栏的第几关/击杀/货币行同步移除)=====
+  if (battle && battle.phase === 'FIGHTING' && hud.profile) {
+    const prof = hud.profile();
+    const TB = { x: 0, y: 0, w: 720, h: 44 };
+    ctx.fillStyle = 'rgba(248,248,240,.96)';
+    ctx.fillRect(TB.x, TB.y, TB.w, TB.h);
+    ctx.strokeStyle = '#dac9a7'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(TB.x, TB.y + TB.h); ctx.lineTo(TB.x + TB.w, TB.y + TB.h); ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#794f27';
+    ctx.font = FONT(21, 'bold');
+    ctx.fillText('资产', 24, TB.y + 29);
+    ctx.font = FONT(17); ctx.fillStyle = '#9f927d';
+    ctx.fillText('战斗产出实时入账', 84, TB.y + 29);
+    let cxr = 704; // 右缘
+    for (const [val, icon, emoji] of [[prof.materials, 'pick', '⛏'], [prof.coins, 'coin', '💰']]) {
+      const label = `${val}`;
+      ctx.font = FONT(19, 'bold');
+      const w = 64 + ctx.measureText(label).width;
+      const x = cxr - w, y = TB.y + 4;
+      ctx.fillStyle = '#fff';
+      roundRect(ctx, x, y, w, 36, 16); ctx.fill();
+      ctx.strokeStyle = '#dac9a7'; ctx.lineWidth = 2; roundRect(ctx, x, y, w, 36, 16); ctx.stroke();
+      drawAssetIcon(ctx, icon, emoji, x + 12, y + 8, 20);
+      ctx.fillStyle = '#794f27';
+      ctx.fillText(label, x + 40, y + 24);
+      cxr = x - 10;
+    }
+    ctx.textAlign = 'left';
+  }
+  // M13 战斗区 HUD(头像/二段血条/关卡名/BOSS 条/技能框/波次进度;draw 自带快照,只读;
+  // 自 2026-10-19 起整体下移 44px,避让上方货币栏条带)
   if (hud.battleHud) hud.battleHud.draw(ctx, hud);
 
   // ===== 三消棋盘 =====
@@ -436,29 +497,11 @@ export function render(ctx, engine, hud) {
   ctx.strokeStyle = '#dcd8d1';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(0, 1168); ctx.lineTo(720, 1168); ctx.stroke();
-  // M11-05 F7 整改:统计左对齐 x=104/字号 17(⏸ 按钮右侧起,宽 ~330 止于 ~434),资产右对齐
-  // 620(宽 ~150 起 ~470)——修复前统计居中 360(160~560)与资产(470~620)同基线重叠
-  ctx.fillStyle = '#9f927d';
-  ctx.font = "17px 'Nunito','Noto Sans SC',sans-serif";
-  const st = engine.paralyzed ? '棋盘瘫痪 · 等待恢复'
-    : `第 ${battle ? battle.level : 1} 关 ${LEVEL_META[(battle ? battle.level : 1) - 1]?.name || ''} · 击杀 ${battle ? battle.kills : 0} · 消除 ${hud.cleared ? hud.cleared() : 0}`;
-  ctx.textAlign = 'left';
-  ctx.fillText(st, 104, 1258);
-  ctx.textAlign = 'center';
+  // 需求方 2026-10-19:底栏的「第几关/击杀/消除」统计行与货币显示移除——关卡信息由战斗区
+  // 顶部关卡名承载,资产由战斗区上方货币栏承载,底栏只保留 ⏸/⚙ 操作按钮
   // M11 底栏操作按钮(UI 设计稿 04:⏸ 暂停 / ⚙ 设置)
-  drawIconBtn(ctx, UI.battle.pauseBtn, '⏸');
-  drawIconBtn(ctx, UI.battle.settingsBtn, '⚙');
-  // 货币/材料 HUD(FR-7 v0.2:击杀/通关产出实时可见)
-  const prof0 = hud.profile ? hud.profile() : null;
-  if (prof0) {
-    ctx.textAlign = 'right';
-    // M12M13-ACCEPT 02轮 F8:文字色由 #ffe9b8 改深棕 #794f27——原色与底栏奶油底
-    // #f0e8d8 亮度对比仅 ~1.02:1,资产数字几乎不可辨认(补底引入的显示回归)
-    ctx.fillStyle = '#794f27';
-    ctx.font = "17px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(`💰 ${prof0.coins ?? 0}  ⛏ ${prof0.materials ?? 0}`, 620, 1258);
-    ctx.textAlign = 'center';
-  }
+  drawIconBtn(ctx, UI.battle.pauseBtn, '⏸', 'pause');
+  drawIconBtn(ctx, UI.battle.settingsBtn, '⚙', 'settings');
 
   // 特效层(REQ-M7-01 F5:关动效 fxEnabled=false 时**停止绘制**存量粒子/冒字——
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
@@ -478,8 +521,31 @@ export function render(ctx, engine, hud) {
     ctx.restore();
   }
 
-  // 事件提示浮层(需求方 2026-10-18:移战斗区中上方,战斗信息为主;修复文字偏右——
-  // 此前 fillText 沿用上文残留的 textAlign 状态,现显式居中)
+  // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====
+  if (battle && battle.phase === 'VICTORY') {
+    drawResult(ctx, hud, battle, true, dt);
+  } else if (battle && battle.phase === 'DEFEAT') {
+    drawResult(ctx, hud, battle, false, dt);
+  }
+
+  // ===== M11 界面路由(UI 设计稿五屏;01 开始 / 02 选关 / 03 备战;战斗与结算见上) =====
+  const scr = hud.screen ? hud.screen() : 'playing';
+  if (scr === 'start') drawStartScreen(ctx, hud);
+  if (scr === 'menu') {
+    drawMenuScreen(ctx, hud);
+    if (hud.growPanel && hud.growPanel()) drawGrowPanel(ctx, hud, dt); // FR-10 养成面板(选关入口,保留)
+  }
+  if (scr === 'loadout') drawLoadoutScreen(ctx, hud);
+  if (scr === 'playing' && hud.paused && hud.paused() && battle && battle.phase === 'FIGHTING') {
+    drawPauseOverlay(ctx, hud); // M11 暂停
+  }
+  if (scr === 'start' || scr === 'menu' || scr === 'loadout' || (scr === 'playing' && hud.paused && hud.paused())) {
+    if (hud.panel && hud.panel() === 'settings') drawSettingsPanel(ctx, hud); // M11 设置(开始/暂停共用)
+    if (hud.panel && hud.panel() === 'about') drawAboutPanel(ctx, hud);
+  }
+
+  // 事件提示浮层(需求方 2026-10-19:绘制移到所有界面/面板**之后**——toast 被养成/备战
+  // 面板盖住导致「点了没提示」;现置顶可见。文字居中显式设置)
   if (hud.toast && hud.toast.t > 0) {
     ctx.fillStyle = 'rgba(121,79,39,.85)';
     roundRect(ctx, 180, 160, 360, 44, 12);
@@ -490,94 +556,283 @@ export function render(ctx, engine, hud) {
     ctx.fillText(hud.toast.text, 360, 189);
     ctx.textAlign = 'left';
   }
-
-  // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====
-  if (battle && battle.phase === 'VICTORY') {
-    drawResult(ctx, hud, battle, true);
-  } else if (battle && battle.phase === 'DEFEAT') {
-    drawResult(ctx, hud, battle, false);
-  }
-
-  // ===== M11 界面路由(UI 设计稿五屏;01 开始 / 02 选关 / 03 备战;战斗与结算见上) =====
-  const scr = hud.screen ? hud.screen() : 'playing';
-  if (scr === 'start') drawStartScreen(ctx, hud);
-  if (scr === 'menu') {
-    drawMenuScreen(ctx, hud);
-    if (hud.growPanel && hud.growPanel()) drawGrowPanel(ctx, hud); // FR-10 养成面板(选关入口,保留)
-  }
-  if (scr === 'loadout') drawLoadoutScreen(ctx, hud);
-  if (scr === 'playing' && hud.paused && hud.paused() && battle && battle.phase === 'FIGHTING') {
-    drawPauseOverlay(ctx, hud); // M11 暂停
-  }
-  if (scr === 'start' || scr === 'menu' || scr === 'loadout' || (scr === 'playing' && hud.paused && hud.paused())) {
-    if (hud.panel && hud.panel() === 'settings') drawSettingsPanel(ctx, hud); // M11 设置(开始/暂停共用)
-    if (hud.panel && hud.panel() === 'about') drawAboutPanel(ctx, hud);
-  }
 }
 
-// 养成面板(FR-10;布局与 main.handleGrowClick 一致)
-// REQ-M6-04 F9 整改:技能行文字改深色(浅底 #fdf6e8 上原 #fdf6e8 不可见);
-// 15 技能两列 8 行布局(行高 46,全部落在返回按钮 y=960 之上,可达可升级);
-// 满池抽卡入口置灰(ownedSkills ≥ 技能库全量)。
-// 布局常量:列 x0=[70,375]、行顶 y=506+r×46、升级按钮=列 x0+180 起 70×36
-export const GROW_LAYOUT = { listY: 506, rowH: 46, cols: [70, 375], perCol: 8, btnOff: 180, btnW: 70, btnH: 36 };
-function drawGrowPanel(ctx, hud) {
+// ===== 养成界面 v2(06-grow.html 样板实装;M15)=====
+// 布局常量:货币栏 h96 / 角色卡 32,126,656×290 / 技能网格 32,446,656×520(两列 4 行,行高 108) /
+// 抽卡 160,1000,400×110 / 返回按钮位置由 GROW_LAYOUT.closeBtn 定义——与 main.handleGrowClick 命中区单一来源
+export const GROW_LAYOUT = {
+  listY: 506, rowH: 108, cols: [56, 369], cardW: 295, cardH: 96,
+  // 技能列表可见区(F1-03 整改:统一视口定义——绘制 clip/拖拽起手/点击点限制三处共用
+  // listTop/listBottom 这对常量,命中与裁切同源;listTop=500/listBottom=940)
+  listTop: 500, listBottom: 940,
+  btnW: 96, btnH: 64, btnOff: 183, // 升级按钮=卡内右侧(x0+183, y+16);名字区留 83px(F6 整改:四字技能名不再被按钮覆盖)
+  upBtn: { x: 436, y: 320, w: 230, h: 76 },
+  gachaBtn: { x: 160, y: 1000, w: 400, h: 110 },
+  closeBtn: { x: 24, y: 20, w: 80, h: 70 }, // 返回=顶部左上,与选关/备战同款(需求方 2026-10-19:风格统一)
+};
+// 养成动效状态(模块级;main 经 grow*Fx 触发,drawGrowPanel 每帧推进)
+const growAnim = {
+  coinDisp: null, matDisp: null,          // 货币显示值(向真实值逐步逼近=滚动)
+  flash: { coin: 0, mat: 0 },             // 扣除横抖计时(红闪已按需求方 2026-10-19 口径移除)
+  lvBounceT: 0,                            // Lv 徽章弹跳计时(0.6s overshoot)
+  burstT: 0, sparks: [],                   // 升级光柱+金粒
+  floats: [],                              // 属性冒字(+12HP 等)
+  skillPop: {},                            // 技能按钮 pop 计时(key=col*8+row)
+  gacha: null,                             // 抽卡浮层 {skillId, name, el, t}
+  listScroll: 0, listMax: 0,               // 技能列表滚动偏移/上限(drawGrowPanel 每帧按拥有数复算,F1 整改)
+};
+export function growDeductFx(kind) { if (growAnim.flash[kind] !== undefined) growAnim.flash[kind] = 0.45; }
+export function growLevelUpFx() { growAnim.lvBounceT = 0.6; growAnim.burstT = 0.8; }
+export function growSkillUpFx(col, row) { growAnim.skillPop[col * 8 + row] = 0.35; }
+export function growGachaFx(skillId) {
+  const sk = skillById(skillId);
+  growAnim.gacha = { skillId, name: sk ? sk.name : skillId, el: sk ? sk.el : 'metal', t: 0 };
+}
+// F2 整改:抽卡浮层可见性/关闭(main 命中路由先于此拦截,浮层期间点击不透传背后按钮)
+export function growGachaVisible() { return !!growAnim.gacha; }
+export function growGachaDismiss() { growAnim.gacha = null; }
+// F1 整改:技能列表滚动状态(main 拖拽滚动经此读写;上限由 drawGrowPanel 每帧复算)
+export function growListScrollState() { return { scroll: growAnim.listScroll, max: growAnim.listMax }; }
+export function growListScrollTo(v) { growAnim.listScroll = Math.max(0, Math.min(growAnim.listMax, v)); }
+export function growFloatText(text, x, y, color = '#3f9b0f') { growAnim.floats.push({ text, x, y, color, t: 0, life: 1.0 }); }
+
+// 滚动纯函数(UIV2-02 F2 整改:时间常数型浮点逼近,帧率无关——同壁钟时间点的显示值相同,
+// 不随帧率变化;内部值保留浮点,绘制时取整;收敛阈 0.5=取整显示已达目标值)
+export function rollToward(cur, target, dt, k = 8.4) {
+  const nv = cur + (target - cur) * (1 - Math.exp(-dt * k));
+  return Math.abs(target - nv) < 0.5 ? target : nv;
+}
+
+function drawGrowPanel(ctx, hud, dt = 1 / 60) {
   const prof = hud.profile();
-  ctx.fillStyle = 'rgba(20,22,15,.9)';
-  ctx.fillRect(0, 0, 720, 1280);
-  ctx.fillStyle = '#fdf6e8';
-  roundRect(ctx, 40, 200, 640, 880, 24); ctx.fill();
-  ctx.fillStyle = '#5a4a32';
-  ctx.textAlign = 'center';
-  ctx.font = "36px 'Nunito','Noto Sans SC',sans-serif";
-  ctx.fillText('养 成', 360, 260);
-  ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
-  ctx.fillText(`💰 ${prof.coins}    ⛏ ${prof.materials}    Lv${prof.level}`, 360, 300);
-  // 角色升级按钮
-  const cost = levelUpCost(prof.level);
-  ctx.fillStyle = '#7ba86f';
-  roundRect(ctx, 80, 300, 560, 64, 12); ctx.fill();
-  ctx.fillStyle = '#fdf6e8';
-  ctx.font = "22px 'Nunito','Noto Sans SC',sans-serif";
-  ctx.fillText(`角色升级 →Lv${prof.level + 1}(材料 ${cost})${prof.materials < cost ? ' — 不足' : ''}`, 360, 342);
-  // 抽卡按钮(满池置灰:F9)
-  const poolFull = prof.ownedSkills.length >= SKILL_LIBRARY.length;
-  ctx.fillStyle = poolFull ? 'rgba(150,150,150,.45)' : '#c98a3d';
-  roundRect(ctx, 80, 380, 560, 64, 12); ctx.fill();
-  ctx.fillStyle = '#fdf6e8';
-  ctx.fillText(poolFull ? '技能已集齐' : `抽卡(100 币/次,从未拥有中抽取)${prof.coins < 100 ? ' — 货币不足' : ''}`, 360, 422);
-  // 技能升级列表(已拥有;两列 8 行,F9 可达性)
-  ctx.fillStyle = '#9f927d';
-  ctx.font = "18px 'Nunito','Noto Sans SC',sans-serif";
-  ctx.fillText('— 技能升级(材料)—', 360, 492);
+  // 背景与货币栏(v2 全屏化)
+  ctx.fillStyle = '#f8f8f0'; ctx.fillRect(0, 0, 720, 1280);
+  ctx.fillStyle = '#e6f9f6'; ctx.fillRect(0, 0, 720, 96);
+  ctx.strokeStyle = '#e8e2d6'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, 96); ctx.lineTo(720, 96); ctx.stroke();
   ctx.textAlign = 'left';
-  prof.ownedSkills.forEach((id, i) => {
-    const col = Math.floor(i / GROW_LAYOUT.perCol), row = i % GROW_LAYOUT.perCol;
-    const x0 = GROW_LAYOUT.cols[col], yTop = GROW_LAYOUT.listY + row * GROW_LAYOUT.rowH;
+  ctx.fillStyle = '#794f27'; ctx.font = FONT(38, 'bold');
+  ctx.fillText('养 成', 124, 68); // 标题与 drawTopBar 同款(返回按钮让位左侧)
+  // 货币 chips(显示值逐步逼近=滚动;需求方 2026-10-19:扣除不做红色数字/红底,
+  // 正常数字滚动+轻横抖即可;F6 整改:右对齐排布,宽度随数字自适应不重叠不越缘)
+  const chipY = 24, chipH = 48, chipRight = 692;
+  const chips = [];
+  for (const [kind, val, icon] of [['coin', prof.coins, 'coin'], ['mat', prof.materials, 'pick']]) {
+    const dispKey = kind === 'coin' ? 'coinDisp' : 'matDisp';
+    if (growAnim[dispKey] === null) growAnim[dispKey] = val;
+    const cur = growAnim[dispKey];
+    if (cur !== val) { // 滚动:时间常数型浮点逼近(rollToward 纯函数,UIV2-02 F2 整改:帧率无关)
+      growAnim[dispKey] = rollToward(cur, val, dt);
+    }
+    const label = `${Math.round(growAnim[dispKey])}`;
+    ctx.font = FONT(24, 'bold');
+    chips.push({ kind, icon, label, w: 92 + ctx.measureText(label).width });
+  }
+  chips[chips.length - 1].x = chipRight - chips[chips.length - 1].w; // 材料 chip 贴右缘
+  chips[0].x = chips[1].x - 12 - chips[0].w;                          // 金币 chip 在其左 12px
+  for (const c of chips) {
+    const fl = growAnim.flash[c.kind];
+    const shake = fl > 0 ? Math.sin(fl * 60) * 3 : 0;
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, c.x + shake, chipY, c.w, chipH, 22); ctx.fill();
+    ctx.strokeStyle = '#e8e2d6'; ctx.lineWidth = 2; roundRect(ctx, c.x + shake, chipY, c.w, chipH, 22); ctx.stroke();
+    drawAssetIcon(ctx, c.icon, c.kind === 'coin' ? '💰' : '⛏', c.x + shake + 14, chipY + 12, 24);
+    ctx.fillStyle = '#794f27';
+    ctx.fillText(c.label, c.x + shake + 48, chipY + 32);
+  }
+  // 角色卡
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, 32, 126, 656, 290, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, 126, 656, 290, 24); ctx.stroke();
+  // 升级光柱(卡内底层)+金粒
+  if (growAnim.burstT > 0) {
+    const p = 1 - growAnim.burstT / 0.8;
+    ctx.save();
+    ctx.globalAlpha = p < 0.5 ? 1 : (1 - p) * 2;
+    const grd = ctx.createLinearGradient(0, 126, 0, 416);
+    grd.addColorStop(0, 'rgba(255,215,110,0)');
+    grd.addColorStop(1, 'rgba(255,215,110,0.55)');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.moveTo(511 - 40 * (0.3 + p), 126); ctx.lineTo(511 + 40 * (0.3 + p), 126);
+    ctx.lineTo(511 + 90, 416); ctx.lineTo(511 - 90, 416);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  for (const sp of growAnim.sparks) {
+    ctx.globalAlpha = Math.max(0, 1 - sp.t / sp.life);
+    ctx.fillStyle = sp.color;
+    ctx.beginPath(); ctx.arc(sp.x + sp.vx * sp.t, sp.y + sp.vy * sp.t - 60 * sp.t, sp.size, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // 立绘框(idle 首帧,等比 contain 不变形;缺图灰底;需求方 2026-10-19:立绘变形整改)
+  ctx.fillStyle = '#efe9db'; roundRect(ctx, 52, 146, 210, 250, 16); ctx.fill();
+  const pf0 = PLAYER_FRAMES[0];
+  if (pf0 && pf0.complete && pf0.naturalWidth > 0) {
+    ctx.save(); roundRect(ctx, 52, 146, 210, 250, 16); ctx.clip();
+    drawPortrait(ctx, pf0, 52, 146, 210, 250, true);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#9f927d'; ctx.font = FONT(20); ctx.textAlign = 'center';
+    ctx.fillText('主角立绘', 157, 275); ctx.textAlign = 'left';
+  }
+  // Lv 文本(升级时弹跳 overshoot 保留在文字上;黄色圆形徽章已按需求方 2026-10-19 移除)
+  {
+    const bt = growAnim.lvBounceT > 0 ? 1 - growAnim.lvBounceT / 0.6 : 1;
+    let sc = 1;
+    if (bt < 1) { sc = bt < 0.35 ? 1 + (bt / 0.35) * 0.35 : bt < 0.7 ? 1.35 - ((bt - 0.35) / 0.35) * 0.43 : 0.92 + ((bt - 0.7) / 0.3) * 0.08; }
+    ctx.save();
+    ctx.translate(288, 190); ctx.scale(sc, sc);
+    ctx.fillStyle = '#794f27'; ctx.font = FONT(34, 'bold');
+    ctx.fillText(`Lv.${prof.level}`, 0, 0);
+    ctx.restore();
+  }
+  ctx.fillStyle = '#794f27'; // F5 整改(UIV2-02):立绘正常分支不设 fillStyle,HP 文字沿用立绘框底色 #efe9db 致低对比;显式恢复深色
+  ctx.font = FONT(23);
+  ctx.fillText(`HP ${maxHpText(prof.level)}`, 288, 230);
+  ctx.fillStyle = '#fff'; roundRect(ctx, 288, 240, 300, 14, 7); ctx.fill();
+  ctx.fillStyle = '#6fba2c'; roundRect(ctx, 290, 242, 296, 10, 5); ctx.fill();
+  ctx.fillStyle = '#794f27';
+  ctx.fillText(`ATK ${atkText(prof.level)}`, 288, 282);
+  ctx.font = FONT(20); ctx.fillStyle = '#9f927d';
+  ctx.fillText(`升级消耗材料:${levelUpCost(prof.level)}`, 288, 318);
+  // 升级按钮(右下;材料不足灰;需求方 2026-10-19:黄色圆形等级徽章移除)
+  const upCost = levelUpCost(prof.level);
+  drawBtn(ctx, GROW_LAYOUT.upBtn, '升 级', prof.materials >= upCost ? 'primary' : 'disabled', 26);
+  // 技能网格(白卡;标题行 F5 整改:标题居左,计数右对齐贴卡右缘,不再同行拥挤出框)
+  ctx.fillStyle = '#fff'; roundRect(ctx, 32, 446, 656, 520, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, 446, 656, 520, 24); ctx.stroke();
+  ctx.fillStyle = '#794f27'; ctx.font = FONT(28, 'bold');
+  ctx.textAlign = 'left';
+  ctx.fillText('技能升级', 56, 492);
+  ctx.font = FONT(20); ctx.fillStyle = '#9f927d'; ctx.textAlign = 'right';
+  ctx.fillText(`已拥有 ${prof.ownedSkills.length} / ${SKILL_LIBRARY.length}`, 664, 490);
+  ctx.textAlign = 'left';
+  const L = GROW_LAYOUT;
+  // 纵向滚动(06 样板口径;UIV2-01 F1 整改:全部已拥有技能可见可升级,不再截断前 8)
+  const totalRows = Math.ceil(prof.ownedSkills.length / 2);
+  growAnim.listMax = Math.max(0, totalRows * L.rowH - (L.listBottom - L.listTop));
+  growAnim.listScroll = Math.max(0, Math.min(growAnim.listMax, growAnim.listScroll));
+  ctx.save();
+  roundRect(ctx, 32, L.listTop, 656, L.listBottom - L.listTop, 16); ctx.clip(); // 列表可见区(F1-03:与拖拽/点击共用 listTop/listBottom)
+  for (let idx = 0; idx < prof.ownedSkills.length; idx++) {
+    const col = idx % 2, row = Math.floor(idx / 2);
+    const y0 = L.listY + row * L.rowH - growAnim.listScroll;
+    if (y0 + L.cardH < L.listTop || y0 > L.listBottom) continue; // 视口外不画(与拖拽/点击共用同一对常量)
+    const id = prof.ownedSkills[idx];
     const skill = skillById(id);
     const lv = prof.skillLevels[id] || 1;
-    const sc = skillUpCost(lv);
-    ctx.fillStyle = '#5a4a32'; // F9:浅底深字(原 #fdf6e8 同色不可见)
-    ctx.font = "18px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(skill ? skill.name : id, x0 + 2, yTop + 30);
-    ctx.font = "14px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillStyle = '#9f927d';
-    ctx.fillText(`Lv${lv}${lv >= SKILL_LEVEL_CAP ? '(满)' : ''}`, x0 + 122, yTop + 30);
-    if (lv < SKILL_LEVEL_CAP) {
-      const bx = x0 + GROW_LAYOUT.btnOff, by = yTop + 5;
-      ctx.fillStyle = prof.materials >= sc ? '#7ba86f' : 'rgba(150,150,150,.4)';
-      roundRect(ctx, bx, by, GROW_LAYOUT.btnW, GROW_LAYOUT.btnH, 8); ctx.fill();
-      ctx.fillStyle = '#fdf6e8';
-      ctx.font = "16px 'Nunito','Noto Sans SC',sans-serif";
-      ctx.fillText(`−${sc}`, bx + GROW_LAYOUT.btnW / 2, by + 24);
+    const x0 = L.cols[col];
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, x0, y0, L.cardW, L.cardH, 16); ctx.fill();
+    ctx.strokeStyle = '#e8e2d6'; ctx.lineWidth = 2; roundRect(ctx, x0, y0, L.cardW, L.cardH, 16); ctx.stroke();
+    // 图标:技能贴图优先(与备战槽同源;需求方 2026-10-19:不用元素色圆),缺图回退色圆
+    const img = SKILL_IMG[id];
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, x0 + 14, y0 + 16, 64, 64);
+    } else {
+      const WX = { fire: '#ff4444', water: '#4488ff', wood: '#44ff44', metal: '#ccccff', earth: '#cc8844' };
+      ctx.fillStyle = WX[skill && skill.el] || '#ccc';
+      ctx.beginPath(); ctx.arc(x0 + 46, y0 + 48, 32, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#333'; ctx.font = FONT(24, 'bold'); ctx.textAlign = 'center';
+      ctx.fillText(ELEMENT_NAME[skill && skill.el] || '?', x0 + 46, y0 + 56);
+      ctx.textAlign = 'left';
     }
-  });
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#c98a3d';
-  roundRect(ctx, 60, 960, 600, 60, 14); ctx.fill();
-  ctx.fillStyle = '#fdf6e8';
-  ctx.font = "24px 'Nunito','Noto Sans SC',sans-serif";
-  ctx.fillText('返 回', 360, 1000);
+    // 名+等级(F6 整改:名字区实宽 83px=到升级按钮左缘-8,四字名 20px 恰好放下)
+    ctx.fillStyle = '#794f27'; ctx.font = FONT(20, 'bold');
+    ctx.fillText(fitText(ctx, skill ? skill.name : id, L.btnOff - 92 - 8), x0 + 92, y0 + 38);
+    ctx.font = FONT(18); ctx.fillStyle = '#9f927d';
+    ctx.fillText(`Lv.${lv}${lv >= SKILL_LEVEL_CAP ? ' 满' : ''}`, x0 + 92, y0 + 66);
+    // 升级按钮(pop 动效=放大)
+    if (lv < SKILL_LEVEL_CAP) {
+      const sc0 = growAnim.skillPop[col * 8 + row] || 0;
+      const pop = sc0 > 0 ? 1 + Math.sin((1 - sc0 / 0.35) * Math.PI) * 0.15 : 1;
+      const bx = x0 + L.btnOff + (L.btnW * (1 - pop)) / 2, by = y0 + 16 + (L.btnH * (1 - pop)) / 2;
+      const afford = prof.materials >= skillUpCost(lv);
+      ctx.fillStyle = afford ? '#7ba86f' : '#c4b89e';
+      roundRect(ctx, bx, by, L.btnW * pop, L.btnH * pop, 14); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = FONT(21, 'bold'); ctx.textAlign = 'center';
+      ctx.fillText(`-${skillUpCost(lv)}`, bx + (L.btnW * pop) / 2, by + (L.btnH * pop) / 2 + 8);
+      ctx.textAlign = 'left';
+    } else {
+      ctx.fillStyle = '#c4b89e';
+      roundRect(ctx, x0 + L.btnOff, y0 + 16, L.btnW, L.btnH, 14); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = FONT(19, 'bold'); ctx.textAlign = 'center';
+      ctx.fillText('已满级', x0 + L.btnOff + L.btnW / 2, y0 + 16 + L.btnH / 2 + 7);
+      ctx.textAlign = 'left';
+    }
+  }
+  ctx.restore();
+  // 滚动条(列表右缘;有溢出才显示)
+  if (growAnim.listMax > 0) {
+    const trackH = L.listBottom - L.listTop;
+    const thumbH = Math.max(44, trackH * (trackH / (totalRows * L.rowH)));
+    const thumbY = L.listTop + (trackH - thumbH) * (growAnim.listScroll / growAnim.listMax);
+    ctx.fillStyle = '#c4b89e';
+    roundRect(ctx, 668, thumbY, 8, thumbH, 4); ctx.fill();
+  }
+  // 抽卡+返回(返回=顶栏同款 ghost)
+  const poolFull = prof.ownedSkills.length >= SKILL_LIBRARY.length;
+  drawBtn(ctx, GROW_LAYOUT.gachaBtn, poolFull ? '技能已集齐' : '✦ 抽卡 · 100 币/次', poolFull ? 'disabled' : 'warn', 30);
+  drawBtn(ctx, GROW_LAYOUT.closeBtn, '←', 'ghost', 30);
+  // 属性冒字(+12HP 等)
+  for (const f of growAnim.floats) {
+    const pr = f.t / f.life;
+    ctx.globalAlpha = pr < 0.25 ? pr / 0.25 : 1 - (pr - 0.25) / 0.75;
+    ctx.fillStyle = f.color; ctx.font = FONT(28, 'bold'); ctx.textAlign = 'center';
+    ctx.fillText(f.text, f.x, f.y - pr * 56);
+    ctx.textAlign = 'left';
+  }
+  ctx.globalAlpha = 1;
+  // 抽卡浮层(新技能登场;2.4s 自动消失)
+  if (growAnim.gacha) {
+    const g = growAnim.gacha;
+    g.t += dt; // F4 整改:真实经过时间(不再按 1/60 假设,帧率无关)
+    if (g.t > 2.4) growAnim.gacha = null;
+    else {
+      const inP = Math.min(1, g.t / 0.4);
+      const sc = 0.4 + 0.6 * (1 - Math.pow(1 - inP, 3)) + (inP >= 1 ? Math.sin((g.t - 0.4) * 6) * 0.03 : 0);
+      ctx.save();
+      ctx.fillStyle = 'rgba(20,22,15,.5)';
+      ctx.fillRect(0, 0, 720, 1280);
+      ctx.translate(360, 560); ctx.scale(sc, sc);
+      ctx.fillStyle = '#fff';
+      roundRect(ctx, -190, -220, 380, 440, 24); ctx.fill();
+      ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, -190, -220, 380, 440, 24); ctx.stroke();
+      ctx.fillStyle = '#f5c31c'; ctx.font = FONT(26, 'bold'); ctx.textAlign = 'center';
+      ctx.fillText('✦ 获得新技能 ✦', 0, -160);
+      const WX2 = { fire: '#ff4444', water: '#4488ff', wood: '#44ff44', metal: '#ccccff', earth: '#cc8844' };
+      ctx.fillStyle = WX2[g.el] || '#ccc';
+      ctx.beginPath(); ctx.arc(0, -40, 70, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#333'; ctx.font = FONT(52, 'bold');
+      ctx.fillText(ELEMENT_NAME[g.el] || '?', 0, -22);
+      ctx.fillStyle = '#794f27'; ctx.font = FONT(30, 'bold');
+      ctx.fillText(g.name, 0, 80);
+      ctx.font = FONT(20); ctx.fillStyle = '#9f927d';
+      ctx.fillText('自动装配进技能库 · 消除链可随机选中', 0, 118);
+      ctx.restore();
+      ctx.textAlign = 'left';
+    }
+  }
+  // 动效计时推进(真实 dt,帧率无关;面板不显示时不推进)
+  for (const k of ['coin', 'mat']) if (growAnim.flash[k] > 0) growAnim.flash[k] = Math.max(0, growAnim.flash[k] - dt);
+  if (growAnim.lvBounceT > 0) growAnim.lvBounceT = Math.max(0, growAnim.lvBounceT - dt);
+  if (growAnim.burstT > 0) {
+    growAnim.burstT = Math.max(0, growAnim.burstT - dt);
+    if (growAnim.sparks.length < 24 && Math.random() < 0.5) {
+      const colors = ['#ffd76e', '#fff3c4', '#f5a623'];
+      growAnim.sparks.push({ x: 511 + (Math.random() - 0.5) * 320, y: 200 + Math.random() * 140, vx: (Math.random() - 0.5) * 120, vy: -60 - Math.random() * 80, t: 0, life: 0.7 + Math.random() * 0.4, size: 4 + Math.random() * 4, color: colors[Math.floor(Math.random() * 3)] });
+    }
+  }
+  for (const sp of growAnim.sparks) sp.t += dt;
+  growAnim.sparks = growAnim.sparks.filter(sp => sp.t < sp.life);
+  for (const f of growAnim.floats) f.t += dt;
+  growAnim.floats = growAnim.floats.filter(f => f.t < f.life);
+  for (const k of Object.keys(growAnim.skillPop)) {
+    growAnim.skillPop[k] -= dt;
+    if (growAnim.skillPop[k] <= 0) delete growAnim.skillPop[k];
+  }
 }
 
 // (M11:原型期胜负 overlay 已由 drawResult 五屏结算界面替代,原函数移除)
@@ -611,6 +866,17 @@ function drawFlipH(ctx, img, x, y, w, h) {
   ctx.scale(-1, 1);
   ctx.drawImage(img, -w / 2, y, w, h);
   ctx.restore();
+}
+
+// 立绘等比 contain 绘制(需求方 2026-10-19:直接拉伸填框导致主角变形——按原图比例
+// 缩放到恰好放进 w×h 框内并居中;flip=水平镜像)
+function drawPortrait(ctx, img, x, y, w, h, flip = false) {
+  const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
+  const s = Math.min(w / iw, h / ih);
+  const dw = iw * s, dh = ih * s;
+  const dx = x + (w - dw) / 2, dy = y + (h - dh) / 2;
+  if (flip) drawFlipH(ctx, img, dx, dy, dw, dh);
+  else ctx.drawImage(img, dx, dy, dw, dh);
 }
 
 // 文本超宽截断(换装列表行描述,给右侧数值列留宽)
@@ -671,16 +937,17 @@ export const UI = {
   },
   loadout: {
     backBtn: { x: 24, y: 20, w: 80, h: 70 },
-    panelY: 490, slotsY: 560, slotSize: 120, slotGap: 24, // 4 槽:x0=44,步进 144
-    libY: 715, libRowH: 38, libCols: [56, 376], libPerCol: 8, // F2 整改:两列 8 行(15 技能全可见;原 7 行漏第 15 个 NaN)
-    libRowW: 288,
-    fightBtn: { x: 160, y: 1115, w: 400, h: 100 },
-    // M11-06:换装列表面板(全屏遮罩+行卡列表)
-    pickTop: 96, pickRowH: 84, pickCloseBtn: { x: 590, y: 106, w: 110, h: 56 },
+    // v2(03-loadout.html 样板):主角面板+出战信息窄卡+4 大槽(140)+底部换装抽屉;技能库列表移除
+    heroCard: { x: 32, y: 140, w: 656, h: 300 },
+    infoCard: { x: 32, y: 470, w: 656, h: 150 },
+    panelY: 660, slotsY: 760, slotSize: 140, slotGap: 32, // 4 槽:x0=32,步进 172(4×140+3×32=656 满宽)
+    fightBtn: { x: 160, y: 1050, w: 400, h: 120 },
+    // 换装抽屉(底部;两列 6 行;关闭按钮在面板内右上——需求方 2026-10-19:超框/居中整改)
+    pickTop: 560, pickRowH: 84, pickCloseBtn: { x: 528, y: 584, w: 120, h: 64 },
   },
   battle: {
-    pauseBtn: { x: 24, y: 1176, w: 70, h: 40 },
-    settingsBtn: { x: 626, y: 1176, w: 70, h: 40 },
+    pauseBtn: { x: 96, y: 134, w: 56, h: 44 },     // 需求方 2026-10-19:移到主角血条正下方(战斗区内;血条因货币栏条带下移 44px)
+    settingsBtn: { x: 158, y: 134, w: 56, h: 44 }, // 同上(与 ⏸ 并排;原底栏位废弃)
   },
   result: {
     victory: {
@@ -725,7 +992,7 @@ export const uiCardBtn = (L) => ({
   w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h,
 });
 export const uiSlotRect = (i) => ({
-  x: 44 + i * (UI.loadout.slotSize + UI.loadout.slotGap),
+  x: 32 + i * (UI.loadout.slotSize + UI.loadout.slotGap),
   y: UI.loadout.slotsY, w: UI.loadout.slotSize, h: UI.loadout.slotSize,
 });
 // M11-06:槽右上角「更换」按钮(双环形箭头)命中区——先于槽选中判定
@@ -744,30 +1011,28 @@ export const uiPickRows = (loadout, ownedSkills, level) => {
   });
   return rows;
 };
-const uiPickRowRect = (row) => ({
-  // F7 残留整改:首行 180→200——面板说明基线 184(pickTop+88),修复前首行 180 与说明重叠
-  x: 60, y: UI.loadout.pickTop + 104 + row * UI.loadout.pickRowH,
-  w: 600, h: UI.loadout.pickRowH - 8,
-});
-export const uiLibRect = (i) => {
-  const col = Math.floor(i / UI.loadout.libPerCol), row = i % UI.loadout.libPerCol;
-  return {
-    x: UI.loadout.libCols[col],
-    y: UI.loadout.libY + 56 + row * UI.loadout.libRowH,
-    w: UI.loadout.libRowW, h: UI.loadout.libRowH - 4,
-  };
+const uiPickRowRect = (row) => {
+  // v2 底部抽屉:两列 6 行(列 x=60/370,行起 664;15 技能去已装配 ≤11 行全可见)
+  const col = Math.floor(row / 6), rr = row % 6;
+  return { x: 60 + col * 310, y: UI.loadout.pickTop + 104 + rr * UI.loadout.pickRowH, w: 290, h: UI.loadout.pickRowH - 8 };
 };
-
 // 通用小按钮(底栏 ⏸/⚙ 等 ghost 风格)
-function drawIconBtn(ctx, r, glyph) {
+function drawIconBtn(ctx, r, glyph, iconKey) {
   ctx.fillStyle = '#fff';
   roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.fill();
   ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2;
   roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.stroke();
+  // M14:优先贴图(UI_IMG,替换 emoji);miss 回退原文字
+  const icon = iconKey ? UI_IMG[iconKey] : null;
+  if (icon && icon.complete && icon.naturalWidth) {
+    ctx.drawImage(icon, r.x + r.w / 2 - 16, r.y + r.h / 2 - 16, 32, 32);
+    return;
+  }
   ctx.fillStyle = '#794f27';
   ctx.font = FONT(22, 'bold');
   ctx.textAlign = 'center';
   ctx.fillText(glyph, r.x + r.w / 2, r.y + r.h / 2 + 8);
+  ctx.textAlign = 'left';
 }
 
 // 通用 clay 按钮(kind: primary|ghost|warn|disabled)
@@ -892,7 +1157,14 @@ function drawMenuScreen(ctx, hud) {
   ctx.fillStyle = '#794f27';
   ctx.font = FONT(24, 'bold');
   ctx.textAlign = 'left';
-  ctx.fillText(`💰 ${prof.coins ?? 0}  ⛏ ${prof.materials ?? 0}`, 124, 178);
+  {
+    // M14:资产行改贴图
+    let ix = 124;
+    ix = drawAssetIcon(ctx, 'coin', '💰', ix, 178, 22);
+    ctx.fillText(`${prof.coins ?? 0}`, ix, 178); ix += ctx.measureText(`${prof.coins ?? 0}`).width + 24;
+    ix = drawAssetIcon(ctx, 'pick', '⛏', ix, 178, 22);
+    ctx.fillText(`${prof.materials ?? 0}`, ix, 178);
+  }
   ctx.textAlign = 'center';
   // 关卡卡片 ×5(三态:已通关重打 / 当前高亮挑战 / 锁定)
   for (let i = 1; i <= 5; i++) {
@@ -942,13 +1214,19 @@ function drawMenuScreen(ctx, hud) {
     // (第四/五关 tiger 区域 x523~596 与按钮区 x510~660/y45~125 相交,基线 y=121 被盖))
     let cx0 = UI.menu.chipsX, cy0 = y + UI.menu.chipsY;
     for (const k of Object.keys(levelWeights(i))) {
-      const w = 18 + k.length * 11;
+      // M14:敌人改中文名(需求方反馈不再显示英文);宽度按实测——修复前 fillText 在
+      // textAlign=left 下从 cx0+w/2 起画,文字整体偏右(需求方实测反馈)
+      const label = ENEMY_NAME[k] || k;
+      ctx.font = FONT(16);
+      const w = 24 + ctx.measureText(label).width;
       if (cx0 + w > UI.menu.chipsMaxX) { cx0 = UI.menu.chipsX; cy0 += UI.menu.chipsRowGap; } // 超出左列(≤300)换行到第二行
       ctx.fillStyle = '#fff';
       roundRect(ctx, cx0, cy0, w, 28, 14); ctx.fill();
       ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2; roundRect(ctx, cx0, cy0, w, 28, 14); ctx.stroke();
       ctx.fillStyle = '#794f27'; ctx.font = FONT(16);
-      ctx.fillText(k, cx0 + w / 2, cy0 + 19);
+      ctx.textAlign = 'center';
+      ctx.fillText(label, cx0 + w / 2, cy0 + 19);
+      ctx.textAlign = 'left';
       cx0 += w + 8;
     }
     ctx.textAlign = 'center';
@@ -989,94 +1267,85 @@ function drawLoadoutScreen(ctx, hud) {
   const lo = hud.loadout ? hud.loadout() : { selLevel: 1, selSlot: 0 };
   const L = lo.selLevel || 1;
   const meta = LEVEL_META[L - 1] || { name: `第 ${L} 关`, suggest: L };
-  drawTopBar(ctx, `备战 · 第 ${L} 关`, prof);
+  drawTopBar(ctx, `备战 · 第 ${L} 关`); // 等级/经验条只在选关顶栏(需求方 2026-10-19:备战与主角卡重复,移除)
   // 主角面板(立绘+等级/HP/ATK+升级缺口)
+  // 主角面板(v2:全宽卡,只留 HP/ATK 概览;升级细节归养成面板)
   ctx.fillStyle = '#fff';
-  roundRect(ctx, 32, 140, 400, 330, 24); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, 140, 400, 330, 24); ctx.stroke();
+  roundRect(ctx, 32, 140, 656, 300, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, 140, 656, 300, 24); ctx.stroke();
   const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
   ctx.fillStyle = '#efe9db';
-  roundRect(ctx, 52, 160, 160, 290, 16); ctx.fill();
+  roundRect(ctx, 52, 160, 200, 260, 16); ctx.fill();
   if (pf && pf.complete && pf.naturalWidth > 0) {
-    ctx.save(); roundRect(ctx, 52, 160, 160, 290, 16); ctx.clip();
-    drawFlipH(ctx, pf, 72, 170, 120, 214); // M11-05:idle 立绘水平镜像(面右)
+    ctx.save(); roundRect(ctx, 52, 160, 200, 260, 16); ctx.clip();
+    drawPortrait(ctx, pf, 52, 160, 200, 260, true); // 等比 contain 不变形(需求方 2026-10-19)
     ctx.restore();
+  } else {
+    ctx.fillStyle = '#9f927d'; ctx.font = FONT(20); ctx.textAlign = 'center';
+    ctx.fillText('主角立绘', 152, 295); ctx.textAlign = 'left';
   }
   ctx.textAlign = 'left';
   ctx.fillStyle = '#794f27';
-  ctx.font = FONT(30, 'bold');
-  ctx.fillText(`赤狐 · Lv.${prof.level}`, 232, 200);
+  ctx.font = FONT(32, 'bold');
+  ctx.fillText(`Lv.${prof.level}`, 288, 208); // 名字常驻显示移除(需求方 2026-10-19)
   ctx.font = FONT(24);
-  ctx.fillText(`HP ${maxHpText(prof.level)}`, 232, 240);
-  ctx.fillStyle = '#fff'; roundRect(ctx, 232, 252, 176, 18, 9); ctx.fill();
-  ctx.fillStyle = '#6fba2c'; roundRect(ctx, 234, 254, 172, 14, 7); ctx.fill();
+  ctx.fillText(`HP ${maxHpText(prof.level)}`, 288, 252);
   ctx.fillStyle = '#794f27';
-  ctx.fillText(`ATK ${atkText(prof.level)}`, 232, 310);
+  ctx.fillText(`ATK ${atkText(prof.level)}`, 288, 300); // 绿色血条移除(此处无意义,数值保留)
   ctx.font = FONT(21);
   ctx.fillStyle = '#9f927d';
-  const cost = levelUpCost(prof.level);
-  ctx.fillText(`升级:Lv.${prof.level} → ${prof.level + 1}`, 232, 356);
-  ctx.fillText(`材料 ${cost}(养成面板升级)`, 232, 386);
+  ctx.fillText('升级 / 技能升级 / 抽卡 → 养成面板', 288, 348);
   ctx.textAlign = 'center';
+
   // 出战信息卡
+  // 出战信息(v2:横向窄卡,chips 化;敌人中文名;F 出框整改:行距收紧,两行 chips 收进卡内)
   ctx.fillStyle = '#f0e8d8';
-  roundRect(ctx, 460, 140, 228, 330, 24); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; roundRect(ctx, 460, 140, 228, 330, 24); ctx.stroke();
+  roundRect(ctx, 32, 470, 656, 150, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; roundRect(ctx, 32, 470, 656, 150, 24); ctx.stroke();
   ctx.textAlign = 'left';
   ctx.fillStyle = '#794f27';
-  ctx.font = FONT(26, 'bold');
-  ctx.fillText('出战信息', 482, 184);
-  ctx.font = FONT(19);
-  ctx.fillStyle = '#5a4a32';
-  ctx.fillText(`关卡:第 ${L} 关 ${meta.name}`, 482, 222);
-  ctx.fillText(`波次:${WAVES_PER_LEVEL} 波`, 482, 252);
-  ctx.fillText(`第 ${WAVES_PER_LEVEL} 波为关底 Boss`, 482, 278);
-  // M11-06 F7 残留整改:按**实际字体测量**换行(修复前固定前 3 个一行——第 4 关
-  // "敌人:slime / fox / zombie /" 19px 实宽 ~226px 越出卡右缘 688,像素实测到 x=707);
-  // 卡内区 482~668(可用 ~186px),逐名累加测量、超宽即换行(续行缩进 18px),行数不定
-  const names = Object.keys(levelWeights(L));
-  const innerW = 668 - 482;
-  const wrapLines = [];
-  let cur = '敌人:';
-  for (const n of names) {
-    const cand = cur + (cur.endsWith(':') ? ' ' : '') + n + ' /';
-    if (ctx.measureText(cand).width > innerW && !cur.endsWith(':')) {
-      wrapLines.push(cur);
-      cur = '  ' + n + ' /';
-    } else {
-      cur = cand;
+  ctx.font = FONT(28, 'bold');
+  ctx.fillText('出战信息', 60, 514);
+  ctx.font = FONT(21); ctx.fillStyle = '#9f927d';
+  ctx.fillText(`第 ${L} 关 · ${meta.name}`, 200, 512);
+  const chipV = [];
+  {
+    ctx.font = FONT(19);
+    chipV.push({ t: `${WAVES_PER_LEVEL} 波 · 末波 Boss`, color: '#5a4a32' });
+    const enames = Object.keys(levelWeights(L)).map(k => ENEMY_NAME[k] || k).join(' ');
+    chipV.push({ t: `敌人:${enames}`, color: '#5a4a32' });
+    const warnL = prof.level < meta.suggest;
+    chipV.push({ t: `建议 Lv.${meta.suggest}+`, color: warnL ? '#e05a5a' : '#5a4a32' });
+    let cy = 528;
+    let cx = 60;
+    for (const ch of chipV) {
+      ctx.font = FONT(19);
+      const w = 30 + ctx.measureText(ch.t).width;
+      if (cx + w > 660) { cx = 60; cy += 48; }
+      ctx.fillStyle = '#fff';
+      roundRect(ctx, cx, cy, w, 36, 18); ctx.fill();
+      ctx.strokeStyle = ch.color === '#e05a5a' ? '#e05a5a' : '#dcd8d1'; ctx.lineWidth = 2;
+      roundRect(ctx, cx, cy, w, 36, 18); ctx.stroke();
+      ctx.fillStyle = ch.color;
+      ctx.fillText(ch.t, cx + 15, cy + 24);
+      cx += w + 12;
     }
   }
-  wrapLines.push(cur);
-  let lineY = 308;
-  for (const ln of wrapLines) { ctx.fillText(ln, 482, lineY); lineY += 26; }
-  const metaY = lineY; // 建议等级随实际行数下移
-  ctx.fillText(`建议等级:Lv.${meta.suggest}+`, 482, metaY);
-  const warnY = metaY + 28;
-  if (prof.level < meta.suggest) {
-    ctx.fillStyle = '#fff';
-    roundRect(ctx, 482, warnY - 26, 184, 40, 20); ctx.fill();
-    ctx.strokeStyle = '#e05a5a'; ctx.lineWidth = 2; roundRect(ctx, 482, warnY - 26, 184, 40, 20); ctx.stroke();
-    ctx.fillStyle = '#e05a5a'; ctx.font = FONT(19, 'bold');
-    // M11-05 F7 整改:chip 内文字居中(修复前继承 left 对齐却从 chip 中心 x=574 起绘,溢出右缘)
-    ctx.textAlign = 'center';
-    ctx.fillText('⚠ 等级低于建议', 574, warnY);
-    ctx.textAlign = 'left';
-  }
   ctx.textAlign = 'center';
+
   // 技能装配 4 槽(M11 设计稿:120×120 图标+技能名;点击选中→技能库换装;
-  // F2/F7 整改:槽区上移 panelY=490/slotsY=560,库区扩为两列 8 行)
+  // 技能装配 4 槽(v2:140 大槽;单击槽图标=tips,右上「更换」=换装抽屉,技能库列表已移除)
   ctx.fillStyle = '#fff';
-  roundRect(ctx, 32, UI.loadout.panelY, 656, 210, 24); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.panelY, 656, 210, 24); ctx.stroke();
+  roundRect(ctx, 32, UI.loadout.panelY, 656, 330, 24); ctx.fill();
+  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.panelY, 656, 330, 24); ctx.stroke();
   ctx.fillStyle = '#794f27';
   ctx.font = FONT(26, 'bold');
   ctx.textAlign = 'left';
-  ctx.fillText('技能装配', 56, UI.loadout.panelY + 40);
+  ctx.fillText('技能装配', 56, UI.loadout.panelY + 42);
   ctx.font = FONT(19);
   ctx.fillStyle = '#9f927d';
-  // F7 残留整改:说明起点 150→175——「技能装配」26px bold 实宽 ~108px(尾≈164),修复前与说明同基线重叠
-  ctx.fillText('点击槽位选中 → 在下方技能库点技能换装(立即生效)', 175, UI.loadout.panelY + 40);
+  ctx.fillText(fitText(ctx, '点图标看说明 · 右上「更换」换技能', 440), 190, UI.loadout.panelY + 42);
+
   ctx.textAlign = 'center';
   for (let i = 0; i < 4; i++) {
     const sr = uiSlotRect(i);
@@ -1092,61 +1361,25 @@ function drawLoadoutScreen(ctx, hud) {
     if (sk) {
       const img = SKILL_IMG[sk.id];
       if (img && img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, sx + 22, sy + 14, 76, 76);
+        ctx.drawImage(img, sx + 27, sy + 16, 86, 86);
       } else {
         ctx.fillStyle = GEM_SRC[sk.el];
-        ctx.beginPath(); ctx.arc(sx + 60, sy + 52, 38, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(sx + 70, sy + 58, 42, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = ['fire', 'water', 'earth'].includes(sk.el) ? '#fff' : '#794f27';
-        ctx.font = FONT(30, 'bold');
-        ctx.fillText(sk.el[0].toUpperCase(), sx + 60, sy + 63);
+        ctx.font = FONT(32, 'bold');
+        ctx.fillText(sk.el[0].toUpperCase(), sx + 70, sy + 70);
       }
       ctx.fillStyle = '#794f27';
-      ctx.font = FONT(20, 'bold');
-      ctx.fillText(sk.name, sx + 60, sy + 108);
+      ctx.font = FONT(21, 'bold');
+      ctx.fillText(fitText(ctx, sk.name, 126), sx + 70, sy + 122);
       // M11-06:右上角「更换」双环形箭头(点击打开换装列表)
       drawSwapIcon(ctx, sx + UI.loadout.slotSize - 19, sy + 19);
     } else {
       ctx.fillStyle = '#c4b89e';
       ctx.font = FONT(22);
-      ctx.fillText('空槽', sx + 60, sy + 66);
+      ctx.fillText('空槽', sx + 70, sy + 70);
     }
   }
-  // 技能库(F2 整改:两列 8 行——15 技能全部可见可点,原 7 行第 15 个 earth_pulse
-  // col=2 → x=undefined/NaN 溢出屏外;F7 整改:行内改两行文本,名字与简介不再重叠)
-  ctx.fillStyle = '#fff';
-  roundRect(ctx, 32, UI.loadout.libY, 656, 380, 24); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, UI.loadout.libY, 656, 380, 24); ctx.stroke();
-  ctx.fillStyle = '#794f27';
-  ctx.font = FONT(24, 'bold');
-  ctx.textAlign = 'left';
-  ctx.fillText('技能库', 56, UI.loadout.libY + 36);
-  ctx.font = FONT(18);
-  ctx.fillStyle = '#9f927d';
-  ctx.fillText('(Lv 解锁 · 灰=未解锁 · ●=已装配 · 点击换到选中槽)', 150, UI.loadout.libY + 36);
-  SKILL_LIBRARY.forEach((sk, i) => {
-    const r = uiLibRect(i);
-    const x0 = r.x, y0 = r.y;
-    // M11-02 F4:拥有制灰显与装配门控一致(等级够但未拥有 → 灰+「未拥有」,养成抽卡获取)
-    const ownedNow = (prof.ownedSkills || []).includes(sk.id);
-    const unlockedNow = sk.unlockLevel <= prof.level && ownedNow;
-    const equipped = (prof.loadout || []).includes(sk.id);
-    ctx.fillStyle = unlockedNow ? 'rgba(232,226,214,.5)' : 'rgba(232,226,214,.85)';
-    roundRect(ctx, x0, y0, r.w, r.h, 10); ctx.fill();
-    const img = SKILL_IMG[sk.id];
-    if (img && img.complete && img.naturalWidth > 0) {
-      ctx.drawImage(img, x0 + 4, y0 + 3, 28, 28);
-    } else {
-      ctx.fillStyle = GEM_SRC[sk.el];
-      ctx.beginPath(); ctx.arc(x0 + 18, y0 + 17, 13, 0, Math.PI * 2); ctx.fill();
-    }
-    // 行 1:技能名(+已装配 ●);行 2:简介|CD|等级(13px,F7 整改:单行 18px 名+15px 简介同 x 轴曾重叠)
-    ctx.fillStyle = unlockedNow ? '#5a4a32' : '#c4b89e';
-    ctx.font = FONT(17, 'bold');
-    ctx.fillText(sk.name + (equipped ? ' ●' : ''), x0 + 38, y0 + 15);
-    ctx.font = FONT(13);
-    ctx.fillStyle = unlockedNow ? '#9f927d' : '#c4b89e';
-    ctx.fillText(`${SKILL_BRIEF[sk.kind] || sk.kind}｜CD ${sk.cd}s｜${unlockedNow ? 'Lv' + (prof.skillLevels[sk.id] || 1) : !ownedNow ? '未拥有' : 'Lv' + sk.unlockLevel + '解锁'}`, x0 + 38, y0 + 31);
-  });
   ctx.textAlign = 'center';
   // 出战按钮
   drawBtn(ctx, UI.loadout.fightBtn, '出 战', 'primary', 38);
@@ -1259,63 +1492,47 @@ function wrapText(ctx, text, x, y, maxW, lineH) {
 }
 
 // M11-06:换装列表面板(槽位「更换」按钮打开;已装配技能不显示)
+// 需求方 2026-10-19 整改:按 03 样板抽屉网格实装(图标+名+Lv/CD 小字,不再塞长描述/数值列);
+// 面板高度收进屏内(原 1088 高溢出屏底);关闭按钮收进面板右上;「灰=不可用」说明句移除
 function drawPickPanel(ctx, hud, prof, lo) {
+  const P = { x: 40, y: UI.loadout.pickTop, w: 640, h: 640 };
   ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, 720, 1280);
   ctx.fillStyle = '#f8f8f0';
-  roundRect(ctx, 40, UI.loadout.pickTop, 640, 1088, 24); ctx.fill();
+  roundRect(ctx, P.x, P.y, P.w, P.h, 24); ctx.fill();
   ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3;
-  roundRect(ctx, 40, UI.loadout.pickTop, 640, 1088, 24); ctx.stroke();
+  roundRect(ctx, P.x, P.y, P.w, P.h, 24); ctx.stroke();
   ctx.textAlign = 'left';
   ctx.fillStyle = '#794f27';
   ctx.font = FONT(32, 'bold');
   ctx.fillText(`选择技能 → 槽位 ${(lo.pickSlot ?? 0) + 1}`, 64, UI.loadout.pickTop + 58);
-  ctx.font = FONT(19);
-  ctx.fillStyle = '#9f927d';
-  ctx.fillText('灰=不可用(等级/未拥有) · 已装配不显示', 64, UI.loadout.pickTop + 88);
-  // 关闭按钮
+  // 关闭按钮(面板内右上,与样板同款 ghost)
   const cb = UI.loadout.pickCloseBtn;
-  ctx.fillStyle = '#fff';
-  roundRect(ctx, cb.x, cb.y, cb.w, cb.h, 16); ctx.fill();
-  ctx.strokeStyle = '#19c8b9'; ctx.lineWidth = 3;
-  roundRect(ctx, cb.x, cb.y, cb.w, cb.h, 16); ctx.stroke();
-  ctx.fillStyle = '#19c8b9'; ctx.font = FONT(26, 'bold');
-  ctx.textAlign = 'center';
-  ctx.fillText('关 闭', cb.x + cb.w / 2, cb.y + 38);
-  const atk = atkText(prof.level);
+  drawBtn(ctx, cb, '关 闭', 'ghost', 26);
   const rows = uiPickRows(prof.loadout, prof.ownedSkills, prof.level);
   rows.forEach(({ sk, rect, unlocked }) => {
     ctx.fillStyle = unlocked ? '#fff' : '#f0ece2';
     roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 16); ctx.fill();
-    ctx.strokeStyle = unlocked ? '#e8e2d6' : '#e8e2d6'; ctx.lineWidth = 2;
+    ctx.strokeStyle = '#e8e2d6'; ctx.lineWidth = 2;
     roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 16); ctx.stroke();
     const img = SKILL_IMG[sk.id];
     if (img && img.complete && img.naturalWidth > 0) {
       if (!unlocked) ctx.globalAlpha = 0.45;
-      ctx.drawImage(img, rect.x + 12, rect.y + 10, 52, 52);
+      ctx.drawImage(img, rect.x + 12, rect.y + 12, 52, 52);
       ctx.globalAlpha = 1;
     } else {
       ctx.fillStyle = GEM_SRC[sk.el];
-      ctx.beginPath(); ctx.arc(rect.x + 38, rect.y + 36, 24, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(rect.x + 38, rect.y + 38, 24, 0, Math.PI * 2); ctx.fill();
     }
     ctx.textAlign = 'left';
     ctx.fillStyle = unlocked ? '#794f27' : '#c4b89e';
-    ctx.font = FONT(24, 'bold');
-    ctx.fillText(sk.name, rect.x + 80, rect.y + 32);
-    ctx.font = FONT(17);
+    ctx.font = FONT(20, 'bold');
+    ctx.fillText(fitText(ctx, sk.name, rect.w - 76 - 12), rect.x + 76, rect.y + 32);
+    ctx.font = FONT(13);
     ctx.fillStyle = unlocked ? '#9f927d' : '#c4b89e';
-    const lvTxt = unlocked ? `Lv.${prof.skillLevels?.[sk.id] || 1}` : (prof.ownedSkills || []).includes(sk.id) ? `Lv.${sk.unlockLevel} 解锁` : '未拥有';
-    // F7 残留整改:描述给右侧数值列留宽(≤400px 超宽截断)
-    ctx.fillText(fitText(ctx, `${lvTxt} · ${ELEMENT_NAME[sk.el] || sk.el} · CD ${sk.cd}s · ${skillDetailText(sk)}`, 400), rect.x + 80, rect.y + 60);
-    // 右侧:首档数值(F13 整改:按技能类型口径+标签)
-    const vline = skillValueLine(sk, atk, maxHpText(prof.level));
-    ctx.textAlign = 'right';
-    ctx.font = FONT(22, 'bold');
-    ctx.fillStyle = unlocked ? '#19c8b9' : '#c4b89e';
-    ctx.fillText(vline.text.split(' / ')[0], rect.x + rect.w - 20, rect.y + 38);
-    ctx.font = FONT(15);
-    ctx.fillStyle = '#9f927d';
-    ctx.fillText(vline.label, rect.x + rect.w - 20, rect.y + 62);
-    ctx.textAlign = 'left';
+    const sub = unlocked
+      ? `Lv.${prof.skillLevels?.[sk.id] || 1} · CD ${sk.cd}s`
+      : (prof.ownedSkills || []).includes(sk.id) ? `Lv.${sk.unlockLevel} 解锁` : '未拥有';
+    ctx.fillText(fitText(ctx, sub, rect.w - 76 - 12), rect.x + 76, rect.y + 56);
   });
   ctx.textAlign = 'center';
 }
@@ -1325,93 +1542,230 @@ function maxHpText(level) { return 100 + 15 * (level - 1); }
 function atkText(level) { return 10 + (level - 1); }
 
 // ===== 05 结算(胜利/失败;UI 设计稿 05) =====
-function drawResult(ctx, hud, battle, victory) {
-  ctx.fillStyle = victory ? 'rgba(232,246,224,.88)' : 'rgba(243,226,224,.9)';
+function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
+  // ===== 结算 v2(M15;05-result.html 样板实装)=====
+  // 时间轴:0~0.25s 遮罩淡入 → 0.35s 横幅(胜利 spring 弹入/失败下沉淡入)→ 0.7s 起统计行
+  // stagger(每行 +130ms)+数字滚动 → 1.55s 起按钮组逐个弹入;任意点按=跳过(main resultSkip)
+  // 胜利专属:五行色彩带 ~120 粒顶部落下;失败:无彩带+横幅下沉不弹跳(不庆祝)
+  // F4 整改:t 按真实经过时间推进(帧率无关,30/60/120fps 同一时长;与音效拍点对齐)
+  const T = resultAnim;
+  T.t += dt;
+  const t = T.t;
+  const ease = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
+  const stage = (d0, d1) => ease((t - d0) / (d1 - d0)); // 0→1 入场进度
+  // 遮罩(0~0.25s 淡入)
+  const mA = Math.min(1, t / 0.25);
+  ctx.fillStyle = victory ? `rgba(232,246,224,${0.88 * mA})` : `rgba(243,226,224,${0.9 * mA})`;
   ctx.fillRect(0, 0, 720, 1280);
-  const R = victory ? UI.result.victory : UI.result.defeat;
-  // 横幅
-  ctx.fillStyle = victory ? '#6fba2c' : '#e05a5a';
-  roundRect(ctx, 90, 130, 540, 150, 24); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 4;
-  roundRect(ctx, 90, 130, 540, 150, 24); ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.font = FONT(64, 'bold');
-  ctx.textAlign = 'center';
-  ctx.fillText(victory ? '通 关 !' : '战 败', 360, 228);
-  // 统计卡
-  const cardH = victory ? 580 : 430;
-  ctx.fillStyle = '#fff';
-  roundRect(ctx, 60, 340, 600, cardH, 24); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 60, 340, 600, cardH, 24); ctx.stroke();
-  ctx.fillStyle = '#794f27';
-  ctx.font = FONT(30, 'bold');
-  ctx.fillText(victory ? `第 ${battle.level} 关 · 结算` : `第 ${battle.level} 关 · 第 ${battle.wave} 波`, 360, 390);
-  ctx.font = FONT(25);
-  ctx.textAlign = 'left';
-  let ry = 440;
-  const row = (label, value, color = '#5a4a32') => {
-    ctx.fillStyle = '#9f927d'; ctx.fillText(label, 92, ry);
-    ctx.fillStyle = color; ctx.textAlign = 'right'; ctx.fillText(value, 628, ry); ctx.textAlign = 'left';
-    ry += 42;
-  };
-  row('击杀敌人', `${battle.kills} 只`);
-  row('最高连锁', `×${hud.maxChain ? hud.maxChain() : 0}`);
-  row('击杀经验累计', `+${battle.expGained} exp`);
-  if (victory) {
-    row('通关奖励', `💰${battle.victoryCoins || 0} ⛏${battle.victoryMats || 0}`);
-    row('本局产出', `💰${battle.coinsGained} ⛏${battle.matsGained}`, '#b06f1f');
-    // 升级/资产段(经验与材料收益已入档;养成面板消费)
-    ry += 8;
-    ctx.strokeStyle = '#dcd8d1'; ctx.setLineDash([8, 6]);
-    ctx.beginPath(); ctx.moveTo(92, ry - 24); ctx.lineTo(628, ry - 24); ctx.stroke();
-    ctx.setLineDash([]);
-    const prof = hud.profile ? hud.profile() : { level: 1, coins: 0, materials: 0 };
-    ctx.fillStyle = '#5a4a32';
-    ctx.font = FONT(28, 'bold');
-    ctx.fillText(`当前 Lv.${prof.level}`, 92, ry + 20);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#f5c31c';
-    ctx.fillText(`💰${prof.coins ?? 0} ⛏${prof.materials ?? 0}`, 628, ry + 20);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#9f927d';
-    ctx.font = FONT(19);
-    ctx.fillText('养成面板可用材料升级/技能升级/抽卡', 92, ry + 56);
-    // 解锁提示 chip(通关 L → 解锁 L+1,FR-6)
-    if (battle.level < 5) {
-      const meta = LEVEL_META[battle.level] || { name: `第 ${battle.level + 1} 关` };
-      ctx.textAlign = 'center';
-      chip(ctx, 210, 946, `🎉 解锁第 ${battle.level + 1} 关 · ${meta.name}`, '#fff', '#0e7a70');
-      ctx.textAlign = 'left';
+  // 彩带(胜利;0.8s 起生成,持续下落,落底循环;位移按真实 dt)
+  if (victory && t > 0.8 && T.confetti.length < 120) {
+    const colors = ['#ff4444', '#4488ff', '#44ff44', '#ccccff', '#cc8844', '#f5c31c'];
+    for (let i = 0; i < 6 && T.confetti.length < 120; i++) {
+      T.confetti.push({ x: Math.random() * 720, y: -24, vy: 220 + Math.random() * 140, rot: Math.random() * 360, vr: 200 + Math.random() * 240, w: 9 + Math.random() * 6, h: 13 + Math.random() * 8, color: colors[Math.floor(Math.random() * colors.length)] });
     }
-  } else {
-    row('本局获得', `💰${battle.coinsGained} ⛏${battle.matsGained}`, '#b06f1f');
-    row('剩余主角 HP', '0', '#e05a5a');
-    // 鼓励文案(距建议等级差距动态生成)
-    const meta = LEVEL_META[battle.level - 1] || { suggest: battle.level };
-    ctx.fillStyle = '#efe9db';
-    roundRect(ctx, 92, ry - 10, 536, 96, 14); ctx.fill();
-    ctx.fillStyle = '#794f27';
-    ctx.font = FONT(22);
-    ctx.textAlign = 'center';
-    const lv = hud.profile ? (hud.profile().level || 1) : 1;
-    ctx.fillText(lv < meta.suggest ? `练到 Lv.${meta.suggest} 再来挑战!` : '差一点!调整装配再战一次。', 360, ry + 22);
-    ctx.font = FONT(18);
-    ctx.fillStyle = '#9f927d';
-    ctx.fillText('失败无惩罚:等级/收益/解锁全部保留', 360, ry + 64);
-    ctx.textAlign = 'left';
   }
-  ctx.textAlign = 'center';
-  // 按钮组
-  if (victory) {
-    drawBtn(ctx, R.mainBtn, battle.level >= 5 ? '完 成' : '下一关 ▶', 'primary', 36);
-    drawBtn(ctx, R.retryBtn, '重打本关', 'ghost', 28);
-    drawBtn(ctx, R.backBtn, '返回选关', 'ghost', 28);
-  } else {
-    drawBtn(ctx, R.mainBtn, '再战一次', 'primary', 36);
-    drawBtn(ctx, R.loadoutBtn, '去备战', 'ghost', 28);
-    drawBtn(ctx, R.backBtn, '返回选关', 'ghost', 28);
+  ctx.save();
+  for (const c of T.confetti) {
+    c.y += c.vy * dt; c.rot += c.vr * dt;
+    if (c.y > 1310) { c.y = -24; c.x = Math.random() * 720; }
+    ctx.save();
+    ctx.translate(c.x, c.y); ctx.rotate((c.rot * Math.PI) / 180);
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = c.color; ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+    ctx.restore();
+  }
+  ctx.restore();
+  // 横幅(0.35s 起;胜利 spring 0.6→1.1→1 / 失败缓慢下沉淡入,不弹跳)
+  const R = victory ? UI.result.victory : UI.result.defeat;
+  const bIn = stage(0.35, 0.9);
+  if (bIn > 0) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    if (victory) {
+      let sc;
+      if (bIn < 0.6) sc = 0.6 + (bIn / 0.6) * 0.5;
+      else if (bIn < 1) sc = 1.1 - ((bIn - 0.6) / 0.4) * 0.1;
+      else sc = 1;
+      ctx.translate(360, 205); ctx.scale(sc, sc);
+      ctx.globalAlpha = Math.min(1, bIn * 2);
+      ctx.translate(-360, -205);
+    } else {
+      ctx.globalAlpha = 0.92 * bIn;
+      ctx.translate(0, (1 - bIn) * -24);
+    }
+    ctx.fillStyle = victory ? '#6fba2c' : '#e05a5a';
+    roundRect(ctx, 90, 130, 540, 150, 24); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 4;
+    roundRect(ctx, 90, 130, 540, 150, 24); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = FONT(64, 'bold');
+    ctx.fillText(victory ? '通 关 !' : '战 败', 360, 228);
+    ctx.restore();
+  }
+  // 统计卡(0.6s 起淡入)+ 统计行 stagger(0.7s 起每行 +130ms)+ 数字滚动
+  const cIn = stage(0.6, 0.9);
+  if (cIn > 0) {
+    const cardH = victory ? 580 : 430;
+    ctx.globalAlpha = cIn;
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, 60, 340, 600, cardH, 24); ctx.fill();
+    ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 60, 340, 600, cardH, 24); ctx.stroke();
+    ctx.fillStyle = '#794f27';
+    ctx.font = FONT(30, 'bold');
+    ctx.textAlign = 'center';
+    ctx.fillText(victory ? `第 ${battle.level} 关 · 结算` : `第 ${battle.level} 关 · 第 ${battle.wave} 波`, 360, 390);
+    ctx.font = FONT(25);
+    ctx.textAlign = 'left';
+    // 统计行定义(与样板同序;数字滚动:显示值每帧向真值逼近 18%)
+    const rows = [
+      { key: 'kills', label: '击杀敌人', target: battle.kills, fmt: (v) => `${v} 只` },
+      { key: 'chain', label: '最高连锁', target: hud.maxChain ? hud.maxChain() : 0, fmt: (v) => `×${v}` },
+      { key: 'exp', label: '击杀经验累计', target: battle.expGained, fmt: (v) => `+${v} exp` },
+    ];
+    if (victory) {
+      rows.push({ key: 'vcoin', label: '通关奖励', target: battle.victoryCoins || 0, fmt: (v) => `${v}`, mats: battle.victoryMats || 0, color: '#5a4a32' });
+      rows.push({ key: 'coin', label: '本局产出', target: battle.coinsGained, fmt: (v) => `${v}`, mats: battle.matsGained, color: '#b06f1f' });
+    } else {
+      rows.push({ key: 'gain', label: '本局获得', target: battle.coinsGained, fmt: (v) => `💰${v} ⛏${battle.matsGained}`, color: '#b06f1f' });
+      rows.push({ key: 'hp', label: '剩余主角 HP', target: 0, fmt: () => '0', color: '#e05a5a' });
+    }
+    // 数字滚动逼近系数(时间常数型,帧率无关;60fps 时 ≈0.18 与原手感一致)
+    const rollK = 1 - Math.exp(-dt * 12);
+    const imgC = UI_IMG.coin, imgP = UI_IMG.pick;
+    const hasIcons = !!(imgC && imgC.complete && imgC.naturalWidth && imgP && imgP.complete && imgP.naturalWidth);
+    let ry = 440;
+    rows.forEach((r0, i) => {
+      const d0 = 0.7 + i * 0.13;
+      const rin = stage(d0, d0 + 0.32);
+      if (rin <= 0) { ry += 42; return; }
+      ctx.save();
+      ctx.globalAlpha = cIn * rin;
+      ctx.translate((1 - rin) * -28, 0);
+      ctx.fillStyle = '#9f927d'; ctx.fillText(r0.label, 92, ry);
+      if (r0.mats !== undefined) {
+        // 奖励行:金币与材料两个数字都显示(UIV2-01 F3/需求方 2026-10-19:
+        // 数值与图标组合右对齐,不再固定图标位与右对齐数字脱节重叠)
+        if (t >= RESULT_READY_T) { T.rolls[r0.key] = r0.target; T.rolls[r0.key + '_m'] = r0.mats; }
+        else {
+          if (T.rolls[r0.key] === undefined) T.rolls[r0.key] = 0;
+          if (T.rolls[r0.key + '_m'] === undefined) T.rolls[r0.key + '_m'] = 0;
+          T.rolls[r0.key] += (r0.target - T.rolls[r0.key]) * rollK;
+          T.rolls[r0.key + '_m'] += (r0.mats - T.rolls[r0.key + '_m']) * rollK;
+          if (Math.abs(r0.target - T.rolls[r0.key]) < 1) T.rolls[r0.key] = r0.target;
+          if (Math.abs(r0.mats - T.rolls[r0.key + '_m']) < 1) T.rolls[r0.key + '_m'] = r0.mats;
+        }
+        const vn = Math.round(T.rolls[r0.key]), vm = Math.round(T.rolls[r0.key + '_m']);
+        ctx.font = FONT(25);
+        ctx.fillStyle = r0.color || '#5a4a32';
+        ctx.textAlign = 'right';
+        const sM = `${vm}`, sN = `${vn}`;
+        let x = 628;
+        ctx.fillText(sM, x, ry); x -= ctx.measureText(sM).width + (hasIcons ? 24 : 6);
+        if (hasIcons) { ctx.drawImage(imgP, x - 18, ry - 17, 18, 18); x -= 28; }
+        ctx.fillText(sN, x, ry); x -= ctx.measureText(sN).width + (hasIcons ? 24 : 6);
+        if (hasIcons) ctx.drawImage(imgC, x - 18, ry - 17, 18, 18);
+        ctx.textAlign = 'left';
+      } else {
+        // 数字滚动状态(键控;跳过后=显示终值)
+        if (t >= RESULT_READY_T) T.rolls[r0.key] = r0.target;
+        else {
+          if (T.rolls[r0.key] === undefined) T.rolls[r0.key] = 0;
+          T.rolls[r0.key] += (r0.target - T.rolls[r0.key]) * rollK;
+          if (Math.abs(r0.target - T.rolls[r0.key]) < 1) T.rolls[r0.key] = r0.target;
+        }
+        const shown = Math.round(T.rolls[r0.key]);
+        ctx.fillStyle = r0.color || '#5a4a32'; ctx.textAlign = 'right';
+        ctx.fillText(r0.fmt(shown), 628, ry);
+        ctx.textAlign = 'left';
+      }
+      ctx.restore();
+      ry += 42;
+    });
+    // 升级/资产段(胜利)或鼓励文案(失败):1.2s 起
+    const lateIn = stage(1.2, 1.5);
+    if (lateIn > 0) {
+      ctx.save();
+      ctx.globalAlpha = cIn * lateIn;
+      if (victory) {
+        ry += 8;
+        ctx.strokeStyle = '#dcd8d1'; ctx.setLineDash([8, 6]);
+        ctx.beginPath(); ctx.moveTo(92, ry - 24); ctx.lineTo(628, ry - 24); ctx.stroke();
+        ctx.setLineDash([]);
+        const prof = hud.profile ? hud.profile() : { level: 1, coins: 0, materials: 0 };
+        ctx.fillStyle = '#5a4a32';
+        ctx.font = FONT(28, 'bold');
+        ctx.fillText(`当前 Lv.${prof.level}`, 92, ry + 20);
+        // 总资产行(UIV2-02 F3 整改:金币/材料两个数字都显示,图标+数字组合右对齐——
+        // 与奖励行同一排布逻辑;原「先算总宽再向右排」致 890/10029 数字与图标挤压)
+        {
+          const imgC = UI_IMG.coin, imgP = UI_IMG.pick;
+          const hasIcons = !!(imgC && imgC.complete && imgC.naturalWidth && imgP && imgP.complete && imgP.naturalWidth);
+          ctx.font = FONT(25);
+          ctx.fillStyle = '#f5c31c';
+          ctx.textAlign = 'right';
+          const sN = `${prof.coins ?? 0}`, sM = `${prof.materials ?? 0}`;
+          let ix = 628;
+          ctx.fillText(sM, ix, ry + 20); ix -= ctx.measureText(sM).width + (hasIcons ? 24 : 6);
+          if (hasIcons) { ctx.drawImage(imgP, ix - 18, ry + 3, 18, 18); ix -= 28; }
+          ctx.fillText(sN, ix, ry + 20); ix -= ctx.measureText(sN).width + (hasIcons ? 24 : 6);
+          if (hasIcons) ctx.drawImage(imgC, ix - 18, ry + 3, 18, 18);
+          ctx.textAlign = 'left';
+        }
+        ctx.fillStyle = '#9f927d';
+        ctx.font = FONT(19);
+        ctx.fillText('养成面板可用材料升级/技能升级/抽卡', 92, ry + 56);
+        if (battle.level < 5) {
+          const meta = LEVEL_META[battle.level] || { name: `第 ${battle.level + 1} 关` };
+          ctx.textAlign = 'center';
+          chip(ctx, 210, 946, `🎉 解锁第 ${battle.level + 1} 关 · ${meta.name}`, '#fff', '#0e7a70');
+          ctx.textAlign = 'left';
+        }
+      } else {
+        const meta = LEVEL_META[battle.level - 1] || { suggest: battle.level };
+        ctx.fillStyle = '#efe9db';
+        roundRect(ctx, 92, ry - 10, 536, 96, 14); ctx.fill();
+        ctx.fillStyle = '#794f27';
+        ctx.font = FONT(22);
+        ctx.textAlign = 'center';
+        ctx.fillText(`练到 Lv.${meta.suggest} 再来挑战!失败不扣任何进度`, 360, ry + 30);
+        ctx.font = FONT(19); ctx.fillStyle = '#9f927d';
+        ctx.fillText('等级/经验/解锁全部保留', 360, ry + 60);
+        ctx.textAlign = 'left';
+      }
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+  // 按钮组(1.55s 起弹入;动效期内点按=跳过由 main 处理,按钮在 resultReady 前不接点击)
+  // F8 整改:最后一关(第 5 关)主按钮文案=「完 成」(点击返回选关,与 main 路由一致)
+  const btnIn = stage(1.55, 1.85);
+  if (btnIn > 0) {
+    const mainLabel = victory ? (battle.level >= 5 ? '完 成' : '下一关 ▶') : '再战一次';
+    const list = victory
+      ? [[R.mainBtn, mainLabel, 'primary', 36], [R.retryBtn, '重打本关', 'ghost', 28], [R.backBtn, '返回选关', 'ghost', 28]]
+      : [[R.mainBtn, '再战一次', 'primary', 36], [R.loadoutBtn, '去备战', 'ghost', 28], [R.backBtn, '返回选关', 'ghost', 28]];
+    list.forEach(([r0, label, kind, fs], i) => {
+      const d0 = 1.55 + i * 0.08;
+      const bin = stage(d0, d0 + 0.3);
+      if (bin <= 0) return;
+      ctx.save();
+      ctx.globalAlpha = bin;
+      const sc = 0.85 + 0.15 * bin;
+      ctx.translate(r0.x + r0.w / 2, r0.y + r0.h / 2); ctx.scale(sc, sc); ctx.translate(-(r0.x + r0.w / 2), -(r0.y + r0.h / 2));
+      drawBtn(ctx, r0, label, kind, fs);
+      ctx.restore();
+    });
   }
 }
+
+// 结算动效状态(模块级;main 在终局帧调 resultRestart 归零并触发音效;结算屏点按调 resultSkip)
+const resultAnim = { t: 0, confetti: [], rolls: {} };
+// 按钮可点时刻=时间轴完整终态(F4 整改:末按钮 1.55+2×0.08+0.30=2.01s 全部入场完成;
+// 跳过直达此刻,与「完整终态」同帧,不再有 1.85s 半程态)
+const RESULT_READY_T = 2.01;
+export function resultRestart() { resultAnim.t = 0; resultAnim.confetti = []; resultAnim.rolls = {}; }
+export function resultSkip() { resultAnim.t = Math.max(resultAnim.t, RESULT_READY_T); }
+export function resultReady() { return resultAnim.t >= RESULT_READY_T; }
 
 // ===== 暂停浮层(底栏 ⏸;M11) =====
 function drawPauseOverlay(ctx, hud) {

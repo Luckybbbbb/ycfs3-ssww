@@ -10,7 +10,7 @@ import { BoardEngine } from './board/engine.js';
 import { render, updateEnemyHealthViews } from './ui/render.js';
 import { FxLayer, bindCallImages } from './ui/fx.js';
 import { BattleHudView, bindHudImages } from './ui/battle_hud.js';
-import { sfx, bgm } from './ui/audio.js';
+import { sfx, bgm, bgmDebug } from './ui/audio.js';
 import { Charge } from './skills/charge.js';
 import { Caster } from './skills/cast.js';
 import { Battle } from './battle/battle.js';
@@ -25,11 +25,22 @@ import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
 import { applyItem } from './board/items.js';
 import { skillById, SKILL_LIBRARY } from './skills/library.js';
 import { LEVEL_META } from './meta/levels.js';
-import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiLibRect, uiSlotSwapBtn, uiPickRows, bindImages } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
+import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, bindImages, growDeductFx, growLevelUpFx, growSkillUpFx, growGachaFx, growGachaVisible, growGachaDismiss, growListScrollState, growListScrollTo, growFloatText, resultRestart, resultSkip, resultReady } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
 fitCanvas(canvas);
 window.addEventListener('resize', () => fitCanvas(canvas));
+
+// M14 手机端音频解锁:Web Audio 的 AudioContext 需在真实手势事件内同步 resume,
+// 否则 iOS 上点击/消除音效全静(BGM 走 Audio 元素不受影响)。首次触摸一次性解锁。
+{
+  const unlockAudio = () => {
+    sfx.unlock();
+    if (bgm.enabled) bgm.sync(screen === 'playing'); // 解锁同时补播 BGM(首进战斗早于交互的场景)
+  };
+  canvas.addEventListener('pointerdown', unlockAudio, { once: true });
+  canvas.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+}
 
 // M14 需求方 2026-10-18:Service Worker 离线缓存(二次进站资源本地秒开)。
 // 仅 https(含 Pages)注册;失败静默(file://、老浏览器不受影响)。cache-bust(?cb=/?v=)仍走网络。
@@ -59,6 +70,7 @@ let lastWave = 0;             // 上一帧波次(换波同步视差用)
 let firstSel = null;          // M11-03 F9:点选交换的第一个选中格(02 文档 2.1;提升到模块级——
                               // 局界清理可见:startLevel/retryLevel 需清除,避免旧局点选状态带入新局)
 let growPanel = false;        // 养成面板开关(FR-10/03 文档 2.6:角色升级/技能升级/抽卡)
+let growDrag = null;          // 养成技能列表滚动拖拽(UIV2-01 F1:{startY,startScroll,moved,p})
 
 const engine = new BoardEngine(20260601);
 engine.fxEnabled = profile.settings.effects !== false; // 消除演出动效开关(02 文档 3.1:关→退化 0.20s 淡出)
@@ -241,7 +253,6 @@ function boot(images) {
   // 修复前 main 硬编码 libRectOf 按旧 7 行计算,与 render 布局漂移)
   const cardBtnOf = uiCardBtn;
   const slotRectOf = uiSlotRect;
-  const libRectOf = uiLibRect;
 
   // 输入绑定（cellAt 由渲染坐标反查棋盘格);返回拖拽状态句柄(果冻拖拽,M6)
   // nudgeLock(F7 续审):点选无效弹回期间仅锁 a/b 两格,其他格照常可操作
@@ -273,15 +284,18 @@ function boot(images) {
     },
     // M11 五屏路由拦截:非战斗屏/胜负结算/暂停全屏接管
     interceptDown: () => screen !== 'playing' || battle.phase !== 'FIGHTING' || paused,
-    // M11-06:长按(≥500ms,位移取消)→ 备战技能槽 tips 浮层
-    onLongPress: (p) => {
-      if (screen !== 'loadout' || panel) return;
-      for (let i = 0; i < 4; i++) {
-        if (hit(p, slotRectOf(i))) {
-          if (!profile.loadout[i]) return; // 空槽无 tips
-          tipsSlot = i; panel = 'skillTips'; sfx.item();
-          return;
-        }
+    // 空白手势移动/收尾(UIV2-01 F1/F2-02 整改:养成技能列表滚动拖拽;
+    // 二维位移判定——横向位移同样计入,横拖不误触发升级点击;其他屏 no-op)
+    onBlankMove: (p) => {
+      if (screen === 'menu' && growPanel && growDrag) {
+        if (Math.hypot(p.x - growDrag.x, p.y - growDrag.y) > 12) growDrag.moved = true; // 二维位移口径
+        growListScrollTo(growDrag.startScroll - (p.y - growDrag.y)); // 注意:起点字段是 y(F1-02 重命名后 startY 已不存在,残留引用会得 NaN 永久卡死滚动)
+      }
+    },
+    onBlankUp: (p) => {
+      if (screen === 'menu' && growPanel && growDrag) {
+        if (!growDrag.moved) handleGrowClick(growDrag.p); // 原地点按=点击(二维位移<12px)
+        growDrag = null;
       }
     },
     cellAt: (x, y) => {
@@ -312,7 +326,19 @@ function boot(images) {
       }
       // ---- 02 选关界面 ----
       if (screen === 'menu') {
-        if (growPanel) { handleGrowClick(p); return; }
+        if (growPanel) {
+          // UIV2-01 F2 整改:抽卡浮层期间点击=仅关闭浮层,绝不透传背后按钮扣费
+          if (growGachaVisible()) { growGachaDismiss(); sfx.item(); return; }
+          // UIV2-01 F1 整改:技能列表区按下=滚动拖拽起手(二维位移 <12px 松手仍当点击;
+          // 横向位移同样计入位移,横拖不会误触发升级点击)
+          const GL = GROW_LAYOUT;
+          if (p.x >= 32 && p.x <= 688 && p.y >= GL.listTop && p.y <= GL.listBottom) { // F1-03:与绘制裁切共用 listTop/listBottom
+            growDrag = { x: p.x, y: p.y, startScroll: growListScrollState().scroll, moved: false, p };
+            return;
+          }
+          handleGrowClick(p);
+          return;
+        }
         if (hit(p, UI.menu.backBtn)) { screen = 'start'; sfx.item(); return; }
         if (hit(p, UI.menu.growBtn)) { growPanel = true; sfx.item(); return; }
         for (let L = 1; L <= 5; L++) {
@@ -355,22 +381,13 @@ function boot(images) {
             pickSlot = i; panel = 'skillPick'; sfx.item(); return;
           }
         }
+        // v2:单击槽=有技能弹 tips(需求方 2026-10-19「技能 tips 改成单击图标就显示」);空槽直接开换装抽屉
         for (let i = 0; i < 4; i++) {
-          if (hit(p, slotRectOf(i))) { selSlot = i; sfx.item(); return; }
-        }
-        for (let i = 0; i < SKILL_LIBRARY.length; i++) {
-          if (!hit(p, libRectOf(i))) continue;
-          const sk = SKILL_LIBRARY[i];
-          if (sk.unlockLevel > profile.level) { showToast(`Lv.${sk.unlockLevel} 解锁`); sfx.invalid(); return; }
-          // M11-02 F4:拥有制门控(与 cast.js 释放条件一致——未拥有的技能装槽后该槽无输出;
-          // 战斗联动栏 cycleSlot 已按 owned 过滤,此处补备战入口)
-          if (!profile.ownedSkills.includes(sk.id)) { showToast('未拥有该技能(养成抽卡获取)'); sfx.invalid(); return; }
-          if (caster.loadout.includes(sk.id) && caster.loadout[selSlot] !== sk.id) { showToast('该技能已装配'); sfx.invalid(); return; }
-          caster.loadout[selSlot] = sk.id;
-          persistProfile(); // 装配变更写档(D13)
-          showToast(`槽位 ${selSlot + 1} 换装 → ${sk.name}(立即生效)`);
-          sfx.item();
-          return;
+          if (hit(p, slotRectOf(i))) {
+            if (profile.loadout[i]) { tipsSlot = i; panel = 'skillTips'; sfx.item(); }
+            else { pickSlot = i; panel = 'skillPick'; sfx.item(); }
+            return;
+          }
         }
         if (hit(p, UI.loadout.fightBtn)) { startLevel(selLevel); sfx.item(); return; }
         return;
@@ -384,8 +401,9 @@ function boot(images) {
         if (hit(p, UI.pause.quitBtn)) { paused = false; panel = null; screen = 'menu'; sfx.item(); return; }
         return;
       }
-      // ---- 05 结算(胜利/失败按钮组;M11 重做) ----
+      // ---- 05 结算(胜利/失败按钮组;M15 v2 时间轴:动效期内任意点按=跳过,按钮就绪后才接点击) ----
       if (battle.phase !== 'FIGHTING') {
+        if (!resultReady()) { resultSkip(); return; } // 跳过动画直达可操作态
         if (battle.phase === 'VICTORY') {
           const R = UI.result.victory;
           if (hit(p, R.mainBtn)) {
@@ -464,47 +482,73 @@ function boot(images) {
     },
   });
 
-  // 养成面板点击处理(FR-10;布局与 render.drawGrowPanel/GROW_LAYOUT 一致,F9 两列 8 行)
+  // 养成界面 v2 点击处理(M15;布局与 render.drawGrowPanel/GROW_LAYOUT 单一来源)
+  // 货币扣除动效:growDeductFx(数字滚动+轻横抖)+ sfx.deduct(嗒);数值滚动由 render 显示值逼近
   function handleGrowClick(p) {
-    const inRect = (x, y, w, h) => p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h;
-    if (inRect(60, 960, 600, 60)) { growPanel = false; sfx.item(); return; } // 关闭
-    if (inRect(80, 300, 560, 64)) { // 角色升级
+    const hit2 = (r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+    const L = GROW_LAYOUT;
+    if (growGachaVisible()) { growGachaDismiss(); return; } // UIV2-01 F2:浮层期点击不透传(仅关浮层)
+    if (hit2(L.closeBtn)) { growPanel = false; sfx.item(); return; } // 关闭
+    if (hit2(L.upBtn)) { // 角色升级(光柱+Lv 文字弹跳+属性冒字+上行琶音)
       const r = applyLevelUp(profile);
-      if (r) { persistProfile(); showToast(`角色升级 →Lv${r.level}(材料 −${r.cost})`); sfx.item(); }
-      else showToast('材料不足');
+      if (r) {
+        persistProfile();
+        growDeductFx('mat'); sfx.deduct();
+        growLevelUpFx(); sfx.levelUp();
+        growFloatText(`Lv.${r.level}!`, 380, 250, '#f5a623'); // 金色冒字(徽章旁)
+        showToast(`角色升级 →Lv${r.level}(材料 -${r.cost})`);
+      } else showToast('材料不足');
       return;
     }
-    if (inRect(80, 380, 560, 64)) { // 抽卡(满池由 gacha 返回 null 拒绝)
+    if (hit2(L.gachaBtn)) { // 抽卡(金币飞行+新技能浮层)
       const r = gacha(profile, elimRng);
       if (r === null) { showToast('技能已全部拥有'); return; }
       if (r.error) { showToast('货币不足(100 币/抽)'); return; }
       caster.owned = [...r.owned]; // 抽到技能立即入拥有表(消除链即可随机选中)
       persistProfile();
-      showToast(`抽得 ${skillById(r.skillId)?.name || r.skillId}!`); sfx.item();
+      growDeductFx('coin'); sfx.deduct();
+      growGachaFx(r.skillId); sfx.gachaOpen();
+      showToast(`抽得 ${skillById(r.skillId)?.name || r.skillId}!`);
       return;
     }
-    // 技能升级列表(两列 8 行:列 x0=70/375,行顶 506+r×46,升级按钮=列 x0+180 起 70×36)
-    const L = GROW_LAYOUT;
-    for (let col = 0; col < 2; col++) {
-      for (let row = 0; row < L.perCol; row++) {
-        const idx = col * L.perCol + row;
-        if (idx >= profile.ownedSkills.length) break;
-        const bx = L.cols[col] + L.btnOff, by = L.listY + row * L.rowH + 5;
-        if (!inRect(bx, by, L.btnW, L.btnH)) continue;
-        const id = profile.ownedSkills[idx];
-        if (!id) return;
-        const r = applySkillUp(profile, id);
-        if (r) { persistProfile(); caster.skillLevels[id] = r.level; showToast(`${skillById(id)?.name || id} →Lv${r.level}(材料 −${r.cost})`); sfx.item(); }
-        else showToast(skillById(id) && (profile.skillLevels[id] || 1) >= SKILL_LEVEL_CAP ? '已达满级' : '材料不足');
-        return;
+    // 技能升级(UIV2-01 F1 整改:遍历全部已拥有技能,命中区按滚动偏移平移;
+    // F1-02 整改:点击点必须位于 GROW_LAYOUT 定义的列表视口内(listTop=500/listBottom=940)——裁切区外的隐藏按钮不扣费
+    // (如 scroll=50 时 idx8 按钮底 968>940 裁切底,点击点在裁切外即拒绝);
+    // 布局与 render.drawGrowPanel/GROW_LAYOUT 单一来源)
+    if (p.y < L.listTop || p.y > L.listBottom) return; // 点击点在列表可见区外:不接技能升级(F1-03:与绘制裁切同源)
+    const { scroll } = growListScrollState();
+    for (let idx = 0; idx < profile.ownedSkills.length; idx++) {
+      const col = idx % 2, row = Math.floor(idx / 2);
+      const y0 = L.listY + row * L.rowH - scroll;
+      if (y0 + L.cardH < L.listTop || y0 > L.listBottom) continue; // 视口外不可点(与绘制裁切共用同一对常量)
+      const bx = L.cols[col] + L.btnOff, by = y0 + 16;
+      if (!hit2({ x: bx, y: by, w: L.btnW, h: L.btnH })) continue;
+      const id = profile.ownedSkills[idx];
+      if (!id) return;
+      const r = applySkillUp(profile, id);
+      if (r) {
+        persistProfile(); caster.skillLevels[id] = r.level;
+        growDeductFx('mat'); sfx.deduct();
+        growSkillUpFx(col, row); sfx.skillUp();
+        showToast(`${skillById(id)?.name || id} →Lv${r.level}(材料 -${r.cost})`);
+      } else {
+        showToast(skillById(id) && (profile.skillLevels[id] || 1) >= SKILL_LEVEL_CAP ? '已达满级' : '材料不足');
       }
+      return;
     }
   }
 
   let prevShakeT = 0; // 上一帧 battle.shakeT(边沿触发,避免每帧重置震动延长时长)
+  let lastRafT = 0; // 上一帧 rAF 时间戳(F4-02:表现层动效时钟与模拟 dt 上限分开——
+  // loop.js 的 update dt 钳制 0.05s 只约束模拟;表现层动效用原始 rAF 墙钟差,10fps 低帧下
+  // 2.01s 动效不再放慢一倍)
   // firstSel 已提升到模块顶层(M11-03 F9:startLevel/retryLevel 需清除输入态,避免旧局点选带入新局)
   startLoop(
     (dt) => {
+      // 需求方 2026-10-19 修复:「资源就绪」提示常驻不消失——toast 计时此前在 update 末尾扣减,
+      // 而暂停与非战斗屏在此之前的分支提前 return,toast 永不到期。改为每帧最先扣减,
+      // 任何界面/暂停态下提示都按实际经过时间正常消失。
+      if (hud.toast) { hud.toast.t -= dt; if (hud.toast.t <= 0) hud.toast = null; }
       // M11:暂停门控(底栏 ⏸)——冻结模拟推进,仅保留输入(继续/设置按钮)与渲染
       if (screen === 'playing' && paused) {
         input.update(dt);
@@ -597,6 +641,7 @@ function boot(images) {
       }
       if (battle.phase === 'VICTORY' && !victoryHandled) {
         victoryHandled = true;
+        resultRestart(); sfx.resultWin(); // M15 结算 v2:时间轴归零+胜利号角(05 样板口径)
         const vr = victoryReward(battle.level); // M6 v0.2 通关产出(货币 50×L/材料 10×L,03 文档 2.2)
         // REQ-M6-04 F4:通关奖励**先入档再持久化**——persistProfile(下帧触发)须含 vr,
         // 刷新后不丢 50×L/10×L;弹层展示含通关奖励(见 render)
@@ -611,6 +656,7 @@ function boot(images) {
           });
       } else if (battle.phase === 'DEFEAT' && !victoryHandled) {
         victoryHandled = true;
+        resultRestart(); sfx.resultLose(); // M15 结算 v2:失败下行两音(快速给「再战」路径)
         api.submitRun({ level: battle.level, victory: false, coins: battle.coinsGained, mats: battle.matsGained, kills: battle.kills });
       }
       // 失败/通关重试后允许再次结算(F3:victoryHandled 必须复位)
@@ -632,9 +678,14 @@ function boot(images) {
       updateEnemyHealthViews(dt, battle, engine.fxEnabled !== false); // M13 03轮 F9:敌人双血条按实际 dt 推进(与 battleHud 同刻;paused 时主循环提前 return 不达此处)
       // M14:BGM 局内战斗播控(playing 且非暂停/终局出声;幂等调用,screen 变化即生效)
       bgm.sync(screen === 'playing' && !paused && battle.phase === 'FIGHTING');
-      if (hud.toast) { hud.toast.t -= dt; if (hud.toast.t <= 0) hud.toast = null; }
     },
-    () => render(canvas.getContext('2d'), engine, hud),
+    (t) => {
+      // F4-02 整改:表现层动效时钟用原始 rAF 墙钟差(loop.js 的 update dt 钳制 0.05s 只约束
+      // 模拟推进;表现层 2.01s 动效在 10fps 低帧下不再放慢一倍);首帧/长间隔钳 0.5s 防跳变
+      const rdt = lastRafT ? Math.min((t - lastRafT) / 1000, 0.5) : 1 / 60;
+      lastRafT = t;
+      render(canvas.getContext('2d'), engine, hud, rdt);
+    },
   );
 }
 
@@ -651,4 +702,9 @@ window.__ssww = {
   imagesBound: () => window.__sswwImagesBound ?? 0, // M11-02 F1:预载→渲染绑定数(CDP 校验)
   sfxEnabled: () => sfx.enabled, // M11-02 F5:音效开关实时态(CDP 验证刷新恢复)
   toggleSfx, toggleFx, setPaused: (v) => { paused = !!v; },
+  // UIV2-01 F1:养成技能列表滚动状态(只读转发;CDP 验证滚动与末位技能可点)
+  growListScroll: growListScrollState,
+  growGachaVisible, // UIV2-01 F2:抽卡浮层可见性(只读转发)
+  bgmDebug, // M15:BGM 播放状态(CDP 验证播放状态)
+  resultReady, // M15:UIV2 -06 F2:结算就绪门控只读转发(CDP 行为差验证,主按钮颜色仅视觉证据)
 };
