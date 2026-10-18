@@ -25,7 +25,7 @@ GROUPS = {
     'snake': ['sprites/snake'],
     'tiger': ['sprites/tiger'],
     'boss': ['sprites/boss'],
-    'icons': ['icons/elements', 'icons/skills', 'icons/items'],
+    'icons': ['icons/elements', 'icons/skills', 'icons/items', 'icons/ui'],
 }
 
 def collect(rel_dirs):

@@ -36,6 +36,10 @@ export function iconList() {
   ]) {
     list.push({ key: `icon:skills:${id}`, url: `assets/icons/skills/${id}.png`, entity: id });
   }
+  // M14:界面图标(替换 emoji——底栏按钮/资产/状态标记,render.js UI_IMG 消费)
+  for (const n of ['pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun']) {
+    list.push({ key: `icon:ui:${n}`, url: `assets/icons/ui/${n}.png`, entity: 'ui-icon' });
+  }
   // M11 消耗品道具图标(普通 + 高级 premium 各一套)
   for (const it of ['heal', 'invincible', 'cd']) {
     list.push({ key: `icon:items:${it}`, url: `assets/icons/items/${it}.png`, entity: `item-${it}` });
