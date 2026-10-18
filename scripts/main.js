@@ -31,6 +31,12 @@ const canvas = document.getElementById('game');
 fitCanvas(canvas);
 window.addEventListener('resize', () => fitCanvas(canvas));
 
+// M14 需求方 2026-10-18:Service Worker 离线缓存(二次进站资源本地秒开)。
+// 仅 https(含 Pages)注册;失败静默(file://、老浏览器不受影响)。cache-bust(?cb=/?v=)仍走网络。
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register(new URL('../sw.js', import.meta.url).href).catch(() => {});
+}
+
 // ---- M4 局外状态(FR-5/6/8):api 统一读写(本地后端回落 save.js),事件驱动写档 ----
 const api = createApi();
 const profile = await api.getProfile();
