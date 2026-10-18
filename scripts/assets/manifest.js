@@ -44,7 +44,30 @@ export function iconList() {
   return list;
 }
 
-// 全量资源清单(主角 + 六类敌人 + M10 图标;M3 只消费 player.idle 与敌人动画,其余仍预载校验)
+// 技能喊话演出贴图(M12,方案 B「冲击斜切」):主角立绘 + 喊话气泡 + 五行技能背景 ×2 变体
+// (变体 1=Lv3 技能,变体 2=Lv6 技能;FR-9 预载校验,缺图停载;fx.js CALL_IMG 消费)
+// 战斗区 UI 图素(M13):分关卡远近背景 5 主题×2 + 头像框/技能框(battle_hud.js/parallax.js 消费)
+export function skillCallList() {
+  const list = [
+    { key: 'call:hero', url: 'assets/sprites/skillcall/hero.png', entity: 'skillcall' },
+    { key: 'call:bubble', url: 'assets/sprites/skillcall/bubble.png', entity: 'skillcall' },
+  ];
+  for (const el of ['fire', 'water', 'wood', 'metal', 'earth']) {
+    for (const v of [1, 2]) {
+      list.push({ key: `call:bg:${el}:${v}`, url: `assets/sprites/skillcall/bg_${el}_${v}.png`, entity: 'skillcall' });
+    }
+  }
+  for (const theme of ['meadow', 'swamp', 'mist', 'snow', 'volcano']) {
+    list.push({ key: `bg:${theme}:far`, url: `assets/backgrounds/battle/${theme}_far.png`, entity: 'battle-ui' });
+    list.push({ key: `bg:${theme}:near`, url: `assets/backgrounds/battle/${theme}_near.png`, entity: 'battle-ui' });
+  }
+  list.push({ key: 'ui:avatar_frame', url: 'assets/ui/battle/avatar_frame.png', entity: 'battle-ui' });
+  list.push({ key: 'ui:skill_frame', url: 'assets/ui/battle/skill_frame.png', entity: 'battle-ui' });
+  list.push({ key: 'ui:hero_avatar', url: 'assets/ui/battle/hero_avatar.png', entity: 'battle-ui' });
+  return list;
+}
+
+// 全量资源清单(主角 + 六类敌人 + M10 图标 + M12 技能喊话;M3 只消费 player.idle 与敌人动画,其余仍预载校验)
 export function fullManifest() {
   const list = [];
   for (const [action, frames] of Object.entries(PLAYER_FRAMES)) {
@@ -58,5 +81,6 @@ export function fullManifest() {
   }
   for (const type of Object.keys(ENEMY_TYPES)) list.push(...enemyFrameList(type));
   list.push(...iconList());
+  list.push(...skillCallList());
   return list;
 }

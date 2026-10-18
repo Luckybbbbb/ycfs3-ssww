@@ -31,11 +31,33 @@ export class Parallax {
     this.wave = 1;            // 当前 w_local(天空推移用)
     this.bossWave = false;    // Boss 波天色压暗 tint
     this.shakeT = 0;          // 受击 screenshake 剩余
+    this.shakeDur = SHAKE_TIME; // 当前震屏总时长(M12 可变:喊话砸入 0.35s)
+    this.shakeAmp = SHAKE_AMP;  // 当前震屏幅度(M12 可变:喊话砸入 5px)
     this.pulseT = -1;         // 技能 zoom pulse 计时(−1=未激活)
     this.leaves = [];         // 飘叶粒子 {x,y,vx,vy,s}
     this.far = null; this.mid = null; this.near = null;
     this._skyKey = '';
+    this.imgs = {};           // M13:分关卡背景图 {far:<img>, near:<img>}(未绑定走程序化兜底)
+    this.level = 1;
   }
+
+  // M13:绑定分关卡背景图(main boot 从预载 Map 取用;空缺走程序化兜底)
+  bindImages(map) {
+    if (!map || typeof map.get !== 'function') return 0;
+    this.imgs.far = map.get(`bg:${this._themeKey()}:far`) || null;
+    this.imgs.near = map.get(`bg:${this._themeKey()}:near`) || null;
+    return (this.imgs.far ? 1 : 0) + (this.imgs.near ? 1 : 0);
+  }
+
+  // M13:关卡切换(主题循环 meadow→swamp→mist→snow→volcano;重绑图,程序化 tile 保持)
+  setLevel(level) {
+    const theme = ['meadow', 'swamp', 'mist', 'snow', 'volcano'][(Math.max(1, level) - 1) % 5];
+    if (theme === this._theme) return; // 同主题免重绑
+    this._theme = theme;
+    this.imgs.far = null; this.imgs.near = null; // 待 main 重新 bindImages(按新主题 key)
+  }
+
+  _themeKey() { return this._theme || 'meadow'; }
 
   // 波次推进时重绘远景 tile(天空晨→昏);非每帧操作
   setWave(wLocal, bossWave) {
@@ -44,11 +66,21 @@ export class Parallax {
     this.buildTiles();
   }
 
-  triggerShake() { if (this.effects) this.shakeT = SHAKE_TIME; }
+  // M12:可选幅度/时长参数(技能喊话砸入震屏 5px/0.35s;缺省保持受击 4px/0.12s 原口径)
+  triggerShake(amp = SHAKE_AMP, time = SHAKE_TIME) {
+    if (!this.effects) return;
+    this.shakeAmp = amp;
+    this.shakeT = time;
+    this.shakeDur = time;
+  }
   triggerPulse() { if (this.effects) this.pulseT = 0; }
 
   // ---- tile 生成(程序化,启动/换波各一次) ----
   buildTiles() {
+    if (typeof document === 'undefined') { // 无 DOM 环境(单测):程序化 tile 跳过,draw 走空守卫
+      this.far = this.mid = this.near = null;
+      return;
+    }
     this.far = this._buildFar();
     this.mid = this._buildMid();
     this.near = this._buildNear();
@@ -155,9 +187,9 @@ export class Parallax {
   transform() {
     let ox = 0, oy = 0, scale = 1;
     if (this.effects && this.shakeT > 0) {
-      const p = this.shakeT / SHAKE_TIME;
-      ox = Math.sin(this.t * 91) * SHAKE_AMP * p;
-      oy = Math.cos(this.t * 103) * SHAKE_AMP * p;
+      const p = this.shakeT / this.shakeDur; // M12:随可变时长衰减(受击/喊话各自口径)
+      ox = Math.sin(this.t * 91) * this.shakeAmp * p;
+      oy = Math.cos(this.t * 103) * this.shakeAmp * p;
     }
     if (this.effects && this.pulseT >= 0) {
       const q = this.pulseT / 0.3;
@@ -168,24 +200,47 @@ export class Parallax {
 
   // ---- 绘制(每层 drawImage ≤2 次;ctx 已平移/缩放到战斗区坐标) ----
   draw(ctx) {
-    // 远景 tile 循环滚动(云随之 80s/圈)
-    const fx = this.effects ? (this.t * FAR_SPEED) % LOOP_W : 0;
-    this._drawLooped(ctx, this.far, fx);
-    // 中景 tile 慢速漂移 + 雾带平移 + 飘叶
-    const mx = this.effects ? (this.t * MID_SPEED) % LOOP_W : 0;
-    this._drawLooped(ctx, this.mid, mx);
-    if (this.effects) {
-      const fogX = (this.t * 6) % (TILE_W * 2); // 雾带缓慢平移
-      ctx.fillStyle = 'rgba(255,255,255,.08)';
-      ctx.fillRect(-fogX, 300, TILE_W, 60);
-      ctx.fillRect(TILE_W * 2 - fogX, 300, TILE_W, 60);
-      ctx.fillStyle = 'rgba(180,200,120,.8)';
-      for (const l of this.leaves) ctx.fillRect(l.x, l.y, l.s, l.s); // 批量绘制,无逐粒子状态切换
+    // M13:分关卡背景图(绑定时替代远+中+近程序化层;静态铺底,不再横移)
+    if (this.imgs.far && this.imgs.far.complete && this.imgs.far.naturalWidth) {
+      ctx.drawImage(this.imgs.far, 0, 0, TILE_W, BATTLE_H);
+      // 波次晨→昏 tint(替代程序化天空渐变烘焙;alpha 随波次加深)
+      const k = (this.wave - 1) / 9;
+      if (k > 0) {
+        ctx.fillStyle = `rgba(90,50,70,${(0.32 * k).toFixed(3)})`;
+        ctx.fillRect(0, 0, TILE_W, BATTLE_H);
+      }
+      // 雾带+飘叶(保留动态层,画面不呆板)
+      if (this.effects) {
+        const fogX = (this.t * 6) % (TILE_W * 2);
+        ctx.fillStyle = 'rgba(255,255,255,.08)';
+        ctx.fillRect(-fogX, 300, TILE_W, 60);
+        ctx.fillRect(TILE_W * 2 - fogX, 300, TILE_W, 60);
+        ctx.fillStyle = 'rgba(180,200,120,.8)';
+        for (const l of this.leaves) ctx.fillRect(l.x, l.y, l.s, l.s);
+      }
+    } else {
+      // 程序化兜底(图未绑定:单测/演示)
+      const fx = this.effects ? (this.t * FAR_SPEED) % LOOP_W : 0;
+      this._drawLooped(ctx, this.far, fx);
+      const mx = this.effects ? (this.t * MID_SPEED) % LOOP_W : 0;
+      this._drawLooped(ctx, this.mid, mx);
+      if (this.effects) {
+        const fogX = (this.t * 6) % (TILE_W * 2);
+        ctx.fillStyle = 'rgba(255,255,255,.08)';
+        ctx.fillRect(-fogX, 300, TILE_W, 60);
+        ctx.fillRect(TILE_W * 2 - fogX, 300, TILE_W, 60);
+        ctx.fillStyle = 'rgba(180,200,120,.8)';
+        for (const l of this.leaves) ctx.fillRect(l.x, l.y, l.s, l.s);
+      }
     }
-    // 近景 tile + 草丛摆动(±3°,2~3s 周期)
-    const nx = this.effects ? (this.t * NEAR_SPEED) % LOOP_W : 0;
-    this._drawLooped(ctx, this.near, nx);
-    if (this.effects) this._drawGrass(ctx);
+    // 近景:绑定图替代 tile+程序化草丛;否则原口径
+    if (this.imgs.near && this.imgs.near.complete && this.imgs.near.naturalWidth) {
+      ctx.drawImage(this.imgs.near, 0, BATTLE_H - 160, TILE_W, 160);
+    } else {
+      const nx = this.effects ? (this.t * NEAR_SPEED) % LOOP_W : 0;
+      this._drawLooped(ctx, this.near, nx);
+      if (this.effects) this._drawGrass(ctx);
+    }
     // Boss 波天色压暗 tint(画在层之上、实体之下)
     if (this.bossWave) {
       ctx.fillStyle = 'rgba(30,20,50,.28)';

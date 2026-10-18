@@ -8,7 +8,8 @@ import { fitCanvas } from './core/layout.js';
 import { attachInput } from './core/input.js';
 import { BoardEngine } from './board/engine.js';
 import { render } from './ui/render.js';
-import { FxLayer } from './ui/fx.js';
+import { FxLayer, bindCallImages } from './ui/fx.js';
+import { BattleHudView, bindHudImages } from './ui/battle_hud.js';
 import { sfx } from './ui/audio.js';
 import { Charge } from './skills/charge.js';
 import { Caster } from './skills/cast.js';
@@ -23,6 +24,7 @@ import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpC
 import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
 import { applyItem } from './board/items.js';
 import { skillById, SKILL_LIBRARY } from './skills/library.js';
+import { LEVEL_META } from './meta/levels.js';
 import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiLibRect, uiSlotSwapBtn, uiPickRows, bindImages } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
@@ -62,7 +64,7 @@ profile.loadout = [...caster.loadout];
 const elimRng = makeRng(20260617); // 消除触发链均匀选技随机源(固定种子可复现,03 文档 6 自查)
 const parallax = new Parallax({ effects: profile.settings.effects !== false });
 const battle = new Battle({ atk: atkAt(profile.level), maxHp: maxHpAt(profile.level), rng: makeRng(20260601) });
-const hud = { toast: null, fx: new FxLayer(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress, cleared: () => clearedTotal, drag: null, growPanel: () => growPanel,
+const hud = { toast: null, fx: new FxLayer(), battleHud: new BattleHudView(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress, cleared: () => clearedTotal, drag: null, growPanel: () => growPanel,
   // M11 五屏状态句柄(render 布局/UI 常量消费)
   paused: () => paused, panel: () => panel, loadout: () => ({ selLevel, selSlot, panel, pickSlot, tipsSlot }),
   maxChain: () => maxChain, sfxEnabled: () => sfx.enabled, fxEnabled: () => engine.fxEnabled };
@@ -99,6 +101,9 @@ function startLevel(L) {
   battle.hp = battle.maxHp;
   battle.startLevel(L);
   caster.resetForNewLevel(); // REQ-05:终局清预约/档位/两项累计归零;CD 属局内进度同清
+  hud.fx.clearCall(); // M12:旧局喊话演出不残留
+  parallax.setLevel(battle.level); parallax.bindImages(images); // M13:分关卡背景切换
+  hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
   caster.resetTempState(); // F7 续审:CD 加速等道具临时状态不带入新局
   battle.kills = 0;
   battle.expGained = 0;
@@ -125,6 +130,8 @@ function retryLevel() {
   battle.restart();
   caster.resetForNewLevel();
   caster.resetTempState();
+  hud.fx.clearCall(); // M12:旧局喊话演出不残留
+  hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
   battle.kills = 0;
   battle.expGained = 0;
   battle.coinsGained = 0; battle.matsGained = 0;
@@ -167,6 +174,14 @@ function boot(images) {
   // M11-02 F1 整改:渲染消费预载同一资源集合(render 各表以 preload 返回实例替换自建懒加载,
   // 「预载成功 ⇒ 绘制资源就绪」;返回绑定数,CDP/测试校验)
   window.__sswwImagesBound = bindImages(images);
+  window.__sswwCallImagesBound = bindCallImages(images); // M12 技能喊话贴图(同一预载集合,缺图停载口径不变)
+  window.__sswwHudImagesBound = bindHudImages(images); // M13 头像框/技能框
+  window.__sswwParallaxImagesBound = parallax.bindImages(images); // M13 分关卡背景(初始主题)
+  // M13 HUD 上下文(只读转发:battle_hud._snapshot 消费)
+  hud.heroImg = images.get('call:hero') || null; // 头像复用技能喊话立绘裁头部
+  hud.levelName = () => LEVEL_META[(battle.level - 1) % LEVEL_META.length].name;
+  hud.skillImg = (id) => images.get(`icon:skills:${id}`) || null; // 技能图标(预载 Map 直取)
+  hud.skillMeta = (id) => skillById(id);
   // M11-02 F5:音效开关启动恢复(档内 settings.sfx;与 effects 同一套写档)
   sfx.enabled = profile.settings.sfx !== false;
   showToast('资源就绪');
@@ -174,15 +189,6 @@ function boot(images) {
   // 命中区工具
   const hit = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
   const inRect = (p, x, y, w, h) => hit(p, { x, y, w, h });
-
-  // 联动栏装配槽点击换装(FR-3.3 最小入口:槽位轮换,立即生效;M4 起写档)
-  const SLOT_HITBOX = (x) => {
-    for (let i = 0; i < 4; i++) {
-      const sx = 500 + i * 52;
-      if (x >= sx && x <= sx + 44) return i;
-    }
-    return -1;
-  };
 
   // M11:选关卡片「挑战/重打」按钮 / 备战槽位 / 技能库行命中区
   // (M11-02 F2 整改:统一由 render.ui* helper 从 UI 常量派生,与绘制同源——
@@ -354,15 +360,8 @@ function boot(images) {
       // ⚙ 设置=暂停+设置面板(render 路由:playing 屏设置面板随 paused 绘制;关闭→暂停浮层→继续)
       if (hit(p, UI.battle.pauseBtn)) { paused = true; sfx.item(); return; }
       if (hit(p, UI.battle.settingsBtn)) { paused = true; panel = 'settings'; sfx.item(); return; }
-      if (p.y >= 448 && p.y <= 504) {
-        const slot = SLOT_HITBOX(p.x);
-        if (slot >= 0) {
-          const next = caster.cycleSlot(slot);
-          persistProfile(); // 装配变更写档(D13)
-          showToast(`槽位 ${slot + 1} 换装 → ${skillById(next)?.name || next}(立即生效)`);
-          sfx.item();
-        }
-      }
+      // M13:联动栏(448~504)已移除——装配槽迁至战斗区右下技能框(纯展示,CD 自动释放);
+      // 换装唯一入口=备战界面换装列表面板(M11-06)
     },
     onSwipe: (a, b) => {
       if (screen !== 'playing' || battle.phase !== 'FIGHTING' || paused) return; // 非战斗/暂停期间棋盘输入冻结
@@ -504,6 +503,12 @@ function boot(images) {
         // 渲染层查不到 pending,必须按 tick 的执行记录认领);同一 resKey 重复回写不扩散。
         for (const used of usedList) {
           parallax.triggerPulse();
+          // M12 技能喊话(方案 B「冲击斜切」):非普攻属性弹技能执行即触发纯表现演出(~0.9s,
+          // 不阻塞逻辑);背景变体按解锁档位取用(Lv3→1,Lv6→2);震屏走 parallax 可变参数
+          if (used.skill.kind !== 'bolt' && engine.fxEnabled !== false) {
+            hud.fx.skillCall(used.skill.name, used.skill.el, used.skill.unlockLevel >= 6 ? 2 : 1);
+            parallax.triggerShake(5, 0.35);
+          }
           // 执行记录认领(幂等 resKey)仅限预约所属轮=当前轮(轮次关系,REQ-08 F8);
           // resRound undefined=预约本帧阶段2新建即执行(未经 pending 回写盖章)→ 视为本轮
           if (used.from === 'elim' && (used.resRound === undefined || used.resRound === engine.roundSeq)) {
@@ -530,6 +535,7 @@ function boot(images) {
         // 终局即时清空(REQ-M6-05 F3,03 文档 4.0):池/预约/CD/临时状态立即归零,
         // 未消费事件丢弃(终局后不再充能),棋盘未完成轮次快进收口到 IDLE(重试不留旧局残轮)
         caster.resetForNewLevel();
+        hud.fx.clearCall(); // M12:旧局喊话演出不残留
         caster.resetTempState();
         engine.drainEvents();
         let ffGuard = 0;
@@ -572,6 +578,7 @@ function boot(images) {
       hud.drag = () => input.dragState();
       parallax.update(dt);
       hud.fx.update(dt);
+      hud.battleHud.update(dt, hud, engine.fxEnabled !== false); // M13 二段血条/波次进度推进
       if (hud.toast) { hud.toast.t -= dt; if (hud.toast.t <= 0) hud.toast = null; }
     },
     () => render(canvas.getContext('2d'), engine, hud),
@@ -585,6 +592,7 @@ window.__ssww = {
   startLevel, toast: () => (hud.toast ? hud.toast.text : null), swapCreatesMatch,
   // M11 五屏导航与状态(CDP 驱动;仅改 UI 态,不写档)
   nav: (s) => { if (['start', 'menu', 'loadout', 'playing'].includes(s)) screen = s; },
+  fx: () => hud.fx, // M12 调试句柄(CDP 触发喊话演出验证;只读转发)
   openLoadout, uiState: () => ({ screen, selLevel, selSlot, panel, paused, maxChain }),
   imagesBound: () => window.__sswwImagesBound ?? 0, // M11-02 F1:预载→渲染绑定数(CDP 校验)
   sfxEnabled: () => sfx.enabled, // M11-02 F5:音效开关实时态(CDP 验证刷新恢复)

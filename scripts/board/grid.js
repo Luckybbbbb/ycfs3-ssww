@@ -9,7 +9,7 @@ export const ELEMENTS = ['metal', 'wood', 'water', 'fire', 'earth'];
 export const CELL = 90;           // 格 90×90 逻辑像素（02 文档第 1 节）
 export const BOARD_W = COLS * CELL;   // 720
 export const BOARD_H = ROWS * CELL;
-export const BOARD_Y = 504;           // 棋盘顶部逻辑 y（00 文档第 3 节）
+export const BOARD_Y = 448;           // 棋盘顶部逻辑 y(M13:联动栏移除,棋盘上移接战斗区)
 
 // 带种子的随机数（mulberry32）——终态一致性回归依赖固定种子
 export function makeRng(seed) {

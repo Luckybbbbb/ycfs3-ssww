@@ -123,6 +123,8 @@ export function render(ctx, engine, hud) {
   ctx.translate(-360, -224);
   if (px) px.draw(ctx);
   else drawFlatBackdrop(ctx);
+  // M12 技能喊话背景层(z 序:场景 < 技能背景 < 敌人;战场变换内绘制,随 screenshake/pulse 联动)
+  if (hud.fx && engine.fxEnabled !== false) hud.fx.drawCallBg(ctx);
 
   if (battle) {
     // ===== 敌人(六类序列帧,尺寸=贴图×scale;死亡淡出放大) =====
@@ -205,87 +207,10 @@ export function render(ctx, engine, hud) {
       ctx.fillStyle = `rgba(255,255,255,${Math.min(0.6, battle.hurtT * 3)})`;
       ctx.fillRect(0, 0, 720, BATTLE_H);
     }
-    // 主角 HP/护盾条(战斗区左上)
-    ctx.fillStyle = 'rgba(0,0,0,.35)';
-    roundRect(ctx, 16, 16, 200, 34, 10); ctx.fill();
-    ctx.fillStyle = '#3fae5c';
-    roundRect(ctx, 20, 20, Math.max(0, 192 * battle.hp / battle.maxHp), 16, 6); ctx.fill();
-    if (battle.shield > 0) {
-      ctx.fillStyle = '#8fd3e8';
-      roundRect(ctx, 20, 38, Math.max(0, 192 * battle.shield / Math.round(battle.maxHp * 0.3)), 8, 4); ctx.fill();
-    }
-    ctx.fillStyle = '#fff';
-    ctx.font = "12px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.textAlign = 'left';
-    ctx.fillText(`HP ${battle.hp}/${battle.maxHp}`, 24, 33);
-    // 波次进度(FR-7:第 x/10 波)+ 等级
-    const prof = hud.profile ? hud.profile() : null;
-    ctx.fillText(`Lv${prof ? prof.level : 1} · 第 ${battle.wave}/10 波`, 24, 60);
-    // (v0.2:经验条废弃——FR-7 改货币/材料 HUD,见右上角;局内不产出经验)
-    // Boss 血条(顶部居中,FR-7)
-    const boss = battle.enemies.find(e => e.alive && e.isBoss);
-    if (boss) {
-      const bw2 = 320, bx2 = (720 - bw2) / 2;
-      ctx.fillStyle = 'rgba(0,0,0,.45)';
-      roundRect(ctx, bx2 - 3, 17, bw2 + 6, 20, 8); ctx.fill();
-      ctx.fillStyle = '#a13a44';
-      roundRect(ctx, bx2, 20, Math.max(0, bw2 * boss.hp / boss.maxHp), 14, 6); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
-      ctx.fillText(`BOSS ${boss.hp}/${boss.maxHp}`, 360, 31);
-      ctx.textAlign = 'left';
-    }
-    ctx.textAlign = 'center';
   }
   ctx.restore(); // 视差/震动变换结束(联动栏与棋盘不参与 screenshake)
-
-  // ===== 联动栏(M2:5 行档位条 + 4 装配槽) =====
-  ctx.fillStyle = '#f0e8d8';
-  ctx.fillRect(0, 448, 720, 56);
-  ctx.strokeStyle = '#dcd8d1';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(1, 449, 718, 54);
-  if (hud.charge) {
-    // 5 行档位条(每行 90px 宽:小色块 ×5 表示档位)
-    for (let i = 0; i < 5; i++) {
-      const el = ELEMENTS[i];
-      const x0 = 12 + i * 92;
-      const t = hud.charge.tiers[el];
-      for (let k = 0; k < 5; k++) {
-        ctx.fillStyle = k < t ? GEM_SRC[el] : 'rgba(0,0,0,.10)';
-        roundRect(ctx, x0 + k * 15, 460 + (i % 2) * 12, 12, 14, 3); ctx.fill();
-      }
-    }
-    // 4 装配槽(宝石图 + CD 扫描;M4 起槽位存技能 ID,按技能行取元素色,CD 按技能)
-    if (hud.caster) {
-      hud.caster.loadout.forEach((id, i) => {
-        const x = 500 + i * 52;
-        const sk = skillById(id);
-        const el = sk ? sk.el : id;
-        const cd = sk ? (hud.caster.skillCds[sk.id] || 0) : 0;
-        ctx.fillStyle = '#fff';
-        roundRect(ctx, x, 458, 44, 36, 8); ctx.fill();
-        const img = GEM_IMG[el];
-        if (img && img.complete && img.naturalWidth > 0) ctx.drawImage(img, x + 6, 462, 32, 28);
-        else { ctx.fillStyle = GEM_SRC[el]; roundRect(ctx, x + 6, 462, 32, 28, 6); ctx.fill(); }
-        if (cd > 0) {
-          // CD 转圈(FR-7:径向扫描覆盖,自 12 点方向顺时针消退)
-          const frac = Math.min(1, cd / (sk ? sk.cd : 2.0));
-          ctx.fillStyle = 'rgba(0,0,0,.45)';
-          ctx.beginPath();
-          ctx.moveTo(x + 22, 476);
-          ctx.arc(x + 22, 476, 26, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
-          ctx.closePath();
-          ctx.fill();
-        }
-        // 非初始弹标记(技能库技能:右上小点)
-        if (sk && sk.unlockLevel > 1) {
-          ctx.fillStyle = '#f5c31c';
-          ctx.beginPath(); ctx.arc(x + 38, 463, 3, 0, Math.PI * 2); ctx.fill();
-        }
-      });
-    }
-  }
+  // M13 战斗区 HUD(头像/二段血条/关卡名/BOSS 条/技能框/波次进度;draw 自带快照,只读)
+  if (hud.battleHud) hud.battleHud.draw(ctx, hud);
 
   // ===== 三消棋盘 =====
   // M9:播报棋盘微震(chain≥4 播报附带 ±2px 衰减;覆盖棋盘+演出+特效层,底栏/弹层不参与)
@@ -392,7 +317,7 @@ export function render(ctx, engine, hud) {
       if (g.elName === null && cl.el !== undefined) g.elName = ELEMENTS[cl.el];
     }
     for (const [key, g] of groups) {
-      const gx = g.c * CELL + CELL / 2, gy = 504 + g.r * CELL + CELL / 2;
+      const gx = g.c * CELL + CELL / 2, gy = BOARD_Y + g.r * CELL + CELL / 2; // M13
       const stage = g.elapsed >= t4 ? 4 : g.elapsed >= t3 ? 3 : g.elapsed >= t2 ? 2 : 1;
       // 段② 起点:合成闪光五行色粒子迸发 ≤8(一次性)
       if (stage >= 2) {
@@ -471,10 +396,10 @@ export function render(ctx, engine, hud) {
 
   // ===== 底栏 =====
   ctx.fillStyle = '#f0e8d8';
-  ctx.fillRect(0, 1224, 720, 56);
+  ctx.fillRect(0, 1168, 720, 56);
   ctx.strokeStyle = '#dcd8d1';
   ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(0, 1224); ctx.lineTo(720, 1224); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, 1168); ctx.lineTo(720, 1168); ctx.stroke();
   // M11-05 F7 整改:统计左对齐 x=104/字号 17(⏸ 按钮右侧起,宽 ~330 止于 ~434),资产右对齐
   // 620(宽 ~150 起 ~470)——修复前统计居中 360(160~560)与资产(470~620)同基线重叠
   ctx.fillStyle = '#9f927d';
@@ -713,8 +638,8 @@ export const UI = {
     pickTop: 96, pickRowH: 84, pickCloseBtn: { x: 590, y: 106, w: 110, h: 56 },
   },
   battle: {
-    pauseBtn: { x: 24, y: 1232, w: 70, h: 40 },
-    settingsBtn: { x: 626, y: 1232, w: 70, h: 40 },
+    pauseBtn: { x: 24, y: 1176, w: 70, h: 40 },
+    settingsBtn: { x: 626, y: 1176, w: 70, h: 40 },
   },
   result: {
     victory: {
