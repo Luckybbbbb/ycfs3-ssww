@@ -30,3 +30,6 @@
 18. Python subprocess 解析 bash 时可能命中 WSL 的 `System32\bash.exe`：从 git.exe 位置推导 Git Bash（verify_commit_paths.py 的 `find_git_bash` 已内置）。
 19. harness 输出在 GBK 控制台是乱码但结果可判读：看每行末尾 `code_ok=/reason_ok=` 与尾部统计 `PASS=x FAIL=y SKIP=z` 及总退出码。
 20. **提交门禁的校验基准必须是已审核身份而非当前工作区**（2026-10-16 codex 审核判 P1）：快照检查与 git add 之间存在改写窗口；现由 identity 时的 git blob 索引锚定闭合。
+21. **调用器产物 append-only，已存在即拒发**（2026-10-19 ssww-pack-assets 链实证）：同 REQUEST_ID 的 `.tmp/codex-rulings/` 产物文件（输出/receipt）已存在时，`invoke_ssww_review.py` 直接拒绝本次调用——即使候选未变、只是证据过期想重发，也必须换新 REQUEST_ID（重跑 identity 后重新绑定）。
+22. **request 文件不可复用改写**（2026-10-19 同上实证）：改写旧 REQ_ID 的 request 文件再重发，审核会判定「旧请求路径已被重写，不再作为原始请求凭据」；每轮 request 必须以当轮新 REQ_ID 命名、一次写就。
+23. **复用历史行为证据前先核对运行输入身份**（2026-10-19 同上实证）：引用旧轮日志时，审核会逐条复算日志头绑定的运行时文件 SHA——期间工作区发生过任何相关改动（如界面实装改了 render.js），即判「证据输入漂移」驳回；此时必须以当前运行时重采证据，旧日志保留不覆盖。

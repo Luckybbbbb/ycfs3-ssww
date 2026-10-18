@@ -1,5 +1,13 @@
 # ssww-create-skill 更新历史
 
+## 0.1.5（2026-10-19）
+
+- 自进化（REQ-SSWW-PACKASSETS-v0.1.0 链 8 轮收口后回顾），`references/pitfalls.md` 追加三条：
+  1. 调用器产物 append-only：同 REQUEST_ID 产物文件已存在时 `invoke_ssww_review.py` 拒发，必须换新 REQUEST_ID 重跑 identity。
+  2. request 文件不可复用改写：每轮 request 以当轮新 REQ_ID 命名、一次写就，改写旧文件会被判「不再作为原始请求凭据」。
+  3. 复用历史行为证据前先核对运行输入身份：日志头绑定的运行时文件 SHA 有漂移即被驳回，须以当前运行时重采、旧日志保留。
+- 本轮仅改 `references/pitfalls.md` 与本 changelog，SKILL.md 与门禁脚本未动。
+
 ## 0.1.4（2026-10-16）
 
 - 按 REQ-SSWW-CREATESKILL-v0.1.0-06 审核（RULING=REJECTED，一 P2）整改，门禁脚本 `ssww-skill-gate.sh`：
