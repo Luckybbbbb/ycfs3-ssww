@@ -1,5 +1,5 @@
 // tests/m12.test.mjs — M12 批次:技能喊话演出(方案 B「冲击斜切」实装)
-// 覆盖:manifest 喊话清单/bindCallImages 绑定入口/演出状态机(替换式+自动过期+清场)/
+// 覆盖:manifest 喊话清单/bindCallImages 绑定入口/演出状态机(CD 门控+自动过期+清场)/
 //       无 DOM 环境绘制不抛错(z 序双钩子)/parallax 可变震屏参数
 // 运行: node --test tests/m12.test.mjs
 import assert from 'node:assert/strict';
@@ -77,22 +77,23 @@ test('M12 状态机:skillCall 建立→update 推进→0.85s 自动过期;clearC
 
 test('M12 替换式→CD 门控(需求方 2026-10-18):2s 内最多 1 次——演出中/CD 期再触发直接忽略', () => {
   const fx = new FxLayer();
-  fx.skillCall('烈焰环', 'fire', 2);
+  // M12M13-ACCEPT F3:skillCall 返回 true=已触发 / false=被忽略(调用方据此门控联动震屏)
+  assert.equal(fx.skillCall('烈焰环', 'fire', 2), true, '首次触发返回 true');
   fx.update(0.2); // 演出中
-  fx.skillCall('金刃风暴', 'metal', 2);
+  assert.equal(fx.skillCall('金刃风暴', 'metal', 2), false, '演出中再触发返回 false');
   assert.equal(fx.call.name, '烈焰环', '演出中再触发:忽略,原演出继续');
   assert.equal(fx.call.t, 0.2, '时间轴不被打断');
   fx.update(0.8); // 演出结束(累计 1.0s),CD 剩 1.0s
   assert.equal(fx.call, null);
-  fx.skillCall('裂地脉冲', 'earth', 2);
+  assert.equal(fx.skillCall('裂地脉冲', 'earth', 2), false, 'CD 期内(剩余 1.0s<2s)再触发返回 false');
   assert.equal(fx.call, null, 'CD 期内(剩余 1.0s<2s)再触发:忽略');
   fx.update(1.1); // CD 归零
-  fx.skillCall('裂地脉冲', 'earth', 2);
+  assert.equal(fx.skillCall('裂地脉冲', 'earth', 2), true, 'CD 结束后可再次演出');
   assert.equal(fx.call.name, '裂地脉冲', 'CD 结束后可再次演出');
   // clearCall 连 CD 一并清(重开/终局不带入)
   fx.clearCall();
   assert.equal(fx.callCdT, 0, 'clearCall 清 CD');
-  fx.skillCall('石甲术', 'earth', 1);
+  assert.equal(fx.skillCall('石甲术', 'earth', 1), true, '清 CD 后立即可触发');
   assert.ok(fx.call, '清 CD 后立即可触发');
 });
 
@@ -155,11 +156,15 @@ test('M12 parallax:triggerShake(5,0.35) 覆盖幅度/时长;缺省保持受击 4
 });
 
 // ---- M12-5 接线面:main 触发条件(非普攻弹)与变体映射(源码级口径冻结) ----
-test('M12 main 接线:usedList 消费环内 kind!=="bolt" 触发喊话+震屏;变体按 unlockLevel 取用', () => {
+test('M12 main 接线:kind!=="bolt" 触发喊话;震屏仅在 skillCall 返回 true 时执行;变体按 unlockLevel 取用', () => {
   const src = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(src.includes("used.skill.kind !== 'bolt'"), '触发门控=非普攻属性弹');
-  assert.ok(src.includes('hud.fx.skillCall('), 'main 桥接 fx.skillCall');
-  assert.ok(src.includes('parallax.triggerShake(5, 0.35)'), '砸入震屏参数 5px/0.35s');
+  assert.ok(src.includes('if (hud.fx.skillCall('), 'M12M13-ACCEPT F3:skillCall 返回值门控');
+  // 震屏必须在 skillCall 返回值分支内(CD 期被忽略时**不震屏**)
+  assert.ok(
+    /if \(hud\.fx\.skillCall\([^\n]*\)\) \{\s*\n\s*parallax\.triggerShake\(5, 0\.35\);/.test(src),
+    '震屏在 skillCall 返回 true 分支内(F3:CD 期整体忽略)',
+  );
   assert.ok(src.includes('used.skill.unlockLevel >= 6 ? 2 : 1'), '变体映射:Lv6→2,Lv3→1');
   assert.ok(src.includes('hud.fx.clearCall()'), '重开/终局清喊话演出');
   const rSrc = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');

@@ -7,7 +7,7 @@ import { startLoop } from './core/loop.js';
 import { fitCanvas } from './core/layout.js';
 import { attachInput } from './core/input.js';
 import { BoardEngine } from './board/engine.js';
-import { render } from './ui/render.js';
+import { render, updateEnemyHealthViews } from './ui/render.js';
 import { FxLayer, bindCallImages } from './ui/fx.js';
 import { BattleHudView, bindHudImages } from './ui/battle_hud.js';
 import { sfx } from './ui/audio.js';
@@ -504,10 +504,13 @@ function boot(images) {
         for (const used of usedList) {
           parallax.triggerPulse();
           // M12 技能喊话(方案 B「冲击斜切」):非普攻属性弹技能执行即触发纯表现演出(~0.9s,
-          // 不阻塞逻辑);背景变体按解锁档位取用(Lv3→1,Lv6→2);震屏走 parallax 可变参数
+          // 不阻塞逻辑);背景变体按解锁档位取用(Lv3→1,Lv6→2);震屏走 parallax 可变参数。
+          // M12M13-ACCEPT F3:skillCall 返回 false(演出中/CD 期被忽略)时**不震屏**——
+          // CD 期整体忽略,不是只忽略画面。
           if (used.skill.kind !== 'bolt' && engine.fxEnabled !== false) {
-            hud.fx.skillCall(used.skill.name, used.skill.el, used.skill.unlockLevel >= 6 ? 2 : 1);
-            parallax.triggerShake(5, 0.35);
+            if (hud.fx.skillCall(used.skill.name, used.skill.el, used.skill.unlockLevel >= 6 ? 2 : 1)) {
+              parallax.triggerShake(5, 0.35);
+            }
           }
           // 执行记录认领(幂等 resKey)仅限预约所属轮=当前轮(轮次关系,REQ-08 F8);
           // resRound undefined=预约本帧阶段2新建即执行(未经 pending 回写盖章)→ 视为本轮
@@ -579,6 +582,7 @@ function boot(images) {
       parallax.update(dt);
       hud.fx.update(dt);
       hud.battleHud.update(dt, hud, engine.fxEnabled !== false); // M13 二段血条/波次进度推进
+      updateEnemyHealthViews(dt, battle, engine.fxEnabled !== false); // M13 03轮 F9:敌人双血条按实际 dt 推进(与 battleHud 同刻;paused 时主循环提前 return 不达此处)
       if (hud.toast) { hud.toast.t -= dt; if (hud.toast.t <= 0) hud.toast = null; }
     },
     () => render(canvas.getContext('2d'), engine, hud),
@@ -593,6 +597,7 @@ window.__ssww = {
   // M11 五屏导航与状态(CDP 驱动;仅改 UI 态,不写档)
   nav: (s) => { if (['start', 'menu', 'loadout', 'playing'].includes(s)) screen = s; },
   fx: () => hud.fx, // M12 调试句柄(CDP 触发喊话演出验证;只读转发)
+  battleHud: () => hud.battleHud, // M13 调试句柄(CDP 读快照验证 Boss 显隐/Lv 徽标;只读转发)
   openLoadout, uiState: () => ({ screen, selLevel, selSlot, panel, paused, maxChain }),
   imagesBound: () => window.__sswwImagesBound ?? 0, // M11-02 F1:预载→渲染绑定数(CDP 校验)
   sfxEnabled: () => sfx.enabled, // M11-02 F5:音效开关实时态(CDP 验证刷新恢复)

@@ -340,10 +340,13 @@ export class FxLayer {
   // 入口(main 桥接 caster.tick 执行记录):非普攻弹技能执行时触发;2s CD 内最多 1 次(需求方 2026-10-18)。
   // variant:技能背景变体(Lv3 技能=1,Lv6 技能=2,由 main 按 unlockLevel 传参)。
   // 纯表现不阻塞逻辑(M9 同口径):不写任何战斗状态,演出期输入照常。
+  // 返回值(M12M13-ACCEPT F3):true=演出已触发;false=被忽略(演出中或 CD 期)——
+  // 调用方据此后接联动演出(如震屏),保证 CD 期「整体忽略」而非只忽略画面。
   skillCall(name, el, variant = 1) {
-    if (this.call || this.callCdT > 0) return; // 演出中或 CD 期:忽略(不排队不替换,需求方 2026-10-18)
+    if (this.call || this.callCdT > 0) return false; // 演出中或 CD 期:忽略(不排队不替换,需求方 2026-10-18)
     this.call = { name: String(name || ''), el, variant, t: 0 };
     this.callCdT = CALL_CD;
+    return true;
   }
 
   // 终局/重开清场(REQ-M6-05 同口径:表现层不残留旧局演出);CD 同清(与 caster.resetTempState 对齐)

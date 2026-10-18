@@ -13,6 +13,36 @@ import { levelUpCost, skillUpCost, SKILL_LEVEL_CAP } from '../meta/economy.js';
 import { ENEMY_TYPES, levelWeights } from '../battle/wave.js';
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
+import { HealthView } from './battle_hud.js';
+
+// M13 敌人双血条(需求方 2026-10-18:二段扣除动效实装到敌人血条——主条立即扣,
+// 淡红残影 punch→恒速追赶,与主角/BOSS HUD 条同一 HealthView 状态机)。
+// 每敌一份视图,WeakMap 挂载:死亡敌人不再绘制即自然回收,无需手动清理。
+// M12M13-ACCEPT 03轮 F9:计时推进与绘制分离——update 由 main 主循环按**实际 dt** 调用
+// (暂停时不推进:主循环 paused 提前 return;此前在 render 内固定 1/60 按绘制次数计时,
+// 帧率越高残影越快、暂停/低帧仍推进,违反时序契约),render 的 draw 只读当前状态。
+const _enemyHv = new WeakMap();
+
+// main 主循环每帧调用(与 hud.battleHud.update 同刻):按实际 dt 推进所有存活敌人血条残影
+export function updateEnemyHealthViews(dt, battle, fxEnabled = true) {
+  if (!battle || !Array.isArray(battle.enemies)) return 0;
+  let n = 0;
+  for (const e of battle.enemies) {
+    if (!e || !e.alive) continue;
+    let hv = _enemyHv.get(e);
+    if (!hv) {
+      hv = new HealthView({ main: '#e5484d', ghost: '#f4b4af' });
+      hv.align(e.maxHp > 0 ? e.hp / e.maxHp : 1); // M12M13-ACCEPT 04轮 F10:align 直接初始化
+      _enemyHv.set(e, hv);
+    }
+    hv.update(dt, e.maxHp > 0 ? e.hp / e.maxHp : 1, fxEnabled);
+    n++;
+  }
+  return n;
+}
+
+// 只读查询(调试/单测):取敌人的血条视图(无则 null)——M12M13-ACCEPT 04轮 F10 行为回归用
+export function enemyHealthViewOf(e) { return e ? _enemyHv.get(e) || null : null; }
 import { LEVEL_META, WAVES_PER_LEVEL } from '../meta/levels.js'; // M11 UI 设计稿:关卡名/建议等级
 import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶栏经验条
 
@@ -138,12 +168,17 @@ export function render(ctx, engine, hud) {
         continue;
       }
       drawEnemy(ctx, e, t, 1);
-      // 血条(Boss 另有顶部大血条,此处保留小血条)
+      // 血条(Boss 另有 HUD 大血条,此处保留小血条)——M13 双血条:主条立即扣+淡红残影
+      // 二段扣除(punch 0.4s→恒速 30%/s→1.2s 兜底,与 battle_hud 同一状态机;关动效直接同步)。
+      // M12M13-ACCEPT 03轮 F9:推进在 updateEnemyHealthViews(main 按实际 dt),此处只绘制
       const bw = 80, bx = e.x - bw / 2, by = e.y - t.srcH * t.scale / 2 - 18;
-      ctx.fillStyle = 'rgba(0,0,0,.4)';
-      roundRect(ctx, bx - 2, by - 2, bw + 4, 10, 5); ctx.fill();
-      ctx.fillStyle = '#e5484d';
-      roundRect(ctx, bx, by, Math.max(0, bw * e.hp / e.maxHp), 6, 3); ctx.fill();
+      let hv = _enemyHv.get(e);
+      if (!hv) {
+        hv = new HealthView({ main: '#e5484d', ghost: '#f4b4af' });
+        hv.align(e.maxHp > 0 ? e.hp / e.maxHp : 1); // F10:直接初始化(不走受击路径,无假残影)
+        _enemyHv.set(e, hv);
+      }
+      hv.draw(ctx, bx, by, bw, 6);
       // 状态标记(03 文档 6.2b:4 种——灼烧🔥/减速❄/束缚🌿/眩晕💫;字段非零显示、清零消失;
       // M8 配色整改:颜色引用 GEM_SRC 单一定义源,与元素语义一致)
       if (e.burn) { ctx.fillStyle = GEM_SRC.fire; ctx.font = '16px sans-serif'; ctx.fillText('🔥', e.x + 30, e.y - t.srcH * t.scale / 2 - 24); }
@@ -395,8 +430,9 @@ export function render(ctx, engine, hud) {
   // 连锁信息唯一来源=fx.chainAnnounce 王者式定版播报)
 
   // ===== 底栏 =====
+  // M12M13-ACCEPT F5:底栏范围=1168~1280(112px)全高铺底;此前只画 56px 致下半黑底
   ctx.fillStyle = '#f0e8d8';
-  ctx.fillRect(0, 1168, 720, 56);
+  ctx.fillRect(0, 1168, 720, 112);
   ctx.strokeStyle = '#dcd8d1';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(0, 1168); ctx.lineTo(720, 1168); ctx.stroke();
@@ -416,7 +452,9 @@ export function render(ctx, engine, hud) {
   const prof0 = hud.profile ? hud.profile() : null;
   if (prof0) {
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#ffe9b8';
+    // M12M13-ACCEPT 02轮 F8:文字色由 #ffe9b8 改深棕 #794f27——原色与底栏奶油底
+    // #f0e8d8 亮度对比仅 ~1.02:1,资产数字几乎不可辨认(补底引入的显示回归)
+    ctx.fillStyle = '#794f27';
     ctx.font = "17px 'Nunito','Noto Sans SC',sans-serif";
     ctx.fillText(`💰 ${prof0.coins ?? 0}  ⛏ ${prof0.materials ?? 0}`, 620, 1258);
     ctx.textAlign = 'center';

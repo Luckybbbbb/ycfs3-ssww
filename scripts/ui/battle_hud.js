@@ -54,6 +54,16 @@ export class HealthView {
         this.ghost = this.hp; this.state = 'IDLE'; this.t = 0;
       }
     }
+    // 关动效兜底:M12M13-ACCEPT F2——动效关闭当帧,存量 PUNCH/DRAIN 残影也直接同步
+    // (不只受击瞬间;中途关掉动效时残影无动画地追平)
+    if (!fxEnabled) { this.ghost = this.hp; this.state = 'IDLE'; this.t = 0; }
+  }
+
+  // 快照对齐(M12M13-ACCEPT 04轮 F10):主条与残影**直接初始化**为 frac,状态归 IDLE——
+  // 不走 update(0, frac)(那是受击路径,frac<hp 会保留满血假残影);用于敌人首见/测试对齐
+  align(frac = 1) {
+    frac = Math.max(0, Math.min(1, frac));
+    this.hp = frac; this.ghost = frac; this.state = 'IDLE'; this.t = 0;
   }
 
   // 绘制(x,y,w,h;带 2px 圆角;残影在下层,主条在上层)
@@ -78,13 +88,14 @@ function _rr(ctx, x, y, w, h, r) {
 }
 
 // ---- HUD 图片表(初始全空;生产唯一填充入口=bindHudImages——M11-03 F1 同口径) ----
-export const HUD_IMG = { avatarFrame: null, skillFrame: null, avatarImg: null };
+// M13 需求方反馈整改:生图头像与立绘发色不符已弃用(ui:hero_avatar 移出清单),
+// HUD 头像改走立绘裁头(battle_hud.draw 主路径,与喊话演出同一形象)
+export const HUD_IMG = { avatarFrame: null, skillFrame: null };
 export function bindHudImages(map) {
   if (!map || typeof map.get !== 'function') return 0;
   HUD_IMG.avatarFrame = map.get('ui:avatar_frame') || null;
   HUD_IMG.skillFrame = map.get('ui:skill_frame') || null;
-  HUD_IMG.avatarImg = map.get('ui:hero_avatar') || null; // M13 专用头像(codex 生图)
-  return (HUD_IMG.avatarFrame ? 1 : 0) + (HUD_IMG.skillFrame ? 1 : 0) + (HUD_IMG.avatarImg ? 1 : 0);
+  return (HUD_IMG.avatarFrame ? 1 : 0) + (HUD_IMG.skillFrame ? 1 : 0);
 }
 
 // 主题映射:关卡 1..5 → meadow/swamp/mist/snow/volcano(>5 循环)
@@ -116,10 +127,15 @@ export class BattleHudView {
     const boss = enemies.find(e => e.name === 'boss') || null;
     return {
       hp: battle.hp ?? 1, maxHp: battle.maxHp ?? 1,
+      // M13 需求方反馈:护盾条(蓝)=earth_shield 护盾值,口径同旧版 battle.shield/(maxHp×30% 封顶)
+      shield: battle.shield ?? 0, shieldCap: Math.max(1, Math.round((battle.maxHp ?? 1) * 0.3)),
       level: battle.level ?? 1, wave: Math.max(0, battle.wave ?? 0),
       wavesTotal: WAVES_PER_LEVEL,
       bossHp: boss ? boss.hp : 0, bossMax: boss ? boss.maxHp : 0,
       isBossWave: (battle.wave ?? 0) >= WAVES_PER_LEVEL,
+      // M12M13-ACCEPT F4:Lv 徽标显示**角色等级**(profile.level),不是关卡编号
+      // (原先误用 battle.level:9 级角色进第 2 关被画成 Lv.2——显示回归)
+      profileLv: (typeof hud.profile === 'function' ? (hud.profile()?.level ?? 1) : 1) || 1,
       slots,
       skillCds: caster.skillCds || {},
     };
@@ -128,14 +144,10 @@ export class BattleHudView {
   draw(ctx, hud) {
     const s = this._snapshot(hud);
     // ===== 左上角:头像+头像框 =====
-    const avImg = HUD_IMG.avatarImg;
-    const hero = hud.heroImg; // 兜底:立绘裁头部(专用头像未绑定/单测)
-    if (avImg && avImg.complete && avImg.naturalWidth) {
-      ctx.save();
-      ctx.beginPath(); ctx.arc(52, 52, 36, 0, Math.PI * 2); ctx.clip();
-      ctx.drawImage(avImg, 16, 16, 72, 72); // 128×128 头像缩至框孔径
-      ctx.restore();
-    } else if (hero && hero.complete && hero.naturalWidth) {
+    // 需求方 2026-10-18 反馈:专用生图头像与主角立绘发色不符「不太像」——
+    // 改为立绘裁头部(与喊话演出同一形象,发色/帽饰完全一致);ui:hero_avatar 已移出清单
+    const hero = hud.heroImg;
+    if (hero && hero.complete && hero.naturalWidth) {
       ctx.save();
       ctx.beginPath(); ctx.arc(52, 52, 36, 0, Math.PI * 2); ctx.clip();
       ctx.drawImage(hero, 160, 40, 320, 320, 16, 16, 72, 72);
@@ -151,12 +163,19 @@ export class BattleHudView {
     ctx.textAlign = 'center';
     ctx.fillText(`${Math.max(0, Math.ceil(s.hp))}/${s.maxHp}`, 160, 62);
     ctx.textAlign = 'left';
+    // 护盾条(需求方 2026-10-18:原血条下蓝条=earth_shield 护盾值,补回;有盾才画)
+    if (s.shield > 0) {
+      ctx.fillStyle = 'rgba(0,0,0,.25)';
+      _rr(ctx, 94, 71, 132, 12, 5); ctx.fill();
+      ctx.fillStyle = '#8fd3e8';
+      _rr(ctx, 96, 73, Math.max(0, 128 * Math.min(1, s.shield / s.shieldCap)), 8, 4); ctx.fill();
+    }
     // 等级标识(头像右上角小徽标,替代 demo 的 Lv.6 文字条)
     ctx.fillStyle = 'rgba(248,248,240,.94)';
     _rr(ctx, 96, 18, 64, 22, 8); ctx.fill();
     ctx.fillStyle = '#794f27';
     ctx.font = "13px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(`Lv.${s.level}`, 104, 34);
+    ctx.fillText(`Lv.${s.profileLv}`, 104, 34);
 
     // ===== 顶部中央:关卡名 =====
     ctx.fillStyle = 'rgba(248,248,240,.94)';
@@ -203,7 +222,15 @@ export class BattleHudView {
       }
     });
 
-    // ===== 波次进度条:战斗区最下方(文字+刻度点+Boss 旗标) =====
+    // ===== 波次进度条:战斗区最下方(药丸底+文字+刻度点+Boss 标记) =====
+    // 需求方 2026-10-18 反馈:实装缺样板中的奶油药丸底,「第 N 波」文字直接压在背景图上看不清;
+    // Boss 菱形不明显 → 药丸底按样板 .tmp/m13-battle-ui-demo.html progressHud 补齐,
+    // Boss 标记加大菱形+白描边+'BOSS' 字样(样板右侧文字同步实装)
+    ctx.fillStyle = 'rgba(248,248,240,.94)';
+    _rr(ctx, 16, 414, 688, 28, 12); ctx.fill();
+    ctx.strokeStyle = '#dac9a7';
+    ctx.lineWidth = 2;
+    _rr(ctx, 16, 414, 688, 28, 12); ctx.stroke();
     ctx.fillStyle = '#794f27';
     ctx.font = "16px 'Nunito','Noto Sans SC',sans-serif";
     ctx.fillText(`第 ${s.wave}/${s.wavesTotal} 波`, 28, 434);
@@ -213,17 +240,25 @@ export class BattleHudView {
     if (s.wave > 0) { ctx.fillStyle = '#6fba2c'; _rr(ctx, x, 425, w * ((s.wave - 1) / N), 7, 3); ctx.fill(); }
     for (let i = 1; i <= N; i++) {
       const xx = x + i * step;
-      if (i === N) { // Boss 旗标(菱形)
+      if (i === N) { // Boss 标记(加大菱形+白描边;Boss 波红色点亮)
         ctx.beginPath();
-        ctx.moveTo(xx, 417); ctx.lineTo(xx + 9, 428); ctx.lineTo(xx, 439); ctx.lineTo(xx - 9, 428);
+        ctx.moveTo(xx, 415); ctx.lineTo(xx + 12, 428); ctx.lineTo(xx, 441); ctx.lineTo(xx - 12, 428);
         ctx.closePath();
         ctx.fillStyle = s.isBossWave ? '#e05a5a' : '#a28c77';
         ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
       } else {
         ctx.beginPath(); ctx.arc(xx, 428, i <= s.wave ? 6 : 3.5, 0, Math.PI * 2);
         ctx.fillStyle = i < s.wave ? '#6fba2c' : i === s.wave ? '#19c8b9' : '#bdb29e';
         ctx.fill();
       }
     }
+    ctx.fillStyle = s.isBossWave ? '#c44747' : '#806a51';
+    ctx.font = "bold 11px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.textAlign = 'center';
+    ctx.fillText('BOSS', 679, 432);
+    ctx.textAlign = 'left';
   }
 }

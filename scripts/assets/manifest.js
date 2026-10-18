@@ -63,7 +63,8 @@ export function skillCallList() {
   }
   list.push({ key: 'ui:avatar_frame', url: 'assets/ui/battle/avatar_frame.png', entity: 'battle-ui' });
   list.push({ key: 'ui:skill_frame', url: 'assets/ui/battle/skill_frame.png', entity: 'battle-ui' });
-  list.push({ key: 'ui:hero_avatar', url: 'assets/ui/battle/hero_avatar.png', entity: 'battle-ui' });
+  // 注:ui:hero_avatar 生图头像已移除(需求方 2026-10-18 反馈与立绘发色不符「不太像」)——
+  // HUD 头像改用主角立绘裁头部(battle_hud.draw 主路径),保证与喊话演出同一形象
   return list;
 }
 
