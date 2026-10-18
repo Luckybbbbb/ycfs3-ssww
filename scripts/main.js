@@ -80,10 +80,39 @@ function persistProfile() {
 }
 
 // FR-9:先预载资源;缺文件报「缺 <路径>(实体:<名>)」并停载(不绑定输入、不启动主循环、无未处理拒绝)
+// M14 需求方 2026-10-18:预载期间在画布上画进度条(Pages 弱网 150 项资源下载可达数秒,消除黑屏卡顿感)
+function drawLoadProgress(done, total) {
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#14160f';
+  ctx.fillRect(0, 0, 720, 1280);
+  ctx.fillStyle = '#794f27';
+  ctx.font = "22px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.textAlign = 'center';
+  ctx.fillText('言出法随之三生万物', 360, 560);
+  ctx.fillStyle = '#9f927d';
+  ctx.font = "16px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.fillText(`资源加载中 ${done}/${total}`, 360, 610);
+  // 进度条(720 宽内 320px 奶油条+圆角;animal-island 同族配色)
+  ctx.fillStyle = 'rgba(240,232,216,.18)';
+  _loadRR(ctx, 200, 640, 320, 14, 7); ctx.fill();
+  ctx.fillStyle = '#f0e8d8';
+  _loadRR(ctx, 200, 640, Math.max(14, 320 * done / total), 14, 7); ctx.fill();
+  ctx.textAlign = 'left';
+}
+function _loadRR(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 let loadError = null;
 let images = null;
 try {
-  images = await preload(fullManifest());
+  images = await preload(fullManifest(), drawLoadProgress);
 } catch (err) {
   loadError = err;
 }

@@ -28,15 +28,20 @@ export function loadImage(item, retriesLeft = LOAD_RETRIES) {
 }
 
 // 预载整份清单;任一缺失(重试后仍失败)即 reject(首个缺失路径进错误信息),由 main 停载并提示。
-// 并发按 LOAD_CONCURRENCY 分批 workers(全部完成后统一返回;单图失败重试在 loadImage 内)
-export async function preload(manifest) {
+// 并发按 LOAD_CONCURRENCY 分批 workers(全部完成后统一返回;单图失败重试在 loadImage 内)。
+// M14 需求方 2026-10-18:onProgress(done, total) 完成数回调(main 用于画加载进度条,消除弱网黑屏感)
+export async function preload(manifest, onProgress) {
   const images = new Map();
   const queue = [...manifest];
+  const total = queue.length;
+  let done = 0;
+  const tick = () => { done++; if (onProgress) onProgress(done, total); };
   const workers = Array.from({ length: Math.min(LOAD_CONCURRENCY, queue.length) }, async () => {
     while (queue.length) {
       const item = queue.shift();
       const [key, img] = await loadImage(item);
       images.set(key, img);
+      tick();
     }
   });
   await Promise.all(workers);
