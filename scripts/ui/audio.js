@@ -1,10 +1,37 @@
 // scripts/ui/audio.js
 // Web Audio 合成音效(零素材):swap/match/invalid/item,首次交互后自动 resume
 // M11:enabled 开关(设置面板「音效」切换;关时 tone 静默)
+// M14 需求方 2026-10-18:局内战斗 BGM(godot-roguelike zhuayao.mp3 复用;循环播放,
+// 仅 playing 屏出声;设置面板「音乐」开关默认开,入档 settings.bgm)
 // 相对路径: scripts/ui/audio.js
 
 let actx = null;
 const state = { enabled: true };
+
+// ---- BGM(懒加载单例:首次 play 才 new Audio,不违反 M11-03 F1 顶层零加载口径——该口径约束图片渲染) ----
+const bgmState = { enabled: true, audio: null };
+
+function ensureBgmAudio() {
+  if (typeof Audio === 'undefined') return null; // 无 DOM 环境(单测):静默早退(与 fx.js document 守卫同口径)
+  if (!bgmState.audio) {
+    const a = new Audio('assets/sounds/bgm/zhuayao.mp3');
+    a.loop = true;
+    a.volume = 0.35;
+    bgmState.audio = a;
+  }
+  return bgmState.audio;
+}
+
+// 局内战斗播控(main 在 screen 变化/启动恢复时调用):inBattle=true 播放,否则暂停
+function syncBgm(inBattle) {
+  const a = ensureBgmAudio();
+  if (!a) return;
+  if (!bgmState.enabled || !inBattle) {
+    if (!a.paused) a.pause();
+    return;
+  }
+  if (a.paused) a.play().catch(() => { /* 首次交互前浏览器拒绝自动播放:待用户点击后再 sync */ });
+}
 
 function ensureCtx() {
   if (!actx) {
@@ -50,4 +77,14 @@ export const sfx = {
     tone({ freq: 660, dur: 0.08, type: 'sine', vol: 0.14 });
     tone({ freq: 990, dur: 0.12, type: 'sine', vol: 0.12, delay: 0.07 });
   },
+};
+
+// M14:BGM 控制面(设置面板「音乐」开关默认开;局内战斗播控)
+export const bgm = {
+  get enabled() { return bgmState.enabled; },
+  set enabled(v) {
+    bgmState.enabled = !!v;
+    if (!bgmState.enabled) syncBgm(false); // 关=立即静音
+  },
+  sync: syncBgm,
 };

@@ -310,7 +310,7 @@ test('M11-02 F3/F4/F5/F6 接线:persistProfile 同步装配;owned 门控;sfx 写
   assert.ok(!mainSrc.includes('连锁${e.chain}'), 'F6:充能 toast 不再携带连锁级数(播报唯一化)');
   const saveSrc = fs.readFileSync(new URL('../scripts/meta/save.js', import.meta.url), 'utf-8');
   assert.ok(saveSrc.includes('sfx: v.settings.sfx !== false'), 'F5:loadProfile 恢复 sfx(缺省 true)');
-  assert.ok(saveSrc.includes('settings: { effects: true, sfx: true }'), 'F5:默认档含 sfx');
+  assert.ok(saveSrc.includes('settings: { effects: true, sfx: true, bgm: true }'), 'F5:默认档含 sfx;M14 补 bgm 默认开');
   const renderSrc = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
   assert.ok(renderSrc.includes('Object.keys(levelWeights('), 'F7:编成 chips/出战信息读 wave.js 真权重表(内联表曾漏 slime)');
   assert.ok(!renderSrc.includes('levelWeightsSafe'), 'F7:内联权重键表移除');

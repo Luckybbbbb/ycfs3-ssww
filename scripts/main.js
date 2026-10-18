@@ -10,7 +10,7 @@ import { BoardEngine } from './board/engine.js';
 import { render, updateEnemyHealthViews } from './ui/render.js';
 import { FxLayer, bindCallImages } from './ui/fx.js';
 import { BattleHudView, bindHudImages } from './ui/battle_hud.js';
-import { sfx } from './ui/audio.js';
+import { sfx, bgm } from './ui/audio.js';
 import { Charge } from './skills/charge.js';
 import { Caster } from './skills/cast.js';
 import { Battle } from './battle/battle.js';
@@ -67,7 +67,8 @@ const battle = new Battle({ atk: atkAt(profile.level), maxHp: maxHpAt(profile.le
 const hud = { toast: null, fx: new FxLayer(), battleHud: new BattleHudView(), charge, caster, battle, parallax, screen: () => screen, profile: () => profile, progress: () => progress, cleared: () => clearedTotal, drag: null, growPanel: () => growPanel,
   // M11 五屏状态句柄(render 布局/UI 常量消费)
   paused: () => paused, panel: () => panel, loadout: () => ({ selLevel, selSlot, panel, pickSlot, tipsSlot }),
-  maxChain: () => maxChain, sfxEnabled: () => sfx.enabled, fxEnabled: () => engine.fxEnabled };
+  maxChain: () => maxChain, sfxEnabled: () => sfx.enabled, fxEnabled: () => engine.fxEnabled,
+  bgmEnabled: () => bgm.enabled }; // M14:BGM 开关状态(设置/暂停面板)
 
 function showToast(text) { hud.toast = { text, t: 1.2 }; }
 
@@ -162,6 +163,15 @@ function toggleSfx() {
   showToast(`音效 ${sfx.enabled ? '开' : '关'}`);
   sfx.item();
 }
+// M14 需求方 2026-10-18:BGM 开关(设置面板「音乐」,默认开;入档 settings.bgm)
+function toggleBgm() {
+  bgm.enabled = !bgm.enabled;
+  profile.settings.bgm = bgm.enabled;
+  persistProfile();
+  showToast(`音乐 ${bgm.enabled ? '开' : '关'}`);
+  if (bgm.enabled) bgm.sync(screen === 'playing'); // 开=按当前屏恢复
+  sfx.item();
+}
 function toggleFx() {
   profile.settings.effects = profile.settings.effects === false; // false→true,其余→false
   engine.fxEnabled = profile.settings.effects;
@@ -184,6 +194,7 @@ function boot(images) {
   hud.skillMeta = (id) => skillById(id);
   // M11-02 F5:音效开关启动恢复(档内 settings.sfx;与 effects 同一套写档)
   sfx.enabled = profile.settings.sfx !== false;
+  bgm.enabled = profile.settings.bgm !== false; // M14:BGM 默认开(档案缺省 true)
   showToast('资源就绪');
 
   // 命中区工具
@@ -222,8 +233,7 @@ function boot(images) {
       const itemInvolved = isItem(engine.grid[a.r][a.c]) || isItem(engine.grid[b.r][b.c]);
       if (st === 'IDLE' && !itemInvolved && !swapCreatesMatch(engine.grid, a.r, a.c, b.r, b.c)) return false;
       if (!engine.trySwap(a, b)) return false;
-      showToast(st === 'IDLE' ? '交换' : '连锁中交换');
-      sfx.swap();
+      sfx.swap(); // 需求方 2026-10-18:「交换」提示移除(含连锁中交换)
       return true;
     },
     // M11 五屏路由拦截:非战斗屏/胜负结算/暂停全屏接管
@@ -248,6 +258,7 @@ function boot(images) {
     onBlankDown: (p) => {
       // ---- M11 通用浮层(设置/关于;开始/暂停共用) ----
       if (panel === 'settings') {
+        if (hit(p, UI.settings.bgmBtn)) { toggleBgm(); return; }
         if (hit(p, UI.settings.sfxBtn)) { toggleSfx(); return; }
         if (hit(p, UI.settings.fxBtn)) { toggleFx(); return; }
         if (hit(p, UI.settings.closeBtn)) { panel = null; sfx.item(); return; }
@@ -332,6 +343,7 @@ function boot(images) {
       // ---- 战斗中:暂停面板 ----
       if (paused) {
         if (hit(p, UI.pause.resumeBtn)) { paused = false; sfx.item(); return; }
+        if (hit(p, UI.pause.bgmBtn)) { toggleBgm(); return; }
         if (hit(p, UI.pause.sfxBtn)) { toggleSfx(); return; }
         if (hit(p, UI.pause.fxBtn)) { toggleFx(); return; }
         if (hit(p, UI.pause.quitBtn)) { paused = false; panel = null; screen = 'menu'; sfx.item(); return; }
@@ -365,7 +377,7 @@ function boot(images) {
     },
     onSwipe: (a, b) => {
       if (screen !== 'playing' || battle.phase !== 'FIGHTING' || paused) return; // 非战斗/暂停期间棋盘输入冻结
-      if (engine.trySwap(a, b)) { showToast('交换'); sfx.swap(); }
+      if (engine.trySwap(a, b)) { sfx.swap(); } // 需求方 2026-10-18:「交换」提示移除
       else sfx.invalid();
     },
     onCellDown: () => {},
@@ -404,7 +416,7 @@ function boot(images) {
         firstSel = null;
         if (Math.abs(a.r - cell.r) + Math.abs(a.c - cell.c) === 1) {
           if (engine.trySwap(a, cell)) {
-            showToast('交换'); sfx.swap();
+            sfx.swap(); // 需求方 2026-10-18:「交换」提示移除
           } else {
             engine.nudge(a, cell); // 表现层往返回弹(逻辑状态保持 IDLE,F7 续审)
             sfx.invalid(); // 无效交换:棋盘状态不变(02 文档 2.3)
@@ -478,7 +490,7 @@ function boot(images) {
           if (e.type === 'match_cleared') {
             clearedTotal += e.count; // FR-7 底栏消除计数
             if (e.chain > maxChain) maxChain = e.chain; // M11:最高连锁统计(结算展示)
-            const gain = charge.feed({ ...e, t: battle.clock }); // 消除充能(t0=演出起点,03 文档 4.0)
+            charge.feed({ ...e, t: battle.clock }); // 消除充能(t0=演出起点,03 文档 4.0;档位提示已按需求方口径移除,不再展示 gain)
             // 逐事件选技+原子建预约(F2);回填本块实际预约结果供段③图标按块显示(F8)
             // resKey=预约唯一 id(REQ-08 F8):入口/存续回写/执行记录三路幂等互认,不重复认领
             const p = caster.reserveFor(e.element, elimRng, battle.clock);
@@ -488,7 +500,7 @@ function boot(images) {
               // 档位所属轮的段④起点,延迟选技/跨轮留池不丢失;main 不再按当前事件补写)
               engine.setBlockFx(e.bk, { el: e.element, reserved: true, skillId: p.skillId, tier: p.tier, resKey: p.id });
             }
-            showToast(`${e.element} ×${e.count} → ${e.element}档 +${gain}`); // M11-02 F6:不再携带连锁级数(播报唯一化——连锁信息唯一来源=fx.chainAnnounce)
+            // 需求方 2026-10-18:「元素 ×N → 档位」消除方块提示不再显示(档位信息由技能框/播报承载)
             sfx.match(e.chain);
             if (engine.fxEnabled) hud.fx.onMatchCleared(e, e.chain); // REQ-M6-04 F8:关动效不触发粒子
           }
@@ -583,6 +595,8 @@ function boot(images) {
       hud.fx.update(dt);
       hud.battleHud.update(dt, hud, engine.fxEnabled !== false); // M13 二段血条/波次进度推进
       updateEnemyHealthViews(dt, battle, engine.fxEnabled !== false); // M13 03轮 F9:敌人双血条按实际 dt 推进(与 battleHud 同刻;paused 时主循环提前 return 不达此处)
+      // M14:BGM 局内战斗播控(playing 且非暂停/终局出声;幂等调用,screen 变化即生效)
+      bgm.sync(screen === 'playing' && !paused && battle.phase === 'FIGHTING');
       if (hud.toast) { hud.toast.t -= dt; if (hud.toast.t <= 0) hud.toast = null; }
     },
     () => render(canvas.getContext('2d'), engine, hud),

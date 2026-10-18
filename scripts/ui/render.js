@@ -478,14 +478,17 @@ export function render(ctx, engine, hud) {
     ctx.restore();
   }
 
-  // 事件提示浮层
+  // 事件提示浮层(需求方 2026-10-18:移战斗区中上方,战斗信息为主;修复文字偏右——
+  // 此前 fillText 沿用上文残留的 textAlign 状态,现显式居中)
   if (hud.toast && hud.toast.t > 0) {
     ctx.fillStyle = 'rgba(121,79,39,.85)';
-    roundRect(ctx, 180, 516, 360, 44, 12);
+    roundRect(ctx, 180, 160, 360, 44, 12);
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(hud.toast.text, 360, 545);
+    ctx.textAlign = 'center';
+    ctx.fillText(hud.toast.text, 360, 189);
+    ctx.textAlign = 'left';
   }
 
   // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====
@@ -693,15 +696,17 @@ export const UI = {
   },
   pause: {
     resumeBtn: { x: 210, y: 470, w: 300, h: 90 },
-    sfxBtn: { x: 210, y: 590, w: 300, h: 70 },
-    fxBtn: { x: 210, y: 680, w: 300, h: 70 },
-    quitBtn: { x: 210, y: 780, w: 300, h: 90 },
+    bgmBtn: { x: 210, y: 580, w: 300, h: 60 },   // M14:音乐开关(需求方 2026-10-18)
+    sfxBtn: { x: 210, y: 650, w: 300, h: 60 },
+    fxBtn: { x: 210, y: 720, w: 300, h: 60 },
+    quitBtn: { x: 210, y: 790, w: 300, h: 80 },
   },
   settings: {
-    panel: { x: 110, y: 440, w: 500, h: 400 },
-    sfxBtn: { x: 160, y: 540, w: 400, h: 80 },
-    fxBtn: { x: 160, y: 650, w: 400, h: 80 },
-    closeBtn: { x: 260, y: 760, w: 200, h: 60 },
+    panel: { x: 110, y: 400, w: 500, h: 460 },
+    bgmBtn: { x: 160, y: 480, w: 400, h: 80 },   // M14:音乐开关
+    sfxBtn: { x: 160, y: 570, w: 400, h: 80 },
+    fxBtn: { x: 160, y: 660, w: 400, h: 80 },
+    closeBtn: { x: 260, y: 770, w: 200, h: 60 },
   },
   about: {
     panel: { x: 110, y: 440, w: 500, h: 400 },
@@ -1417,8 +1422,10 @@ function drawPauseOverlay(ctx, hud) {
   ctx.font = FONT(44, 'bold');
   ctx.fillText('已暂停', 360, 400);
   drawBtn(ctx, UI.pause.resumeBtn, '继 续', 'primary', 32);
+  const bgmOn = hud.bgmEnabled ? hud.bgmEnabled() : true;
   const sfxOn = hud.sfxEnabled ? hud.sfxEnabled() : true;
   const fxOn = hud.fxEnabled ? hud.fxEnabled() : true;
+  drawBtn(ctx, UI.pause.bgmBtn, `音乐:${bgmOn ? '开' : '关'}`, 'ghost', 24);
   drawBtn(ctx, UI.pause.sfxBtn, `音效:${sfxOn ? '开' : '关'}`, 'ghost', 24);
   drawBtn(ctx, UI.pause.fxBtn, `动效:${fxOn ? '开' : '关'}`, 'ghost', 24);
   drawBtn(ctx, UI.pause.quitBtn, '放弃本局 · 返回选关', 'warn', 24);
@@ -1435,8 +1442,10 @@ function drawSettingsPanel(ctx, hud) {
   ctx.fillStyle = '#5a4a32';
   ctx.font = FONT(34, 'bold');
   ctx.fillText('设 置', 360, P.y + 60);
+  const bgmOn = hud.bgmEnabled ? hud.bgmEnabled() : true;
   const sfxOn = hud.sfxEnabled ? hud.sfxEnabled() : true;
   const fxOn = hud.fxEnabled ? hud.fxEnabled() : true;
+  drawBtn(ctx, UI.settings.bgmBtn, `音乐:${bgmOn ? '开' : '关'}`, 'ghost', 26);
   drawBtn(ctx, UI.settings.sfxBtn, `音效:${sfxOn ? '开' : '关'}`, 'ghost', 26);
   drawBtn(ctx, UI.settings.fxBtn, `消除动效:${fxOn ? '开' : '关'}`, 'ghost', 26);
   drawBtn(ctx, UI.settings.closeBtn, '关 闭', 'primary', 24);
