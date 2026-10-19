@@ -25,7 +25,7 @@ import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
 import { applyItem } from './board/items.js';
 import { skillById, SKILL_LIBRARY } from './skills/library.js';
 import { LEVEL_META } from './meta/levels.js';
-import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, bindImages, growDeductFx, growLevelUpFx, growSkillUpFx, growGachaFx, growGachaVisible, growGachaDismiss, growListScrollState, growListScrollTo, growFloatText, resultRestart, resultSkip, resultReady } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
+import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, bindImages, growDeductFx, growLevelUpFx, growSkillUpFx, growGachaFx, growGachaVisible, growGachaDismiss, growTipsShow, growTipsVisible, growTipsDismiss, growListScrollState, growListScrollTo, growFloatText, resultRestart, resultSkip, resultReady, startImagesBound } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
 fitCanvas(canvas);
@@ -289,12 +289,15 @@ function boot(images) {
     onBlankMove: (p) => {
       if (screen === 'menu' && growPanel && growDrag) {
         if (Math.hypot(p.x - growDrag.x, p.y - growDrag.y) > 12) growDrag.moved = true; // 二维位移口径
-        growListScrollTo(growDrag.startScroll - (p.y - growDrag.y)); // 注意:起点字段是 y(F1-02 重命名后 startY 已不存在,残留引用会得 NaN 永久卡死滚动)
+        if (!growDrag.tipsTap) growListScrollTo(growDrag.startScroll - (p.y - growDrag.y)); // tipsTap 手势不滚动底层列表(START-03 F1);注意:起点字段是 y(F1-02 重命名后 startY 已不存在,残留引用会得 NaN 永久卡死滚动)
       }
     },
     onBlankUp: (p) => {
       if (screen === 'menu' && growPanel && growDrag) {
-        if (!growDrag.moved) handleGrowClick(growDrag.p); // 原地点按=点击(二维位移<12px)
+        if (growDrag.tipsTap) {
+          // 说明浮层手势:未位移松手=关闭;位移过(拖动)不关闭也不透传(START-03 F1)
+          if (!growDrag.moved) { growTipsDismiss(); sfx.item(); }
+        } else if (!growDrag.moved) handleGrowClick(growDrag.p); // 原地点按=点击(二维位移<12px)
         growDrag = null;
       }
     },
@@ -329,6 +332,12 @@ function boot(images) {
         if (growPanel) {
           // UIV2-01 F2 整改:抽卡浮层期间点击=仅关闭浮层,绝不透传背后按钮扣费
           if (growGachaVisible()) { growGachaDismiss(); sfx.item(); return; }
+          // 需求方 2026-10-19(START-03 F1):技能说明浮层期间的手势=tipsTap——
+          // 拖动不滚动底层列表(浮层不透传),未位移的松手=关闭浮层;位移手势作废且不关闭
+          if (growTipsVisible()) {
+            growDrag = { x: p.x, y: p.y, startScroll: growListScrollState().scroll, moved: false, p, tipsTap: true };
+            return;
+          }
           // UIV2-01 F1 整改:技能列表区按下=滚动拖拽起手(二维位移 <12px 松手仍当点击;
           // 横向位移同样计入位移,横拖不会误触发升级点击)
           const GL = GROW_LAYOUT;
@@ -488,6 +497,8 @@ function boot(images) {
     const hit2 = (r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
     const L = GROW_LAYOUT;
     if (growGachaVisible()) { growGachaDismiss(); return; } // UIV2-01 F2:浮层期点击不透传(仅关浮层)
+    // 需求方 2026-10-19:技能说明浮层期点按任意处关闭(与备战 tips 同口径)
+    if (growTipsVisible()) { growTipsDismiss(); return; }
     if (hit2(L.closeBtn)) { growPanel = false; sfx.item(); return; } // 关闭
     if (hit2(L.upBtn)) { // 角色升级(光柱+Lv 文字弹跳+属性冒字+上行琶音)
       const r = applyLevelUp(profile);
@@ -521,9 +532,11 @@ function boot(images) {
       const col = idx % 2, row = Math.floor(idx / 2);
       const y0 = L.listY + row * L.rowH - scroll;
       if (y0 + L.cardH < L.listTop || y0 > L.listBottom) continue; // 视口外不可点(与绘制裁切共用同一对常量)
+      const id = profile.ownedSkills[idx];
+      // 需求方 2026-10-19:单击行卡图标=技能说明浮层(描述+档位数值);图标命中先于升级按钮判定
+      if (id && hit2({ x: L.cols[col] + 14, y: y0 + 16, w: 64, h: 64 })) { growTipsShow(id); sfx.item(); return; }
       const bx = L.cols[col] + L.btnOff, by = y0 + 16;
       if (!hit2({ x: bx, y: by, w: L.btnW, h: L.btnH })) continue;
-      const id = profile.ownedSkills[idx];
       if (!id) return;
       const r = applySkillUp(profile, id);
       if (r) {
@@ -704,7 +717,10 @@ window.__ssww = {
   toggleSfx, toggleFx, setPaused: (v) => { paused = !!v; },
   // UIV2-01 F1:养成技能列表滚动状态(只读转发;CDP 验证滚动与末位技能可点)
   growListScroll: growListScrollState,
+  growListScrollTo, // -04 F1:滚动复位(CDP 验证滚动判别力基线用;UI 内部本就使用同一函数)
   growGachaVisible, // UIV2-01 F2:抽卡浮层可见性(只读转发)
   bgmDebug, // M15:BGM 播放状态(CDP 验证播放状态)
   resultReady, // M15:UIV2 -06 F2:结算就绪门控只读转发(CDP 行为差验证,主按钮颜色仅视觉证据)
+  startImagesBound, // M15 Task 51:开始界面生图产物绑定状态(CDP 验证预载→绑定)
+  growTipsVisible, // 需求方 2026-10-19:养成技能说明浮层可见性(只读转发)
 };

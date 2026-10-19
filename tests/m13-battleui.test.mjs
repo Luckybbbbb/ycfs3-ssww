@@ -11,14 +11,15 @@ import { updateEnemyHealthViews, enemyHealthViewOf } from '../scripts/ui/render.
 import { BOARD_Y, CELL } from '../scripts/board/grid.js';
 
 // ---- M13-1 图素清单 ----
-test('M13 manifest:分关卡背景 5 主题×2 + 头像框/技能框,共 12 项且文件存在(生图头像已弃用移出)', () => {
+test('M13 manifest:分关卡背景 5 主题×2 + 头像框/技能框 + 开始界面背景/LOGO,共 14 项且文件存在(生图头像已弃用移出)', () => {
   const m = fullManifest().filter(it => it.entity === 'battle-ui');
-  assert.equal(m.length, 12, `battle-ui 条目数=12,实际 ${m.length}`);
+  assert.equal(m.length, 14, `battle-ui 条目数=14,实际 ${m.length}`);
   const keys = new Set(m.map(it => it.key));
   for (const t of ['meadow', 'swamp', 'mist', 'snow', 'volcano']) {
     assert.ok(keys.has(`bg:${t}:far`) && keys.has(`bg:${t}:near`), `主题 ${t} 远近景在清单`);
   }
   assert.ok(keys.has('ui:avatar_frame') && keys.has('ui:skill_frame'), '两张边框在清单');
+  assert.ok(keys.has('ui:start_bg') && keys.has('ui:start_logo'), '开始界面背景与 LOGO 在清单(M15 Task 51)');
   assert.ok(!keys.has('ui:hero_avatar'), '生图头像已移出清单(需求方反馈发色不符,改立绘裁头)');
   for (const it of m) {
     assert.ok(fs.existsSync(new URL(`../${it.url}`, import.meta.url)), `素材文件存在:${it.url}`);

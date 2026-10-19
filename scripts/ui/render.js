@@ -49,7 +49,11 @@ import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶�
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
 // M14 界面图标贴图(assets/icons/ui/*.png 替换 emoji;表初始空,生产唯一填充入口=bindImages;
 // miss 时回退原 emoji 文字,不阻塞渲染)
-const UI_IMG = {};
+const UI_IMG = {}; // M14 界面图标表(见上)
+// M15 Task 51:开始界面生图产物表(初始空,生产唯一填充入口=bindImages)。
+// 渲染回退仅覆盖「未绑定/未加载(complete=false)/解码失败(naturalWidth=0)」三种显示态→程序化兜底;
+// 预载失败(文件缺失/持续网络失败)仍按 FR-9 在 main 停载,不进入开始界面——两口径勿混。
+const START_IMG = { bg: null, logo: null };
 // 道具图标贴图(assets/icons/items/<item>[_premium].png 144×144;缺图回退 emoji 原样式;
 // 预载校验见 assets/manifest.js iconList)
 // ===== M11-03 F1 残留整改:生产导入路径零顶层加载 =====
@@ -103,6 +107,13 @@ export function bindImages(map) {
   for (const name of ['pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun']) {
     const img = map.get(`icon:ui:${name}`);
     if (img) { UI_IMG[name] = img; n++; } // M14:界面图标(替换 emoji)
+  }
+  // M15 Task 51:开始界面生图产物(全屏背景+定名 LOGO;缺图走程序化兜底)
+  {
+    const bg = map.get('ui:start_bg');
+    if (bg) { START_IMG.bg = bg; n++; }
+    const logo = map.get('ui:start_logo');
+    if (logo) { START_IMG.logo = logo; n++; }
   }
   return n;
 }
@@ -158,10 +169,12 @@ function drawAssetIcon(ctx, key, emoji, x, y, size = 20) {
 }
 
 
-let worldT = 0; // 表现层动画时钟
+let worldT = 0; // 表现层动画时钟(按 render 回调实际 dt 推进,帧率无关;main 传 rAF 墙钟差 rdt)
+// 只读探针(单测/CDP 验证时钟推进与帧率解耦)
+export function animClock() { return worldT; }
 
 export function render(ctx, engine, hud, dt = 1 / 60) {
-  worldT += 1 / 60;
+  worldT += dt; // 需求方 2026-10-19:主角动画异常快——worldT 原按帧数固定 +1/60,高刷屏(120Hz+)下 2 倍速;改按渲染回调实际 dt 推进(帧率无关)
   ctx.clearRect(0, 0, 720, 1280);
   const battle = hud.battle;
   const px = hud.parallax;
@@ -580,11 +593,16 @@ const growAnim = {
   floats: [],                              // 属性冒字(+12HP 等)
   skillPop: {},                            // 技能按钮 pop 计时(key=col*8+row)
   gacha: null,                             // 抽卡浮层 {skillId, name, el, t}
+  tipsId: null,                            // 技能说明浮层(需求方 2026-10-19:单击行卡图标看描述;点任意处关闭)
   listScroll: 0, listMax: 0,               // 技能列表滚动偏移/上限(drawGrowPanel 每帧按拥有数复算,F1 整改)
 };
 export function growDeductFx(kind) { if (growAnim.flash[kind] !== undefined) growAnim.flash[kind] = 0.45; }
 export function growLevelUpFx() { growAnim.lvBounceT = 0.6; growAnim.burstT = 0.8; }
 export function growSkillUpFx(col, row) { growAnim.skillPop[col * 8 + row] = 0.35; }
+// 技能说明浮层(需求方 2026-10-19:养成技能行卡单击图标=看描述;点任意处关闭,与备战 tips 同口径)
+export function growTipsShow(skillId) { growAnim.tipsId = skillId; }
+export function growTipsVisible() { return !!growAnim.tipsId; }
+export function growTipsDismiss() { growAnim.tipsId = null; }
 export function growGachaFx(skillId) {
   const sk = skillById(skillId);
   growAnim.gacha = { skillId, name: sk ? sk.name : skillId, el: sk ? sk.el : 'metal', t: 0 };
@@ -594,6 +612,8 @@ export function growGachaVisible() { return !!growAnim.gacha; }
 export function growGachaDismiss() { growAnim.gacha = null; }
 // F1 整改:技能列表滚动状态(main 拖拽滚动经此读写;上限由 drawGrowPanel 每帧复算)
 export function growListScrollState() { return { scroll: growAnim.listScroll, max: growAnim.listMax }; }
+// M15 Task 51:开始界面生图产物绑定状态(只读;CDP 验证预载→绑定,缺图走程序化兜底)
+export function startImagesBound() { return { bg: !!START_IMG.bg, logo: !!START_IMG.logo }; }
 export function growListScrollTo(v) { growAnim.listScroll = Math.max(0, Math.min(growAnim.listMax, v)); }
 export function growFloatText(text, x, y, color = '#3f9b0f') { growAnim.floats.push({ text, x, y, color, t: 0, life: 1.0 }); }
 
@@ -690,13 +710,11 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
   }
   ctx.fillStyle = '#794f27'; // F5 整改(UIV2-02):立绘正常分支不设 fillStyle,HP 文字沿用立绘框底色 #efe9db 致低对比;显式恢复深色
   ctx.font = FONT(23);
-  ctx.fillText(`HP ${maxHpText(prof.level)}`, 288, 230);
-  ctx.fillStyle = '#fff'; roundRect(ctx, 288, 240, 300, 14, 7); ctx.fill();
-  ctx.fillStyle = '#6fba2c'; roundRect(ctx, 290, 242, 296, 10, 5); ctx.fill();
-  ctx.fillStyle = '#794f27';
-  ctx.fillText(`ATK ${atkText(prof.level)}`, 288, 282);
+  ctx.fillText(`HP ${maxHpText(prof.level)}`, 288, 232);
+  ctx.fillStyle = '#794f27'; // 血条移除(需求方 2026-10-19:与备战主角卡样式一致,数值保留)
+  ctx.fillText(`ATK ${atkText(prof.level)}`, 288, 270);
   ctx.font = FONT(20); ctx.fillStyle = '#9f927d';
-  ctx.fillText(`升级消耗材料:${levelUpCost(prof.level)}`, 288, 318);
+  ctx.fillText(`升级消耗材料:${levelUpCost(prof.level)}`, 288, 308);
   // 升级按钮(右下;材料不足灰;需求方 2026-10-19:黄色圆形等级徽章移除)
   const upCost = levelUpCost(prof.level);
   drawBtn(ctx, GROW_LAYOUT.upBtn, '升 级', prof.materials >= upCost ? 'primary' : 'disabled', 26);
@@ -786,6 +804,47 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
   }
   ctx.globalAlpha = 1;
   // 抽卡浮层(新技能登场;2.4s 自动消失)
+  // 技能说明浮层(需求方 2026-10-19:单击行卡图标打开;点任意处关闭;版式与备战 tips 同源)
+  if (growAnim.tipsId) {
+    const sk = skillById(growAnim.tipsId);
+    if (sk) {
+      ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, 720, 1280);
+      const lv = prof.skillLevels?.[sk.id] || 1;
+      ctx.fillStyle = '#fff';
+      roundRect(ctx, 90, 420, 540, 400, 24); ctx.fill();
+      ctx.strokeStyle = '#19c8b9'; ctx.lineWidth = 4;
+      roundRect(ctx, 90, 420, 540, 400, 24); ctx.stroke();
+      const img = SKILL_IMG[sk.id];
+      ctx.fillStyle = '#f0e8d8';
+      roundRect(ctx, 118, 448, 110, 110, 16); ctx.fill();
+      if (img && img.complete && img.naturalWidth > 0) ctx.drawImage(img, 126, 456, 94, 94);
+      else {
+        ctx.fillStyle = GEM_SRC[sk.el];
+        ctx.beginPath(); ctx.arc(173, 503, 42, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#794f27';
+      ctx.font = FONT(34, 'bold');
+      ctx.fillText(sk.name, 252, 492);
+      ctx.font = FONT(22);
+      ctx.fillStyle = '#9f927d';
+      ctx.fillText(`Lv.${lv} · ${ELEMENT_NAME[sk.el] || sk.el} · CD ${sk.cd}s · 养成面板`, 252, 528);
+      ctx.font = FONT(24);
+      ctx.fillStyle = '#5a4a32';
+      wrapText(ctx, skillDetailText(sk), 118, 606, 484, 34);
+      const vline = skillValueLine(sk, atkText(prof.level), maxHpText(prof.level));
+      ctx.font = FONT(20);
+      ctx.fillStyle = '#9f927d';
+      ctx.fillText(`${vline.label}(${vline.formula}):`, 118, 682);
+      ctx.font = FONT(22, 'bold');
+      ctx.fillStyle = '#19c8b9';
+      ctx.fillText(vline.text, 118, 716);
+      ctx.font = FONT(19);
+      ctx.fillStyle = '#c4b89e';
+      ctx.textAlign = 'center';
+      ctx.fillText('点按任意处关闭', 360, 796);
+    }
+  }
   if (growAnim.gacha) {
     const g = growAnim.gacha;
     g.t += dt; // F4 整改:真实经过时间(不再按 1/60 假设,帧率无关)
@@ -1085,6 +1144,11 @@ function drawTopBar(ctx, title, prof) {
 
 // ===== 01 开始界面 =====
 function drawStartScreen(ctx, hud) {
+  // M15 Task 51:开始界面背景=生图产物(720×1280 全屏;缺图回退田园渐变+云/远山程序化兜底)
+  const startBg = START_IMG.bg;
+  if (startBg && startBg.complete && startBg.naturalWidth > 0) {
+    ctx.drawImage(startBg, 0, 0, 720, 1280);
+  } else {
   // 田园渐变背景(上青绿天→米白地)
   const sky = ctx.createLinearGradient(0, 0, 0, 1280);
   sky.addColorStop(0, '#d8f3ef'); sky.addColorStop(0.46, '#d8f3ef'); sky.addColorStop(0.46, '#f8f8f0'); sky.addColorStop(1, '#f8f8f0');
@@ -1104,8 +1168,13 @@ function drawStartScreen(ctx, hud) {
   ctx.moveTo(0, 584); ctx.lineTo(160, 470); ctx.lineTo(330, 584);
   ctx.lineTo(500, 455); ctx.lineTo(720, 584); ctx.lineTo(720, 620); ctx.lineTo(0, 620);
   ctx.fill();
-  // 标题(Claymorphism 厚描边字,浮动动画;M11-06:主标「言出法随」+ 副标「三生万物」两行)
+  }
+  // 标题(M15 Task 51:定名 LOGO 图=言出法随/三生万物,500×220 显示区随既有浮动动画;缺图回退程序化文字)
   const ty = 250 + Math.sin(worldT * 1.6) * 8;
+  const startLogo = START_IMG.logo;
+  if (startLogo && startLogo.complete && startLogo.naturalWidth > 0) {
+    ctx.drawImage(startLogo, 110, ty - 120, 500, 220);
+  } else {
   ctx.textAlign = 'center';
   ctx.font = FONT(104, 'bold');
   ctx.lineWidth = 16; ctx.lineJoin = 'round';
@@ -1119,6 +1188,7 @@ function drawStartScreen(ctx, hud) {
   ctx.lineWidth = 0;
   ctx.fillStyle = '#794f27';
   ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, ty + 140);
+  }
   // 主角立绘(player idle 序列帧,绘制 210×374)
   const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
   if (pf && pf.complete && pf.naturalWidth > 0) {
@@ -1361,13 +1431,13 @@ function drawLoadoutScreen(ctx, hud) {
     if (sk) {
       const img = SKILL_IMG[sk.id];
       if (img && img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, sx + 27, sy + 16, 86, 86);
+        ctx.drawImage(img, sx + 34, sy + 18, 72, 72); // 需求方 2026-10-19:86×86 改为 72×72,四周留边距,右缘 106 恰让开「更换」徽章
       } else {
         ctx.fillStyle = GEM_SRC[sk.el];
-        ctx.beginPath(); ctx.arc(sx + 70, sy + 58, 42, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(sx + 70, sy + 54, 33, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = ['fire', 'water', 'earth'].includes(sk.el) ? '#fff' : '#794f27';
         ctx.font = FONT(32, 'bold');
-        ctx.fillText(sk.el[0].toUpperCase(), sx + 70, sy + 70);
+        ctx.fillText(sk.el[0].toUpperCase(), sx + 70, sy + 66);
       }
       ctx.fillStyle = '#794f27';
       ctx.font = FONT(21, 'bold');

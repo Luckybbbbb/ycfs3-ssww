@@ -19,7 +19,7 @@ const { attachInput } = await import('../scripts/core/input.js');
 
 // ---- 录制型 2D context 桩 ----
 function mkCtx() {
-  const rec = { fillTexts: [], draws: [], strokes: 0, rects: [] };
+  const rec = { fillTexts: [], draws: [], strokes: 0, rects: [], fillRects: [], gradients: 0 };
   const ctx = new Proxy({}, {
     get(_t, prop) {
       if (prop === '__rec') return rec;
@@ -27,7 +27,8 @@ function mkCtx() {
       if (prop === 'fillText') return (text) => rec.fillTexts.push(String(text));
       if (prop === 'drawImage') return (img, ...a) => rec.draws.push({ img: String(img?._src ?? img), a });
       if (prop === 'stroke') return () => { rec.strokes++; };
-      if (prop === 'createLinearGradient') return () => ({ addColorStop() {} });
+      if (prop === 'fillRect') return (x, y, w, h) => rec.fillRects.push({ x, y, w, h });
+      if (prop === 'createLinearGradient') return () => { rec.gradients++; return { addColorStop() {} }; };
       return () => {};
     },
     set() { return true; },
@@ -508,4 +509,87 @@ test('UIV2-02 F2 整改:滚动纯函数帧率无关(同壁钟时间点显示值�
     // 终值=目标
     for (const tr of tracks) assert.equal(tr[tr.length - 1], target, `${name} 终值=${target}`);
   }
+});
+
+// ---- M15 Task 51:开始界面生图产物绑定/缺图回退(START-02 F1/F2 整改) ----
+test('M15 开始界面生图:仅背景/仅 LOGO 绑定、未加载与解码失败均经 render 入口回退程序化绘制', async () => {
+  const { bindImages, startImagesBound } = await import('../scripts/ui/render.js');
+  // 前置:本文件此前用例从未绑定开始界面图 → 两图未绑定=纯程序化(既有过审行为)
+  const r0 = mkCtx();
+  render(r0.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(r0.rec.fillTexts.includes('言出法随'), '两图未绑定:程序化文字标题');
+  assert.ok(!r0.rec.draws.some(d => d.img.includes('assets/backgrounds/start/')), '两图未绑定:无背景 drawImage');
+  assert.ok(!r0.rec.draws.some(d => d.img.includes('assets/ui/start/')), '两图未绑定:无 LOGO drawImage');
+
+  // 仅绑定 LOGO(背景未绑定):背景程序化渐变实际输出(全屏 fillRect),LOGO 未加载→文字标题
+  const fakeLogo = { _src: 'assets/ui/start/logo.png', complete: false, naturalWidth: 0 };
+  bindImages({ get: (k) => (k === 'ui:start_logo' ? fakeLogo : undefined) });
+  const rl0 = mkCtx();
+  render(rl0.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(rl0.rec.gradients > 0, '仅 LOGO 未加载:背景程序化渐变实际创建');
+  assert.ok(rl0.rec.fillRects.some(f => f.w === 720 && f.h === 1280), '仅 LOGO 未加载:背景全屏填充实际输出(非空白)');
+  assert.ok(!rl0.rec.draws.some(d => d.img.includes('assets/backgrounds/start/')), '仅 LOGO:无背景 drawImage');
+  assert.ok(rl0.rec.fillTexts.includes('言出法随'), '仅 LOGO 未加载:文字标题回退');
+  fakeLogo.complete = true; fakeLogo.naturalWidth = 1000;
+  const rl1 = mkCtx();
+  render(rl1.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  const logoDraw = rl1.rec.draws.find(d => d.img.includes('assets/ui/start/logo.png'));
+  assert.ok(logoDraw, '仅 LOGO 加载后绘制(find 谓词判别力对照:下条几何断言同源)');
+  assert.equal(logoDraw.a[2], 500, 'LOGO 显示区宽 500');
+  assert.equal(logoDraw.a[3], 220, 'LOGO 显示区高 220');
+  assert.equal(logoDraw.a[0], 110, 'LOGO 显示区 x=110');
+  assert.ok(logoDraw.a[1] >= 122 && logoDraw.a[1] <= 138, 'LOGO y=ty-120 ∈[122,138](浮动 ±8)');
+  assert.ok(rl1.rec.fillRects.some(f => f.w === 720 && f.h === 1280), '仅 LOGO 加载:背景仍程序化渐变填充');
+  assert.ok(!rl1.rec.fillTexts.includes('言出法随'), '仅 LOGO 加载:不再程序化文字标题');
+
+  // 追加绑定背景(LOGO 仍处上一段绑定态——bindImages 只填充不清空):背景未加载→渐变兜底实际输出;加载后 drawImage 且不再全屏填充
+  const fakeBg = { _src: 'assets/backgrounds/start/start_bg.png', complete: false, naturalWidth: 0 };
+  bindImages({ get: (k) => (k === 'ui:start_bg' ? fakeBg : undefined) });
+  const rb0 = mkCtx();
+  render(rb0.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(!rb0.rec.draws.some(d => d.img.includes('assets/backgrounds/start/start_bg.png')), '背景未解码完成不 drawImage');
+  assert.ok(rb0.rec.fillRects.some(f => f.w === 720 && f.h === 1280), '背景未加载:渐变全屏兜底实际输出');
+  assert.ok(rb0.rec.draws.some(d => d.img.includes('assets/ui/start/logo.png')), '标题由仍处绑定态的 LOGO 图承担(未加载回退由 r0 段覆盖)');
+  fakeBg.complete = true; fakeBg.naturalWidth = 720;
+  const rb1 = mkCtx();
+  render(rb1.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(rb1.rec.draws.some(d => d.img.includes('assets/backgrounds/start/start_bg.png')), '背景加载后全屏 drawImage(1:1)');
+  assert.ok(!rb1.rec.fillRects.some(f => f.w === 720 && f.h === 1280), '背景贴图就绪后不再程序化全屏填充');
+  assert.ok(rb1.rec.draws.some(d => d.img.includes('assets/ui/start/logo.png')), 'LOGO 仍处绑定态正常绘制');
+  assert.ok(rb1.rec.draws.some(d => d.img.includes('assets/ui/start/logo.png')), '标题由仍处绑定态的 LOGO 图承担');
+
+  // 背景解码失败(complete=true 但 naturalWidth=0)而 LOGO 正常:渐变兜底+LOGO 保持绘制
+  fakeBg.complete = true; fakeBg.naturalWidth = 0;
+  bindImages({ get: (k) => (k === 'ui:start_bg' ? fakeBg : (k === 'ui:start_logo' ? fakeLogo : undefined)) });
+  const rbg = mkCtx();
+  render(rbg.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(!rbg.rec.draws.some(d => d.img.includes('assets/backgrounds/start/start_bg.png')), '背景解码失败不 drawImage');
+  assert.ok(rbg.rec.fillRects.some(f => f.w === 720 && f.h === 1280), '背景解码失败:渐变全屏兜底实际输出');
+  assert.ok(rbg.rec.draws.some(d => d.img.includes('assets/ui/start/logo.png')), '背景解码失败:LOGO 保持正常绘制');
+
+  // LOGO 解码失败(背景已加载):LOGO 不绘制+文字回退,背景贴图保持
+  fakeBg.naturalWidth = 720;
+  fakeLogo.naturalWidth = 0;
+  const r3 = mkCtx();
+  render(r3.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(!r3.rec.draws.some(d => d.img.includes('assets/ui/start/logo.png')), 'LOGO 解码失败不 drawImage');
+  assert.ok(r3.rec.fillTexts.includes('言出法随'), 'LOGO 解码失败:文字标题回退');
+  assert.ok(r3.rec.draws.some(d => d.img.includes('assets/backgrounds/start/start_bg.png')), '背景贴图保持绘制');
+  // 探针只表示引用已绑定(两图均仍在绑定态)
+  assert.deepEqual(startImagesBound(), { bg: true, logo: true }, '图片仍已绑定,解码失败时回退程序化绘制');
+});
+
+// ---- 需求方 2026-10-19:开始界面主角动画异常快(worldT 按帧数推进→高刷屏 2 倍速) ----
+test('M15 表现层时钟:worldT 按 render 实际 dt 推进(同壁钟时长下推进量与帧数无关)', async () => {
+  const { animClock } = await import('../scripts/ui/render.js');
+  const t0 = animClock();
+  // 同样 0.5s 壁钟:低帧 4fps(2 帧×0.25s)与 12fps(6 帧×1/12s)推进量相同——推进量与帧数解耦
+  render(mkCtx().ctx, mkEngineStub(), mkHud({ screen: () => 'start' }), 0.25);
+  render(mkCtx().ctx, mkEngineStub(), mkHud({ screen: () => 'start' }), 0.25);
+  const after30 = animClock() - t0;
+  const t1 = animClock();
+  for (let i = 0; i < 6; i++) render(mkCtx().ctx, mkEngineStub(), mkHud({ screen: () => 'start' }), 1 / 12);
+  const afterVar = animClock() - t1;
+  assert.ok(Math.abs(after30 - 0.5) < 1e-9, `4fps 口径(2 帧×0.25s)0.5s 壁钟推进 ${after30}`);
+  assert.ok(Math.abs(afterVar - 0.5) < 1e-9, `12fps 口径(6 帧×1/12s)推进 ${afterVar}(与帧数解耦)`);
 });
