@@ -227,13 +227,16 @@ ws.onclose = () => { for (const { rej } of pending.values()) rej(new Error('CDP 
           const octx = off.getContext('2d');
           octx.putImageData(refSnap, 0, 0);
           octx.fillStyle = '#5fae5f'; // 兜底椭圆(覆盖整个采样窗,同 render.js 兜底色)
-          octx.beginPath(); octx.ellipse(e.x * sx, e.y * sy, 62 * sx, 88 * sy, 0, 0, Math.PI * 2); octx.fill();
+          // 固定画布位置(战斗区中心 360,224)——与活敌运动状态解耦(实测活敌在采样间隙移动致椭圆错位 0%~100% 抖动)
+          octx.beginPath(); octx.ellipse(360 * sx, 224 * sy, 62 * sx, 88 * sy, 0, 0, Math.PI * 2); octx.fill();
           tgt = octx.getImageData(0, 0, cv.width, cv.height);
         }
       }
       enemies.forEach((x, j) => { x.x = saved[j]; }); // 兜底恢复(幂等)
       // 同坐标窗口对比(tgt vs refSnap)
-      const cx = e.x * sx, cy = e.y * sy;
+      // 采样中心:ellipse 模式用固定位置(与椭圆绘制点一致);其余模式用敌当前位置
+      const cx = mode === 'ellipse' ? 360 * sx : e.x * sx;
+      const cy = mode === 'ellipse' ? 224 * sy : e.y * sy;
       const grab = (d) => {
         const out = [];
         for (let dx = -13; dx <= 13; dx += 4) for (let dy = -19; dy <= 19; dy += 4) {

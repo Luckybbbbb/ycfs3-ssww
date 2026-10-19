@@ -2,7 +2,7 @@
 name: ssww-pack-assets
 description: ycfs3-ssww 资源打包与体积优化流程。触发词：新增图素、素材打包、雪碧图、atlas、PNG 量化、进站体积、资源加载优化。新增或更换 assets 下素材后、或需要压缩首次进站体积时使用。
 metadata:
-  version: 0.1.1
+  version: 0.1.2
 ---
 
 # ycfs3-ssww 资源打包与体积优化
