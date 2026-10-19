@@ -19,7 +19,8 @@ const { attachInput } = await import('../scripts/core/input.js');
 
 // ---- 录制型 2D context 桩 ----
 function mkCtx() {
-  const rec = { fillTexts: [], draws: [], strokes: 0, rects: [], fillRects: [], gradients: 0 };
+  // -03 B1 整改:Proxy set 拦截记录 fillStyle/globalAlpha(按压色/淡入 alpha 可真断言,不再恒真)
+  const rec = { fillTexts: [], draws: [], strokes: 0, rects: [], fillRects: [], gradients: 0, fillStyles: [], globals: [], strokeStyles: [], lineLimits: [] };
   const ctx = new Proxy({}, {
     get(_t, prop) {
       if (prop === '__rec') return rec;
@@ -28,10 +29,16 @@ function mkCtx() {
       if (prop === 'drawImage') return (img, ...a) => rec.draws.push({ img: String(img?._src ?? img), a });
       if (prop === 'stroke') return () => { rec.strokes++; };
       if (prop === 'fillRect') return (x, y, w, h) => rec.fillRects.push({ x, y, w, h });
-      if (prop === 'createLinearGradient') return () => { rec.gradients++; return { addColorStop() {} }; };
+      if (prop === 'createLinearGradient' || prop === 'createRadialGradient') return () => { rec.gradients++; return { addColorStop() {} }; };
       return () => {};
     },
-    set() { return true; },
+    set(_t, prop, v) {
+      if (prop === 'fillStyle') rec.fillStyles.push(v);
+      if (prop === 'globalAlpha') rec.globals.push(v);
+      if (prop === 'strokeStyle') rec.strokeStyles.push(v);
+      if (prop === 'lineWidth') rec.lineLimits.push(v);
+      return true;
+    },
   });
   return { ctx, rec };
 }
@@ -203,7 +210,7 @@ test('M11 暂停与设置:⏸/⚙ 底栏按钮;暂停浮层(继续/音效/动效
   const r2 = mkCtx();
   render(r2.ctx, mkEngineStub(), mkHud({ screen: () => 'start', panel: () => 'settings' }));
   assert.ok(r2.rec.fillTexts.includes('设 置'), '设置面板标题');
-  assert.ok(r2.rec.fillTexts.some(t => t.includes('消除动效:开')), '动效开关(设置面板)');
+  assert.ok(r2.rec.fillTexts.some(t => t.includes('动效:开')), '动效开关(设置面板)'); // BEAUTIFY-01 F4:暂停/设置同一开关统一名称
   assert.ok(r2.rec.fillTexts.some(t => t.includes('关 闭')), '关闭按钮');
 });
 
@@ -282,12 +289,12 @@ test('M11-02 F1 预载接线:bindImages 以预载实例替换渲染表;main 消�
   assert.ok(r.rec.draws.some(d => d.img === 'stub://invincible_premium.png'), '道具格实绘=预载注入实例');
 });
 
-test('M15 v2 命中区同源:4 大槽步进 172/换装抽屉两列坐标有限;卡片按钮在屏内', async () => {
+test('M15 v2 命中区同源:4 大槽步进 160(128 槽+面板 24px 边距)/换装抽屉两列坐标有限;卡片按钮在屏内', async () => {
   const { uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, UI: UIC } = await import('../scripts/ui/render.js');
-  // 4 槽:x0=32 步进 172(140+32),全部在屏内
+  // 4 槽:x0=56 步进 160(128+32;面板 32..688 内左右各留 24px),全部在屏内
   for (let i = 0; i < 4; i++) {
     const s0 = uiSlotRect(i);
-    assert.equal(s0.x, 32 + i * 172, `槽 ${i + 1} x 命中与绘制同源(v2)`);
+    assert.equal(s0.x, 56 + i * 160, `槽 ${i + 1} x 命中与绘制同源(v2)`);
     assert.ok(s0.x + s0.w <= 720 && s0.y + s0.h <= 1280, `槽 ${i + 1} 在屏内`);
   }
   // 换装抽屉两列 6 行:15 技能去已装配 ≤11 行,坐标全有限且在抽屉容器内
@@ -592,4 +599,282 @@ test('M15 表现层时钟:worldT 按 render 实际 dt 推进(同壁钟时长下�
   const afterVar = animClock() - t1;
   assert.ok(Math.abs(after30 - 0.5) < 1e-9, `4fps 口径(2 帧×0.25s)0.5s 壁钟推进 ${after30}`);
   assert.ok(Math.abs(afterVar - 0.5) < 1e-9, `12fps 口径(6 帧×1/12s)推进 ${afterVar}(与帧数解耦)`);
+});
+
+// ---- BEAUTIFY-01 整改守护(12 项建议中的可机械断言子集) ----
+test('BEAUTIFY F3 屏幕路由:非战斗屏不再绘制战斗区敌人/棋盘/结算', async () => {
+  const { BattleHudView } = await import('../scripts/ui/battle_hud.js');
+  const mkBattleHud = () => ({
+    battle: {
+      phase: 'FIGHTING', hp: 100, maxHp: 100, shield: 0, level: 1, wave: 1,
+      enemies: [], ebolts: [], bolts: [], zones: [], aliveEnemies: () => [],
+      playerAttackT: 0, hurtT: 0, coinsGained: 0, matsGained: 0, expGained: 0, kills: 0,
+    },
+    battleHud: new BattleHudView(),
+    parallax: { transform: () => ({ ox: 0, oy: 0, scale: 1 }), draw() {} },
+  });
+  // start 屏:battle 存在(旧局残留)也不绘战斗区与棋盘
+  const rs = mkCtx();
+  render(rs.ctx, mkEngineStub(), Object.assign(mkHud({ screen: () => 'start' }), mkBattleHud()));
+  assert.ok(!rs.rec.fillRects.some(f => f.w === 720 && f.h === 448), 'start 屏不绘战斗区底');
+  assert.ok(!rs.rec.fillRects.some(f => f.w === 720 && f.h === 112 && f.y === 1168), 'start 屏不绘底栏');
+  // playing 屏:照常绘制(回归)
+  const rp = mkCtx();
+  render(rp.ctx, mkEngineStub(), Object.assign(mkHud({ screen: () => 'playing' }), mkBattleHud()));
+  assert.ok(rp.rec.fillRects.some(f => f.w === 720 && f.h === 44 && f.y === 0), 'playing 屏战斗区货币栏条带照常(parallax 桩无渐变底,以 44px 条带为准)');
+});
+
+test('BEAUTIFY F2/F6 按钮:primary 深青绿底(白字对比 5.20)+按压态(-04 R2 归属按下时确定)', async () => {
+  const { setPressPoint, pressMove, UI } = await import('../scripts/ui/render.js');
+  const src = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(src.includes("primaryBtn: '#0e7a70'"), 'primary 按钮底 #0e7a70(对比 5.20:1)');
+  const downP = { x: UI.start.playBtn.x + 10, y: UI.start.playBtn.y + 10 };
+  // 按压态:底色加深 #0c6b63(shade 0.88 位运算实值);tag 三段=屏:浮层:养成页(与 main 同源)
+  setPressPoint({ ...downP }, 'start::0:0');
+  const rp = mkCtx();
+  render(rp.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(rp.rec.fillStyles.includes('#0c6b63'), `按压底色 #0c6b63 实际出现(实得 ${JSON.stringify(rp.rec.fillStyles.slice(0, 6))})`);
+  // R2/N3:移动跟随只更新坐标、不重写 tag——导航后移动到 menu 屏**真按钮**(养成入口
+  // growBtn 中心,该处确有可变色按钮)也不重新获得按压色(有效反例:目标点在按钮内)。
+  // -07 S2:目标按钮是 ghost——错误继承会产生 ghost 按压色 #d3ccbe,两种按压色都必须不出现
+  pressMove({ x: 631, y: 1180 }); // UI.menu.growBtn 中心
+  const rx = mkCtx();
+  render(rx.ctx, mkEngineStub(), mkHud({ screen: () => 'menu' }));
+  assert.ok(!rx.rec.fillStyles.includes('#0c6b63'), '导航后移动不重绑:menu 屏 growBtn(真按钮)上无 primary 按压色');
+  assert.ok(!rx.rec.fillStyles.includes('#d3ccbe'), '导航后移动不重绑:growBtn 是 ghost 按钮,错误继承会画出 ghost 按压色 #d3ccbe——也不得出现');
+  // 松手清除
+  setPressPoint(null);
+  const ru = mkCtx();
+  render(ru.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
+  assert.ok(ru.rec.fillStyles.includes('#0e7a70') && !ru.rec.fillStyles.includes('#0c6b63'), '松手恢复常态无残留');
+  // R5:fx 关无按压视觉
+  setPressPoint({ ...downP }, 'start::0:0');
+  const rf = mkCtx();
+  render(rf.ctx, { ...mkEngineStub(), fxEnabled: false }, mkHud({ screen: () => 'start' }));
+  assert.ok(!rf.rec.fillStyles.includes('#0c6b63'), 'fx 关闭无按压视觉');
+  setPressPoint(null);
+});
+
+test('BEAUTIFY F11 彩带:同壁钟时刻片数与帧率无关(-03 B1/B6 整改:真跑 drawResult 统计)', async () => {
+  const { resultRestart } = await import('../scripts/ui/render.js');
+  // 胜利 battle 桩:VICTORY → render 走 drawResult;彩带片 fillRect 特征 w 9..15 且 h 13..21
+  const victoryHud = () => mkHud({
+    screen: () => 'playing',
+    battle: { phase: 'VICTORY', hp: 1, maxHp: 1, shield: 0, level: 1, wave: 1, kills: 3, coinsGained: 5, matsGained: 2, expGained: 9, victoryCoins: 10, victoryMats: 5, enemies: [], ebolts: [], bolts: [], zones: [], aliveEnemies: () => [], playerAttackT: 0, hurtT: 0 },
+  });
+  const lastFrameConfetti = (dts) => {
+    resultRestart();
+    let n = -1;
+    for (const d of dts) {
+      const r = mkCtx();
+      render(r.ctx, mkEngineStub(), victoryHud(), d);
+      n = r.rec.fillRects.filter(f => f.w >= 9 && f.w <= 15 && f.h >= 13 && f.h <= 21).length; // 末帧活跃片数
+    }
+    return n;
+  };
+  // t=1.0s 壁钟:target=Math.floor((1.0-0.8)*45)=8(浮点口径 1.0-0.8=0.19999999999999996,机械复算同式)——
+  // 4fps(4×0.25s)与 24fps(24×1/24s)片数相同=帧率无关
+  const low = lastFrameConfetti([0.25, 0.25, 0.25, 0.25]);
+  const high = lastFrameConfetti(Array.from({ length: 24 }, () => 1 / 24));
+  const expect = Math.floor((1.0 - 0.8) * 45); // 与实现同式机械复算(浮点透明)
+  assert.equal(low, expect, `4fps 下 t=1.0s 彩带 ${expect} 片(实得 ${low})`);
+  assert.equal(high, expect, `24fps 下 t=1.0s 彩带 ${expect} 片(实得 ${high},与帧率无关)`);
+  // 上限 120:t=3.2s target=min(120,108)=108;t 足够后不再超 120
+  const src = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(src.includes('CONFETTI_COLORS'), '彩带色表为模块级常量(不再每帧建数组)');
+});
+
+test('BEAUTIFY F9 释放反馈:带参定位不依赖预热缓存,墙钟 160ms(-04 R3 整改)', async () => {
+  const { BattleHudView } = await import('../scripts/ui/battle_hud.js');
+  const v = new BattleHudView();
+  const loadout = ['fire_bolt', 'water_bolt', 'wood_bolt', 'earth_bolt'];
+  // R3:不预热缓存(update 不调),直接按产品顺序 noteCast——首局首帧可亮
+  let clock = 1000;
+  v._now = () => clock;
+  v.noteCast('fire_bolt', loadout);
+  v.noteCast('water_bolt', loadout);
+  assert.equal(v.castAt[0], 1000, '槽 0 记录释放时刻(构造后缓存为空也能定位)');
+  assert.equal(v.castAt[1], 1000, '同帧双技能两槽均记');
+  assert.equal(v.castAt[2], 0, '未释放槽不亮');
+  const before = [...v.castAt];
+  v.noteCast('metal_pulse', loadout); // 未装配:忽略不覆盖
+  assert.deepEqual(v.castAt, before, '未装配技能被忽略');
+  // R3:墙钟口径——160ms 内有效、超过即过期(与模拟 dt 封顶解耦)
+  const hudStub = { battle: {}, caster: { loadout, skillCds: {} }, fxEnabled: () => true };
+  // 亮边特征=save 后设置 0<globalAlpha<1(Boss 菱形白描边恒画,strokeStyle 特征不唯一)
+  clock = 1100; // +100ms < 160
+  {
+    const r = mkCtx();
+    v.draw(r.ctx, hudStub);
+    assert.ok(r.rec.globals.some(a => a > 0 && a < 1), `100ms 时亮边在画(alpha=${1 - 100 / 160},实得 ${JSON.stringify(r.rec.globals)})`);
+  }
+  clock = 1200; // +200ms ≥ 160 过期
+  {
+    const r = mkCtx();
+    v.draw(r.ctx, hudStub);
+    assert.ok(!r.rec.globals.some(a => a > 0 && a < 1), '200ms 后亮边停止');
+  }
+  // R4:draw 读实时开关——暂停期(update 不跑)关动效立即隐藏
+  clock = 1050;
+  const rOff = mkCtx();
+  v.draw(rOff.ctx, { ...hudStub, fxEnabled: () => false });
+  assert.ok(!rOff.rec.globals.some(a => a > 0 && a < 1), 'fx 关(实时读)不画亮边');
+  v.reset();
+  assert.deepEqual(v.castAt, [0, 0, 0, 0], 'reset 清全部');
+});
+
+test('BEAUTIFY F10/R4 存量冒字:关动效不绘制未结束的 HP/ATK 冒字(-04 R4)', async () => {
+  const { growFloatText } = await import('../scripts/ui/render.js');
+  growFloatText('HP +15', 320, 232, '#6fba2c');
+  growFloatText('ATK +1', 320, 270, '#6fba2c');
+  // fx 关:存量冒字不绘制(与战斗侧「停止绘制存量粒子/冒字」同口径)
+  const rOff = mkCtx();
+  render(rOff.ctx, { ...mkEngineStub(), fxEnabled: false }, mkHud({ screen: () => 'menu', growPanel: () => true }));
+  assert.ok(!rOff.rec.fillTexts.includes('HP +15'), 'fx 关:HP 冒字不绘制');
+  assert.ok(!rOff.rec.fillTexts.includes('ATK +1'), 'fx 关:ATK 冒字不绘制');
+});
+
+test('BEAUTIFY F7 浮层:关闭后重开重新淡入;skillTips 换槽重放(-03 B3 整改)', async () => {
+  // 首次打开:globalAlpha<1(淡入进行)
+  const r1 = mkCtx();
+  render(r1.ctx, mkEngineStub(), mkHud({ screen: () => 'start', panel: () => 'settings' }));
+  assert.ok(r1.rec.globals.some(a => a < 1), `首次打开 alpha<1(实得 ${JSON.stringify(r1.rec.globals.slice(0, 4))})`);
+  // 推进 0.5s(多帧)→ 终态 alpha=1
+  const hud2 = mkHud({ screen: () => 'start', panel: () => 'settings' });
+  render(mkCtx().ctx, mkEngineStub(), hud2, 0.05);
+  const r2 = mkCtx();
+  render(r2.ctx, mkEngineStub(), hud2, 0.5);
+  assert.ok(r2.rec.globals.every(a => a === 1), `淡入完成后 alpha=1(实得 ${JSON.stringify(r2.rec.globals)})`);
+  // 关闭(无浮层帧)→ 同一浮层重开:重新淡入(B3:不再沿用旧起点直接终态)
+  render(mkCtx().ctx, mkEngineStub(), mkHud({ screen: () => 'start', panel: () => null }), 0.1);
+  const r3 = mkCtx();
+  render(r3.ctx, mkEngineStub(), mkHud({ screen: () => 'start', panel: () => 'settings' }));
+  assert.ok(r3.rec.globals.some(a => a < 1), `重开后重新淡入 alpha<1(实得 ${JSON.stringify(r3.rec.globals.slice(0, 4))})`);
+  // 源码:skillTips 键含槽位(换槽重放)
+  const src = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(src.includes('overlayIn(`skillTips:${lo.tipsSlot}`)'), 'skillTips 键含槽位');
+});
+
+test('BEAUTIFY F3 路由:menu/loadout 屏不绘棋盘与底栏,playing 照常(-03 复验补充)', () => {
+  const boardish = (rec) => rec.fillRects.some(f => f.y === 448 && f.h === 720); // 棋盘底(BOARD_Y=448,8×90=720)
+  const bottomBar = (rec) => rec.fillRects.some(f => f.y === 1168 && f.h === 112);
+  for (const scr of ['menu', 'loadout']) {
+    const r = mkCtx();
+    render(r.ctx, mkEngineStub(), mkHud({ screen: () => scr }));
+    assert.ok(!boardish(r.rec) && !bottomBar(r.rec), `${scr} 屏不绘棋盘底与底栏`);
+  }
+  const rp = mkCtx();
+  render(rp.ctx, mkEngineStub(), mkHud({ screen: () => 'playing' }));
+  assert.ok(boardish(rp.rec) && bottomBar(rp.rec), 'playing 屏棋盘与底栏照常');
+});
+
+test('BEAUTIFY 需求方第三批:换装行含技能描述;选关顶栏无等级 chip;缩略图按关卡 Boss 表', async () => {
+  // 换装抽屉(skillPick):行内出现 skillDetailText 描述文本
+  const rp = mkCtx();
+  render(rp.ctx, mkEngineStub(), mkHud({
+    screen: () => 'loadout',
+    loadout: () => ({ selLevel: 1, selSlot: 0, panel: 'skillPick', pickSlot: 0, tipsSlot: -1 }),
+    profile: () => ({ level: 3, coins: 120, materials: 8, expTotal: 80, ownedSkills: ['fire_bolt', 'water_bolt', 'wood_bolt'], skillLevels: { fire_bolt: 2 }, loadout: ['fire_bolt'], settings: { effects: true } }),
+  }));
+  assert.ok(rp.rec.fillTexts.some(t => t.includes('单体弹道直击')), `换装行出现技能描述(实得样例 ${rp.rec.fillTexts.slice(0, 8).join('|')})`);
+  // 选关:顶栏无「Lv.」chip 文本(第三批:等级/经验移除)
+  const rm = mkCtx();
+  render(rm.ctx, mkEngineStub(), mkHud({ screen: () => 'menu' }));
+  assert.ok(!rm.rec.fillTexts.some(t => t.startsWith('Lv.')), '选关顶栏无 Lv chip');
+  // 源码:缩略图走 bossType(i)(每关 Boss 表)
+  const src = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
+  assert.ok(src.includes('ENEMY_FRAMES[bossType(i)]'), '选关缩略图=该关 Boss 类型帧');
+});
+
+// ---- BEAUTIFY -07 整改守护(Q5 ghost 按压 / Q2 Q3 掉落生命周期) ----
+test('BEAUTIFY F6 ghost 按压正例:menu 屏养成按钮按压色 #d3ccbe(shade 0.88),不产生 primary 按压色', async () => {
+  const { setPressPoint, UI } = await import('../scripts/ui/render.js');
+  setPressPoint({ x: UI.menu.growBtn.x + 10, y: UI.menu.growBtn.y + 10 }, 'menu::0:0');
+  const r = mkCtx();
+  render(r.ctx, mkEngineStub(), mkHud({ screen: () => 'menu' }));
+  assert.ok(r.rec.fillStyles.includes('#d3ccbe'), `ghost 按压底色 #d3ccbe 实际出现(实得 ${JSON.stringify(r.rec.fillStyles.slice(0, 8))})`);
+  assert.ok(!r.rec.fillStyles.includes('#0c6b63'), 'ghost 按钮按压不产生 primary 按压色(材质归属正确)');
+  setPressPoint(null);
+});
+
+test('BEAUTIFY -07 掉落系统:到达到账/收益守恒/池满丢弃/fx 关清池/reset 清池/到达音效排队', async () => {
+  const R = await import('../scripts/ui/render.js');
+  const { spawnCoinDrop, syncDropBank, resetDropBank, takeDropSfx, dropArriveCoin, dropArriveMat } = R;
+  const battleStub = () => ({ phase: 'FIGHTING', hp: 100, maxHp: 100, shield: 0, level: 1, wave: 1, enemies: [], ebolts: [], bolts: [], zones: [], aliveEnemies: () => [], playerAttackT: 0, hurtT: 0, coinsGained: 0, matsGained: 0, expGained: 0, kills: 0 });
+  const playingHud = () => mkHud({ screen: () => 'playing', battle: battleStub() });
+  const fxOffHud = () => mkHud({ screen: () => 'playing', battle: battleStub() });
+  const step = (n, eng = mkEngineStub(), dt = 0.1) => {
+    let last = null;
+    for (let i = 0; i < n; i++) { const c = mkCtx(); render(c.ctx, eng, playingHud(), dt); last = c; }
+    return last;
+  };
+  // ① 正常到达+收益守恒:杀怪 +5 币(真值 120→125),显示从「真值−在途」滚到真值
+  resetDropBank();
+  spawnCoinDrop('coin', 5, 360, 300);
+  syncDropBank(125, 8, true, 0.016); // base=125−5=120(在途未到账)
+  let r0 = step(1);
+  assert.ok(r0.rec.fillTexts.includes('120'), `在途未到账显示 120(实得 ${JSON.stringify(r0.rec.fillTexts.filter(t => t === '120' || t === '125'))})`);
+  step(30, mkEngineStub(), 0.1); // 3s:抛物线落地 ~0.8 + 停留 ≤0.8 + 飞行 0.6 必到达
+  assert.equal(dropArriveCoin(), 1, '到达计数器 +1(产品路径 render 推进)');
+  assert.equal(takeDropSfx(), 'coin', '到达进入音效队列');
+  assert.equal(takeDropSfx(), 'none', '队列消费后清空');
+  for (let i = 0; i < 80; i++) syncDropBank(125, 8, true, 0.05); // 显示值滚动收敛(4s)
+  const r1 = step(1);
+  assert.ok(r1.rec.fillTexts.includes('125'), `到达后显示滚动到真值 125(收益守恒,实得 ${JSON.stringify(r1.rec.fillTexts.filter(t => t === '120' || t === '125'))})`);
+  // ② 池满丢弃:24 池满后再 spawn 丢弃(表现层);30 个 value 均已入账(真值=120+30=150)——
+  // 在途仅 24 个,base=150−24=126,到达后显示收敛到真值 150;-07 S2:断言到达次数恰好 24
+  resetDropBank();
+  for (let i = 0; i < 30; i++) spawnCoinDrop('coin', 1, 360, 300); // 30>24:6 个被丢弃
+  syncDropBank(150, 8, true, 0.016); // 真值 150 全部入账;在途 24 → base 126
+  let r2 = step(1);
+  assert.ok(r2.rec.fillTexts.includes('126'), `在途 24 个未到账显示 126(实得 ${JSON.stringify(r2.rec.fillTexts.filter(t => t === '126' || t === '150'))})`);
+  const arriveBefore = dropArriveCoin();
+  step(30, mkEngineStub(), 0.1);
+  assert.equal(dropArriveCoin() - arriveBefore, 24, '池满丢弃:恰好 24 个到达(30 注入中 6 个表现层丢弃,不产生到达)');
+  for (let i = 0; i < 80; i++) syncDropBank(150, 8, true, 0.05);
+  r2 = step(1);
+  assert.ok(r2.rec.fillTexts.includes('150'), `池满丢弃不影响数值口径:到达后显示=真值 150(收益守恒,实得 ${JSON.stringify(r2.rec.fillTexts.filter(t => t === '126' || t === '150'))})`);
+  // ③ fx 关清池强制到账:显示立即=真值,池清空(后续无到达)
+  resetDropBank();
+  spawnCoinDrop('coin', 9, 360, 300);
+  syncDropBank(129, 8, false, 0.016); // fx 关:清池+显示=真值 129
+  const r3 = step(1, { ...mkEngineStub(), fxEnabled: false });
+  assert.ok(r3.rec.fillTexts.includes('129'), `fx 关显示立即=真值 129(在途强制到账,实得 ${JSON.stringify(r3.rec.fillTexts.filter(t => t === '120' || t === '129'))})`);
+  const arrivedBefore = dropArriveCoin();
+  step(30, { ...mkEngineStub(), fxEnabled: false }, 0.1);
+  assert.equal(dropArriveCoin(), arrivedBefore, 'fx 关池已清:无掉落继续飞行到达');
+  // ④ reset 清池:跨局不残留(新局显示从当前真值起步,旧在途物不再扣减)
+  resetDropBank();
+  spawnCoinDrop('coin', 7, 360, 300);
+  resetDropBank();
+  syncDropBank(125, 8, true, 0.016); // 池已清:base=125(无在途扣减)
+  const r4 = step(1);
+  assert.ok(r4.rec.fillTexts.includes('125'), `reset 后显示=真值 125(旧在途不扣减,实得 ${JSON.stringify(r4.rec.fillTexts.filter(t => t === '118' || t === '125'))})`);
+  const arr5 = dropArriveCoin();
+  step(30, mkEngineStub(), 0.1);
+  assert.equal(dropArriveCoin(), arr5, 'reset 清池后无旧物到达');
+  // ⑤ 同帧多到达排队:每帧消费一个逐帧补响(每到达一次一响)
+  resetDropBank();
+  for (let i = 0; i < 3; i++) spawnCoinDrop('coin', 1, 660, 40); // 芯片锚点旁:立即起飞快速到达
+  step(30, mkEngineStub(), 0.1);
+  const burst = [takeDropSfx(), takeDropSfx(), takeDropSfx(), takeDropSfx()];
+  assert.equal(burst.filter(s => s === 'coin').length, 3, `3 个到达排队,逐帧各消费一个(实得 ${JSON.stringify(burst)})`);
+  // ⑥ -07 S1 关动效清回弹存量:到达当帧 bump 计时中切 fx 关,chip 图标立即恢复原尺寸(dt=0 不残留放大)
+  // 注入伪造 coin/pick 贴图(与 M11-02 F1 同法)——drawAssetIcon 走 drawImage 分支,尺寸可断言
+  const fakeIcon = { complete: true, naturalWidth: 18, naturalHeight: 18 };
+  const { bindImages } = await import('../scripts/ui/render.js');
+  bindImages({ get: (k) => (k === 'icon:ui:coin' || k === 'icon:ui:pick' ? fakeIcon : undefined) });
+  resetDropBank();
+  spawnCoinDrop('coin', 5, 660, 40);
+  syncDropBank(125, 8, true, 0.016);
+  for (let i = 0; i < 30; i++) {
+    step(1, mkEngineStub(), 0.1);
+    syncDropBank(125, 8, true, 0.1);
+    if (dropArriveCoin() > 0) break; // 第一到达当帧(bump=0.35 刚置位)
+  }
+  syncDropBank(125, 8, false, 0.016); // 关动效:清池+bump 清零+显示=真值
+  const r6 = step(1, { ...mkEngineStub(), fxEnabled: false }, 0.016);
+  const chipSizes = r6.rec.draws.filter(d => d.a && d.a.length === 4 && d.a[2] >= 15 && d.a[2] <= 30).map(d => d.a[2]);
+  assert.ok(chipSizes.length > 0 && chipSizes.every(sz => sz === 20), `关动效后 chip 图标全部原尺寸 20(bump 存量已清,实得 ${JSON.stringify(chipSizes)})`);
+  resetDropBank();
 });

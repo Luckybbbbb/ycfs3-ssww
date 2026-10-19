@@ -26,8 +26,10 @@ export class Enemy {
   // M3 波次实体:new Enemy(spec) 由 wave/battle 传入完整数值(wave.js 公式计算结果)
   constructor({ name = 'slime', hp = 30, x = 560, y = 280,
                 dmg = 0, spd = 0, interval = 0, boltCount = 0, fanDeg = 0,
-                boltSpeed = 0, boltDmg = 0, w = 0, radius = ENEMY_RADIUS } = {}) {
+                boltSpeed = 0, boltDmg = 0, w = 0, radius = ENEMY_RADIUS, isBoss = null } = {}) {
     this.name = name;
+    // Boss 身份显式传入(未传时按类型名兜底,兼容旧调用/测试直构)
+    this._isBoss = isBoss === null ? name === 'boss' : !!isBoss;
     this.maxHp = hp;
     this.hp = hp;
     this.x = x;
@@ -62,7 +64,10 @@ export class Enemy {
     this.animDur = t ? t.frames.length / (t.fps * 2) : 0;
   }
 
-  get isBoss() { return this.name === 'boss'; }
+  // Boss 身份由生成方显式传入(BEAUTIFY -05 N1:需求方换血后 L1~L4 关底=狐妖/僵尸/蛇妖/虎妖,
+  // 不再以类型名推断——Boss 大血条/站位/「(2+w_global)×20 币、20 材料」奖励契约统一走 isBoss,
+  // 币随 w_global 逐关递增,非固定 240)
+  get isBoss() { return this._isBoss; }
   // 减益语义(03 文档 4.4):「减 30%」= 属性 ×0.70
   slowFactor() { return this.slowT > 0 ? 1 - this.slowPct / 100 : 1; }
 

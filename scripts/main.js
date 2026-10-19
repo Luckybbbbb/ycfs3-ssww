@@ -25,11 +25,18 @@ import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
 import { applyItem } from './board/items.js';
 import { skillById, SKILL_LIBRARY } from './skills/library.js';
 import { LEVEL_META } from './meta/levels.js';
-import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, bindImages, growDeductFx, growLevelUpFx, growSkillUpFx, growGachaFx, growGachaVisible, growGachaDismiss, growTipsShow, growTipsVisible, growTipsDismiss, growListScrollState, growListScrollTo, growFloatText, resultRestart, resultSkip, resultReady, startImagesBound } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
+import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, bindImages, growDeductFx, growLevelUpFx, growSkillUpFx, growGachaFx, growGachaVisible, growGachaDismiss, growTipsShow, growTipsVisible, growTipsDismiss, growListScrollState, growListScrollTo, growFloatText, resultRestart, resultSkip, resultReady, startImagesBound, setPressPoint, pressMove, spawnCoinDrop, syncDropBank, resetDropBank, takeDropSfx, dropArriveCoin, dropArriveMat } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
 fitCanvas(canvas);
 window.addEventListener('resize', () => fitCanvas(canvas));
+// -04 R2:画布外松手/取消/失焦清理按压态(丢失松手不留常驻反馈;window 级兜底与 onBlankUp 双清无害)
+for (const evName of ['pointerup', 'pointercancel']) {
+  window.addEventListener(evName, () => setPressPoint(null));
+}
+// -05 N5:pointerleave 不冒泡——画布内指针离开画布须挂 canvas 自身;窗口失焦照旧
+canvas.addEventListener('pointerleave', () => setPressPoint(null));
+window.addEventListener('blur', () => setPressPoint(null));
 
 // M14 手机端音频解锁:Web Audio 的 AudioContext 需在真实手势事件内同步 resume,
 // 否则 iOS 上点击/消除音效全静(BGM 走 Audio 元素不受影响)。首次触摸一次性解锁。
@@ -71,6 +78,7 @@ let firstSel = null;          // M11-03 F9:点选交换的第一个选中格(02 
                               // 局界清理可见:startLevel/retryLevel 需清除,避免旧局点选状态带入新局)
 let growPanel = false;        // 养成面板开关(FR-10/03 文档 2.6:角色升级/技能升级/抽卡)
 let growDrag = null;          // 养成技能列表滚动拖拽(UIV2-01 F1:{startY,startScroll,moved,p})
+// -07 Q3:金币音效改 takeDropSfx 排队消费(同帧多到达逐帧补响;prevDropArrive 差值轮询废除)
 
 const engine = new BoardEngine(20260601);
 engine.fxEnabled = profile.settings.effects !== false; // 消除演出动效开关(02 文档 3.1:关→退化 0.20s 淡出)
@@ -86,6 +94,7 @@ const hud = { toast: null, fx: new FxLayer(), battleHud: new BattleHudView(), ch
   // M11 五屏状态句柄(render 布局/UI 常量消费)
   paused: () => paused, panel: () => panel, loadout: () => ({ selLevel, selSlot, panel, pickSlot, tipsSlot }),
   maxChain: () => maxChain, sfxEnabled: () => sfx.enabled, fxEnabled: () => engine.fxEnabled,
+  firstSel: () => firstSel, // BEAUTIFY-01 F8:棋盘点选预选格只读转发(render 画预选框)
   bgmEnabled: () => bgm.enabled }; // M14:BGM 开关状态(设置/暂停面板)
 
 function showToast(text) { hud.toast = { text, t: 1.2 }; }
@@ -108,7 +117,7 @@ function drawLoadProgress(done, total) {
   ctx.textAlign = 'center';
   ctx.fillText('言出法随之三生万物', 360, 560);
   ctx.fillStyle = '#9f927d';
-  ctx.font = "16px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.font = "18px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:16→18px
   ctx.fillText(`资源加载中 ${done}/${total}`, 360, 610);
   // 进度条(720 宽内 320px 奶油条+圆角;animal-island 同族配色)
   ctx.fillStyle = 'rgba(240,232,216,.18)';
@@ -143,6 +152,7 @@ if (loadError) {
 function startLevel(L) {
   if (!canPlay(progress, L)) { showToast('关卡未解锁'); return; }
   engine.resetBoard(); // M11-03 F9:局界重置(放弃后重开不带旧局 clearing/falls/缓冲/事件)
+  resetDropBank(); // -07 Q2:掉落显示值+在途池/拖尾/音效队列全清(新局从当前真值起步,跨局不残留)
   firstSel = null; // M11-03 F9:输入态局界清除(旧局点选状态不带入新局)
   battle.atk = atkAt(profile.level);
   battle.maxHp = maxHpAt(profile.level);
@@ -171,6 +181,7 @@ function startLevel(L) {
 // 产出累计/入账水位/消除计数/池/预约/临时状态全部清空,不再只 battle.restart()
 function retryLevel() {
   engine.resetBoard(); // M11-02 F9:同 startLevel(终局快进只到 IDLE,swapBuffer 等仍可能残留)
+  resetDropBank(); // -07 Q2:重试同样清掉落池(旧局在途物不残留到新局显示值)
   firstSel = null; // M11-03 F9:输入态局界清除(旧局点选状态不带入新局)
   battle.atk = atkAt(profile.level);
   battle.maxHp = maxHpAt(profile.level);
@@ -287,12 +298,14 @@ function boot(images) {
     // 空白手势移动/收尾(UIV2-01 F1/F2-02 整改:养成技能列表滚动拖拽;
     // 二维位移判定——横向位移同样计入,横拖不误触发升级点击;其他屏 no-op)
     onBlankMove: (p) => {
+      pressMove(p); // -04 R2:移动跟随只更新坐标,不重写归属 tag(导航后移动不会在新界面重新获得按压色)
       if (screen === 'menu' && growPanel && growDrag) {
         if (Math.hypot(p.x - growDrag.x, p.y - growDrag.y) > 12) growDrag.moved = true; // 二维位移口径
         if (!growDrag.tipsTap) growListScrollTo(growDrag.startScroll - (p.y - growDrag.y)); // tipsTap 手势不滚动底层列表(START-03 F1);注意:起点字段是 y(F1-02 重命名后 startY 已不存在,残留引用会得 NaN 永久卡死滚动)
       }
     },
     onBlankUp: (p) => {
+      setPressPoint(null); // BEAUTIFY -03 B2:松手立即清除按压态(按下期间可见,松手复位)
       if (screen === 'menu' && growPanel && growDrag) {
         if (growDrag.tipsTap) {
           // 说明浮层手势:未位移松手=关闭;位移过(拖动)不关闭也不透传(START-03 F1)
@@ -308,6 +321,8 @@ function boot(images) {
       return { r, c };
     },
     onBlankDown: (p) => {
+      // -04 R2:按压归属在按下时确定(tag 绑定「屏:浮层:养成页」);移动只更新坐标不重绑
+      setPressPoint(p, `${screen}:${panel ?? ""}:${growPanel ? 1 : 0}:${paused ? 1 : 0}`); // -05 N5:含暂停态(暂停层按钮不继承旧手势)
       // ---- M11 通用浮层(设置/关于;开始/暂停共用) ----
       if (panel === 'settings') {
         if (hit(p, UI.settings.bgmBtn)) { toggleBgm(); return; }
@@ -507,6 +522,11 @@ function boot(images) {
         growDeductFx('mat'); sfx.deduct();
         growLevelUpFx(); sfx.levelUp();
         growFloatText(`Lv.${r.level}!`, 380, 250, '#f5a623'); // 金色冒字(徽章旁)
+        // BEAUTIFY-01 F10:HP/ATK 差值冒字(公式冻结恒差,与 exp.js 同源);-03 B5:动效关闭不入队不绘制
+        if (engine.fxEnabled !== false) {
+          growFloatText(`HP +${maxHpAt(r.level) - maxHpAt(r.level - 1)}`, 320, 232, '#6fba2c');
+          growFloatText(`ATK +${atkAt(r.level) - atkAt(r.level - 1)}`, 320, 270, '#6fba2c');
+        }
         showToast(`角色升级 →Lv${r.level}(材料 -${r.cost})`);
       } else showToast('材料不足');
       return;
@@ -607,6 +627,7 @@ function boot(images) {
         // 渲染层查不到 pending,必须按 tick 的执行记录认领);同一 resKey 重复回写不扩散。
         for (const used of usedList) {
           parallax.triggerPulse();
+          hud.battleHud.noteCast(used.skill.id, caster.loadout); // -04 R3:带当前装配定位(首帧/换装后均准确;墙钟计时)
           // M12 技能喊话(方案 B「冲击斜切」):非普攻属性弹技能执行即触发纯表现演出(~0.9s,
           // 不阻塞逻辑);背景变体按解锁档位取用(Lv3→1,Lv6→2);震屏走 parallax 可变参数。
           // M12M13-ACCEPT F3:skillCall 返回 false(演出中/CD 期被忽略)时**不震屏**——
@@ -636,6 +657,11 @@ function boot(images) {
       // battle 事件队列→fx 层;fxEnabled=false 时事件照样排空仅不绘制(6.1 同步关闭口径)
       for (const ev of battle.drainFloatTexts()) {
         if (engine.fxEnabled) hud.fx.combatFloat(ev);
+        // -06 掉落表现:击杀→掉落货币/材料物(数值已入账,此为表现层;fx 关不生成)
+        if (ev.kind === 'kill' && engine.fxEnabled !== false) {
+          if (ev.coins > 0) spawnCoinDrop('coin', ev.coins, ev.x, ev.y);
+          if (ev.mats > 0) spawnCoinDrop('mat', ev.mats, ev.x, ev.y);
+        }
       }
       // M4 FR-6:通关结算(解锁 L+1/写进度档/submitRun);失败不扣任何档内字段(D14)
       if ((battle.phase === 'VICTORY' || battle.phase === 'DEFEAT') && !victoryHandled) {
@@ -697,6 +723,12 @@ function boot(images) {
       // 模拟推进;表现层 2.01s 动效在 10fps 低帧下不再放慢一倍);首帧/长间隔钳 0.5s 防跳变
       const rdt = lastRafT ? Math.min((t - lastRafT) / 1000, 0.5) : 1 / 60;
       lastRafT = t;
+      // -07 Q3:掉落显示值/bump/音效统一表现层时钟(rdt)——原挂模拟 dt(暂停不掉落但数字
+      // 继续滚,且同帧多到达只响一声)。暂停冻结:dt=0 不滚动不衰减;fx 关仍每帧进(清池强制到账)
+      const frozen = screen === 'playing' && paused;
+      syncDropBank(profile.coins, profile.materials, engine.fxEnabled !== false, frozen ? 0 : rdt);
+      // 金币音效:到达队列消费(每帧最多一响,同帧多到达逐帧补响=每到达一次一响)
+      if (!frozen && screen === 'playing' && takeDropSfx() !== 'none') sfx.coin();
       render(canvas.getContext('2d'), engine, hud, rdt);
     },
   );
@@ -723,4 +755,8 @@ window.__ssww = {
   resultReady, // M15:UIV2 -06 F2:结算就绪门控只读转发(CDP 行为差验证,主按钮颜色仅视觉证据)
   startImagesBound, // M15 Task 51:开始界面生图产物绑定状态(CDP 验证预载→绑定)
   growTipsVisible, // 需求方 2026-10-19:养成技能说明浮层可见性(只读转发)
+  growPanel: () => growPanel, // -04 R1:养成面板可见性(只读转发;截图前状态核对用)
+  // -07 Q5:掉落系统 CDP 行为采样(注入与只读计数转发;数值口径不受影响——spawn 只建表现物)
+  dropSpawn: (k, v, x, y) => spawnCoinDrop(k, v, x, y),
+  dropArrive: () => ({ coin: dropArriveCoin(), mat: dropArriveMat() }),
 };

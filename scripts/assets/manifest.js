@@ -70,6 +70,7 @@ export function skillCallList() {
   // M15 开始界面生图产物(Task 51,codex image_gen):全屏背景+定名 LOGO(render.js START_IMG 消费,缺图走程序化兜底)
   list.push({ key: 'ui:start_bg', url: 'assets/backgrounds/start/start_bg.png', entity: 'battle-ui' });
   list.push({ key: 'ui:start_logo', url: 'assets/ui/start/logo.png', entity: 'battle-ui' });
+  list.push({ key: 'ui:meadow_circle', url: 'assets/backgrounds/start/meadow_circle.png', entity: 'battle-ui' }); // -06:圆形可行走草地(绕圆心自转)
   // 注:ui:hero_avatar 生图头像已移除(需求方 2026-10-18 反馈与立绘发色不符「不太像」)——
   // HUD 头像改用主角立绘裁头部(battle_hud.draw 主路径),保证与喊话演出同一形象
   return list;

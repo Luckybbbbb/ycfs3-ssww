@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { Battle, PHASE } from '../scripts/battle/battle.js';
 import { Enemy, ENEMY_SPAWN_X, PLAYER_HIT_R, MIN_QUEUE_GAP } from '../scripts/battle/enemy.js';
 import { advanceEnemyBolt, enemyBoltHitsPlayer } from '../scripts/battle/projectile.js';
+import { killReward } from '../scripts/meta/economy.js';
 import {
   ENEMY_TYPES, enemyHp, enemyDmg, barrageDmg, enemySpd, attackInterval,
   barrageCount, fanAngle, barrageSpeed, tideSplit, waveEnemyCount,
@@ -45,24 +46,46 @@ test('FR-4 潮汐拆分:6→[3,3]、8→[4,4]、22→[5,5,4,4,4];各潮 3~5 且�
   }
 });
 
-test('FR-4 Boss 波:Bos×1 + 护卫×2,护卫=本关权重最高小怪(L1→slime,L5→snake)', () => {
-  assert.deepEqual(buildWave(10, 1, makeRng(1)), [['boss', 'slime', 'slime']]);
-  // L5 权重表 snake/tiger 并列 25,取表序靠前 → snake
-  assert.equal(guardType(5), 'snake');
+test('FR-4 Boss 波:Boss 按关卡表(需求方 2026-10-19:每关换类型)+护卫×2(权重最高小怪)', () => {
+  assert.deepEqual(buildWave(10, 1, makeRng(1)), [['fox', 'slime', 'slime']]); // L1 Boss=狐妖(原写死妖王)
+  assert.equal(guardType(5), 'snake'); // L5 权重 {snake:55, tiger:45} 最高 snake(不变)
   assert.equal(guardType(1), 'slime');
+  assert.equal(guardType(2), 'slime');  // {slime:60, fox:40}
+  assert.equal(guardType(3), 'fox');    // {fox:55, zombie:45}
+  assert.equal(guardType(4), 'zombie'); // {zombie:55, snake:45}
 });
 
-test('FR-4 w_global 映射与类型抽取权重:L2 出现 zombie,L3 权重表含 snake 25%', () => {
+test('FR-4 权重表(需求方 2026-10-19:每关小怪最多 2 种,逐关换血):L2 幽灵+狐妖、L3 狐妖+僵尸', () => {
   const w2 = levelWeights(2);
-  assert.equal(w2.zombie, 30);
+  assert.deepEqual(w2, { slime: 60, fox: 40 });
   const w3 = levelWeights(3);
-  assert.equal(w3.snake, 25);
-  assert.equal(w3.zombie, 25);
-  // 抽取统计:固定种子下 1000 次抽样只落在权重表键集合内
+  assert.deepEqual(w3, { fox: 55, zombie: 45 });
+  // 抽取统计:固定种子下本关敌人只落在权重表键集合内(每关 ≤2 种)
   const rng = makeRng(7);
   const b = new Battle({ rng });
   b.startLevel(2);
-  assert.ok(b.enemies.every(e => ['slime', 'fox', 'zombie'].includes(e.name)), 'L2 只出三类');
+  assert.ok(b.enemies.every(e => ['slime', 'fox'].includes(e.name)), 'L2 只出幽灵/狐妖两类');
+  // Boss 类型表逐关对应(-05 N2:数字例用真实 w_global=10×L)
+  assert.deepEqual(buildWave(10, 5, makeRng(1)).flat()[0], 'boss', 'L5 Boss=妖王');
+  assert.deepEqual(buildWave(10, 2, makeRng(1)).flat()[0], 'zombie', 'L2 Boss=僵尸');
+  assert.deepEqual(buildWave(10, 3, makeRng(1)).flat()[0], 'snake', 'L3 Boss=蛇妖');
+  // -05 N1/N2:产品刷怪路径——五关 Boss 波第一只 isBoss=true、护卫 false,HP 与审核真值表一致
+  for (const [L, bh, gh] of [[1, 75, 62], [2, 138, 98], [3, 215, 161], [4, 341, 239], [5, 619, 330]]) {
+    const bb = new Battle({ rng: makeRng(L) });
+    bb.startLevel(L);
+    bb.wave = 10;
+    bb.wGlobal = 10 * L;
+    bb.tides = buildWave(10, L, makeRng(L));
+    bb.tideIdx = 0;
+    bb.enemies = [];
+    bb.spawnTide();
+    assert.equal(bb.enemies[0].isBoss, true, `L${L} 关底第一只 isBoss`);
+    assert.equal(bb.enemies[1].isBoss, false, `L${L} 护卫非 Boss`);
+    assert.equal(bb.enemies[0].hp, bh, `L${L} Boss HP=${bh}`);
+    assert.equal(bb.enemies[1].hp, gh, `L${L} 护卫 HP=${gh}`);
+    // Boss 奖励契约(冻结公式:coins=(2+w)×20、mats=20;普通=2+w/1)
+    assert.deepEqual(killReward(10 * L, true), { coins: (2 + 10 * L) * 20, mats: 20 }, `L${L} Boss 奖励契约`);
+  }
 });
 
 // ---- 敌人面板数值(04 文档第 5 节可机械复算) ----
@@ -199,24 +222,25 @@ test('FR-1.2 单弹(w=1)直射主角;4 弹(w=10)始终有一颗 0° 直射(对�
   assert.ok(new Set(angles.map(a => a.toFixed(6))).size === 4, '4 弹 4 个方向');
 });
 
-test('FR-1.2 敌方弹幕伤害入账:w=10 boss 弹命中 → 主角 −19(03 文档 4.4 取整口径)', () => {
+test('FR-1.2 敌方弹幕伤害入账:L5 末波 w_global=50 妖王弹命中 → 主角 −59(03 文档 4.4 取整口径)', () => {
   const b = new Battle({ rng: makeRng(3) });
-  b.startLevel(1);
-  // 直接构造第 10 波:清场后按 Boss 波刷怪
-  b.wave = 10; b.wGlobal = 10;
-  b.tides = buildWave(10, 1, makeRng(3));
+  b.startLevel(5); // 妖王=L5 Boss(需求方 2026-10-19:L1 Boss 改狐妖)
+  // 直接构造第 10 波(-05 N2:真实 w_global=10×L=50;旧 w=10 值 19 仅是独立公式例)
+  b.wave = 10; b.wGlobal = 50;
+  b.tides = buildWave(10, 5, makeRng(3));
   b.tideIdx = 0;
   b.enemies = [];
   b.spawnTide();
   assert.equal(b.enemies[0].name, 'boss');
-  assert.equal(b.enemies[0].boltDmg, 19);
+  assert.equal(b.enemies[0].isBoss, true, '妖王 isBoss 显式传入');
+  assert.equal(b.enemies[0].boltDmg, 59, 'L5 末波 w_global=50:round(8×2.5×(1+49×0.1)×0.5)=59');
   // 瞬移 boss 至停位,取其扇形弹入列,推进至直射弹抵达主角
   const boss = b.enemies[0];
   boss.x = 560;
   b.ebolts.push(...boss.fireFan(110, 280));
   runTo(b, b.clock, b.clock + 1.5);
   assert.ok(b.hp < b.maxHp, '直射弹命中主角');
-  assert.equal(events(b, 'player_hurt').some(h => h.dmg === 19), true, '受击 19');
+  assert.equal(events(b, 'player_hurt').some(h => h.dmg === 59), true, '受击 59');
 });
 
 // ---- FR-1.3 敌方弹碰撞(圆形,主角半径 40;扫掠与帧步长无关) ----

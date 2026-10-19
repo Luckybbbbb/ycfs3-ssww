@@ -11,9 +11,9 @@ import { updateEnemyHealthViews, enemyHealthViewOf } from '../scripts/ui/render.
 import { BOARD_Y, CELL } from '../scripts/board/grid.js';
 
 // ---- M13-1 图素清单 ----
-test('M13 manifest:分关卡背景 5 主题×2 + 头像框/技能框 + 开始界面背景/LOGO,共 14 项且文件存在(生图头像已弃用移出)', () => {
+test('M13 manifest:分关卡背景 5 主题×2 + 头像框/技能框 + 开始界面背景/LOGO/圆形草地,共 15 项且文件存在(生图头像已弃用移出)', () => {
   const m = fullManifest().filter(it => it.entity === 'battle-ui');
-  assert.equal(m.length, 14, `battle-ui 条目数=14,实际 ${m.length}`);
+  assert.equal(m.length, 15, `battle-ui 条目数=15,实际 ${m.length}`); // -06:+ui:meadow_circle
   const keys = new Set(m.map(it => it.key));
   for (const t of ['meadow', 'swamp', 'mist', 'snow', 'volcano']) {
     assert.ok(keys.has(`bg:${t}:far`) && keys.has(`bg:${t}:near`), `主题 ${t} 远近景在清单`);

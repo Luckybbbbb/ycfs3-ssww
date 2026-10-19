@@ -107,15 +107,29 @@ export class BattleHudView {
   constructor() {
     this.hero = new HealthView({ main: '#6fba2c', ghost: '#b9da8c' });
     this.boss = new HealthView({ main: '#e05a5a', ghost: '#f4b4af' });
+    // BEAUTIFY-01 F9:技能释放槽位短亮(160ms);-04 R3 整改:**墙钟计时**(_now 注入,与
+    // 模拟 dt/帧率/暂停封顶解耦)+**noteCast 带当前装配定位**(main 传 caster.loadout——
+    // 首局首帧/换装后开新局都按真实装配定位,不再依赖 update 顺序预热的缓存);
+    // 固定四槽独立计时(同帧多技能各自亮);未装配的消除链技能忽略不覆盖;-03 B5:fx 关不绘制
+    this.castAt = [0, 0, 0, 0]; // 各槽释放时刻(墙钟 ms;0=无释放)
+    this._now = () => performance.now();
   }
 
-  reset() { this.hero.reset(1); this.boss.reset(1); }
+  reset() { this.hero.reset(1); this.boss.reset(1); this.castAt = [0, 0, 0, 0]; }
+
+  // BEAUTIFY-01 F9:实际释放时由 main(usedList 消费处)调用;loadout=当前真实装配(main 传入)
+  noteCast(skillId, loadout) {
+    const slots = Array.isArray(loadout) ? loadout : this._slotsCache || [];
+    const i = slots.indexOf(skillId);
+    if (i >= 0) this.castAt[i] = this._now();
+  }
 
   // dt 累加入口(main 主循环逐帧调用);快照字段见 _snapshot
   update(dt, hud, fxEnabled = true) {
     const s = this._snapshot(hud);
     this.hero.update(dt, s.maxHp > 0 ? s.hp / s.maxHp : 1, fxEnabled);
     this.boss.update(dt, s.bossMax > 0 ? s.bossHp / s.bossMax : 1, fxEnabled);
+    this._slotsCache = s.slots; // 备用定位(draw 主路径用实时快照 s.slots)
   }
 
   // 实况快照:全部来自 hud 只读转发(battle/caster/levels),不写任何战斗状态
@@ -124,7 +138,7 @@ export class BattleHudView {
     const caster = hud.caster || {};
     const slots = (caster.loadout || []).slice(0, 4);
     const enemies = typeof battle.aliveEnemies === 'function' ? battle.aliveEnemies() : [];
-    const boss = enemies.find(e => e.name === 'boss') || null;
+    const boss = enemies.find(e => e.isBoss || e.name === 'boss') || null; // -05 N1:Boss 身份走 isBoss(兼容旧类型名)
     return {
       hp: battle.hp ?? 1, maxHp: battle.maxHp ?? 1,
       // M13 需求方反馈:护盾条(蓝)=earth_shield 护盾值,口径同旧版 battle.shield/(maxHp×30% 封顶)
@@ -162,7 +176,7 @@ export class BattleHudView {
     // 血条(主条+残影)+ 数值
     this.hero.draw(ctx, 96, 46 + TOPBAR_H, 128, 22);
     ctx.fillStyle = '#fff';
-    ctx.font = "13px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.font = "bold 15px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:13px→15px bold(条内可读)
     ctx.textAlign = 'center';
     ctx.fillText(`${Math.max(0, Math.ceil(s.hp))}/${s.maxHp}`, 160, 62 + TOPBAR_H);
     ctx.textAlign = 'left';
@@ -177,7 +191,7 @@ export class BattleHudView {
     ctx.fillStyle = 'rgba(248,248,240,.94)';
     _rr(ctx, 96, 18 + TOPBAR_H, 64, 22, 8); ctx.fill();
     ctx.fillStyle = '#794f27';
-    ctx.font = "13px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.font = "bold 15px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2
     ctx.fillText(`Lv.${s.profileLv}`, 104, 34 + TOPBAR_H);
 
     // ===== 顶部中央:关卡名 =====
@@ -193,7 +207,7 @@ export class BattleHudView {
     if (s.isBossWave && s.bossMax > 0) {
       this.boss.draw(ctx, 220, 80 + TOPBAR_H, 280, 26);
       ctx.fillStyle = '#fff';
-      ctx.font = "14px 'Nunito','Noto Sans SC',sans-serif";
+      ctx.font = "bold 16px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2
       ctx.textAlign = 'center';
       ctx.fillText(`BOSS  ${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`, 360, 99 + TOPBAR_H);
       ctx.textAlign = 'left';
@@ -201,7 +215,7 @@ export class BattleHudView {
 
     // ===== 技能框×4:战斗区右下(72px 框+56px 图标+CD 扫描) =====
     ctx.fillStyle = 'rgba(255,246,228,.9)';
-    ctx.font = "13px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.font = "bold 15px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:13px→15px bold
     ctx.textAlign = 'right';
     ctx.fillText('装配技能 · 自动释放', 698, 321);
     ctx.textAlign = 'left';
@@ -212,16 +226,33 @@ export class BattleHudView {
       else { ctx.fillStyle = '#f0e8d8'; _rr(ctx, x, y, 72, 72, 18); ctx.fill(); }
       const img = hud.skillImg ? hud.skillImg(id) : null;
       if (img && img.complete && img.naturalWidth) ctx.drawImage(img, x + 8, y + 8, 56, 56);
+      // BEAUTIFY-01 F9:实际释放槽位短亮 160ms(白亮边);-04 R3:墙钟计时(低帧也兑现 160ms);
+      // -04 R4:draw 读实时开关(hud.fxEnabled()——暂停期主循环不 update,缓存会过期)
+      const gi = s.slots.indexOf(id);
+      const fxOn = hud.fxEnabled ? hud.fxEnabled() : true;
+      const elapsed = this._now() - this.castAt[gi];
+      if (fxOn && gi >= 0 && this.castAt[gi] > 0 && elapsed < 160) {
+        ctx.save();
+        ctx.globalAlpha = 1 - elapsed / 160;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        _rr(ctx, x + 2, y + 2, 68, 68, 16); ctx.stroke();
+        ctx.restore();
+      }
       // CD 扫描(就绪 frac=0;深色扇形自 12 点顺时针)
+      // BEAUTIFY-01 F9:扇形半径 38 略超 72px 框(内切圆 36)——裁剪到框内,不再盖到框外
       const cd = s.skillCds[id] || 0;
       if (cd > 0) {
         const meta = hud.skillMeta ? hud.skillMeta(id) : null;
         const frac = meta ? Math.min(1, cd / meta.cd) : 1;
+        ctx.save();
+        _rr(ctx, x, y, 72, 72, 18); ctx.clip();
         ctx.fillStyle = 'rgba(40,32,40,.55)';
         ctx.beginPath();
         ctx.moveTo(x + 36, y + 36);
         ctx.arc(x + 36, y + 36, 38, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
         ctx.closePath(); ctx.fill();
+        ctx.restore();
       }
     });
 
@@ -259,7 +290,7 @@ export class BattleHudView {
       }
     }
     ctx.fillStyle = s.isBossWave ? '#c44747' : '#806a51';
-    ctx.font = "bold 11px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.font = "bold 13px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:11px→13px
     ctx.textAlign = 'center';
     ctx.fillText('BOSS', 679, 432);
     ctx.textAlign = 'left';

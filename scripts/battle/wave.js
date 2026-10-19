@@ -36,13 +36,20 @@ export const barrageSpeed = (w) => 300 + 5 * w;
 
 // ---- 关卡编成权重表(05 文档第 4 节;草案数值,集中于此调参) ----
 // Boss 护卫 = 本关权重最高的小怪(并列取表序靠前,04 文档第 4 节)
+// 需求方 2026-10-19 第三批反馈:每关小怪种类**最多 2 种**、逐关换血,Boss 也换类型:
+// L1 幽灵 / Boss 狐妖;L2 幽灵+狐妖 / Boss 僵尸;L3 狐妖+僵尸 / Boss 蛇妖;
+// L4 僵尸+蛇妖 / Boss 虎妖;L5 蛇妖+虎妖 / Boss 妖王(五关不变)。
+// 权重和恒 100(可机械复算);Boss 类型表 LEVEL_BOSS 与 LEVEL_WEIGHTS 逐关对应。
 export const LEVEL_WEIGHTS = [
-  /* L1 */ { slime: 60, fox: 40 },
-  /* L2 */ { slime: 40, fox: 30, zombie: 30 },
-  /* L3 */ { slime: 30, fox: 20, zombie: 25, snake: 25 },
-  /* L4 */ { slime: 25, fox: 15, zombie: 20, snake: 20, tiger: 20 },
-  /* L5+*/ { slime: 10, fox: 20, zombie: 20, snake: 25, tiger: 25 },
+  /* L1 */ { slime: 100 },
+  /* L2 */ { slime: 60, fox: 40 },
+  /* L3 */ { fox: 55, zombie: 45 },
+  /* L4 */ { zombie: 55, snake: 45 },
+  /* L5+*/ { snake: 55, tiger: 45 },
 ];
+// 每关 Boss 类型(L1 狐妖 … L5 妖王;选关缩略图与 Boss 波共用此表)
+export const LEVEL_BOSS = ['fox', 'zombie', 'snake', 'tiger', 'boss'];
+export const bossType = (L) => LEVEL_BOSS[Math.min(L, LEVEL_BOSS.length) - 1];
 export function levelWeights(L) { return LEVEL_WEIGHTS[Math.min(L, LEVEL_WEIGHTS.length) - 1]; }
 export function guardType(L) {
   const w = levelWeights(L);
@@ -79,7 +86,7 @@ export function tideSplit(count) {
 export function buildWave(wLocal, L, rng) {
   if (isBossWave(wLocal)) {
     const guard = guardType(L);
-    return [['boss', guard, guard]];
+    return [[bossType(L), guard, guard]]; // 需求方 2026-10-19:Boss 类型按关卡表(原写死妖王)
   }
   const count = waveEnemyCount(wLocal);
   return tideSplit(count).map(n =>

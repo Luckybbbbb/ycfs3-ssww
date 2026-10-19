@@ -110,8 +110,10 @@ export class Battle {
       const type = tide[i];
       const w = this.wGlobal;
       // Boss 居中,护卫上下错开(仍同列排队,仅 y 视觉错开);普通潮同赛道 y 一致
-      const y = bossWave ? (type === 'boss' ? 230 : (i === 1 ? 150 : 300)) : 240;
-      const spec = { name: type, w, x: ENEMY_SPAWN_X + i * MIN_QUEUE_GAP, y };
+      // BEAUTIFY -05 N1:Boss 身份按「潮内第一只」判定(需求方换血后 L1~L4 关底=狐妖/僵尸/
+      // 蛇妖/虎妖,不再以类型名 'boss' 推断)——大血条/站位/Boss 奖励契约统一走 isBoss
+      const y = bossWave ? (i === 0 ? 230 : (i === 1 ? 150 : 300)) : 240;
+      const spec = { name: type, w, x: ENEMY_SPAWN_X + i * MIN_QUEUE_GAP, y, isBoss: bossWave && i === 0 };
       this.enemies.push(this.makeEnemy(type, w, spec));
     }
     this.reassignSlots(); // 出生 x 升序 → 槽位 560+i×110,与入场顺序一致
@@ -166,7 +168,8 @@ export class Battle {
     this.coinsGained += rw.coins;
     this.matsGained += rw.mats;
     this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss });
-    this.floatEvent({ kind: 'kill', x: e.x, y: e.y, importance: 2 }); // `击破`(每次击杀固定 1 条;03 文档 6.2a)
+    // -06 掉落表现:kill 事件携带本杀收益(coins/mats),main 转发表现层生成掉落物
+    this.floatEvent({ kind: 'kill', x: e.x, y: e.y, importance: 2, coins: rw.coins, mats: rw.mats }); // `击破`(每次击杀固定 1 条;03 文档 6.2a)
     return true;
   }
 

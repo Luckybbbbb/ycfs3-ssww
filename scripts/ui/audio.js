@@ -83,6 +83,11 @@ export const sfx = {
   },
   // ===== M15 界面 v2 音效(养成/结算;口径=06/05 样板) =====
   deduct() { tone({ freq: 220, dur: 0.08, type: 'square', vol: 0.05 }); }, // 货币扣除「嗒」
+  // -06 掉落到达「叮铃」(金币落袋;双高音短促衰减,与 item 同族但更高频)
+  coin() {
+    tone({ freq: 1568, dur: 0.09, type: 'sine', vol: 0.12 });
+    tone({ freq: 2093, dur: 0.14, type: 'sine', vol: 0.1, delay: 0.05 });
+  },
   skillUp() {
     tone({ freq: 880, dur: 0.15, type: 'triangle', vol: 0.1 });
     tone({ freq: 1174, dur: 0.2, type: 'triangle', vol: 0.1, delay: 0.08 });

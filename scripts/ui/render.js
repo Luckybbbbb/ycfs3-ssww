@@ -10,7 +10,7 @@ import { roundRect, GEM_COLORS as GEM_SRC } from './draw_util.js'; // 五行色�
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
 import { skillById, SKILL_LIBRARY } from '../skills/library.js';
 import { levelUpCost, skillUpCost, SKILL_LEVEL_CAP } from '../meta/economy.js';
-import { ENEMY_TYPES, levelWeights } from '../battle/wave.js';
+import { ENEMY_TYPES, levelWeights, bossType } from '../battle/wave.js';
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
@@ -54,6 +54,12 @@ const UI_IMG = {}; // M14 界面图标表(见上)
 // 渲染回退仅覆盖「未绑定/未加载(complete=false)/解码失败(naturalWidth=0)」三种显示态→程序化兜底;
 // 预载失败(文件缺失/持续网络失败)仍按 FR-9 在 main 停载,不进入开始界面——两口径勿混。
 const START_IMG = { bg: null, logo: null };
+// 需求方 2026-10-19:开始界面圆形可行走草地(主角站草圆顶原地行走,地形绕圆心自转=跑步机式)
+// 贴图 1120×1120 显示 560×560(圆心 (360,1340) R=280);缺图回退程序化草圆(样板同款)
+const MEADOW_IMG = { img: null };
+// -07 Q4:草地圆几何常量提升模块级(原 drawStartScreen 每帧新建对象)+ 兜底渐变缓存
+const MEADOW_CIRCLE = { x: 360, y: 1340, r: 280, spin: 0.12 };
+let MEADOW_FALLBACK_GRAD = null; // 程序化兜底草面渐变(按目标 ctx 缓存,同 ctx 复用)
 // 道具图标贴图(assets/icons/items/<item>[_premium].png 144×144;缺图回退 emoji 原样式;
 // 预载校验见 assets/manifest.js iconList)
 // ===== M11-03 F1 残留整改:生产导入路径零顶层加载 =====
@@ -97,6 +103,10 @@ export function bindImages(map) {
     const img = map.get(`player:walk_start:${i + 1}`);
     if (img) { PLAYER_ATK_FRAMES[i] = img; n++; }
   }
+  for (let i = 0; i < 6; i++) {
+    const img = map.get(`player:walk:${i + 1}`);
+    if (img) { PLAYER_WALK_FRAMES[i] = img; n++; } // -07:开始界面原地跑步循环(walk 6 帧)
+  }
   for (const [type, t] of Object.entries(ENEMY_TYPES)) {
     ENEMY_FRAMES[type] = []; // M11-03 F1:先初始化行数组——ENEMY_FRAMES 初始 {},直接 [type][j]=img 抛 TypeError(黑屏根因)
     t.frames.forEach((fn, j) => {
@@ -114,6 +124,11 @@ export function bindImages(map) {
     if (bg) { START_IMG.bg = bg; n++; }
     const logo = map.get('ui:start_logo');
     if (logo) { START_IMG.logo = logo; n++; }
+  }
+  // 圆形可行走草地贴图(绕圆心自转;缺图程序化兜底)
+  {
+    const md = map.get('ui:meadow_circle');
+    if (md) { MEADOW_IMG.img = md; n++; }
   }
   return n;
 }
@@ -135,10 +150,12 @@ export function ensureFallbackImages() {
   for (const it of ['heal', 'invincible', 'cd']) {
     for (const suffix of ['', '_premium']) ITEM_IMG[it + suffix] = mk(new URL(`../../assets/icons/items/${it}${suffix}.png`, import.meta.url).href);
   }
+  MEADOW_IMG.img = mk(new URL('../../assets/backgrounds/start/meadow_circle.png', import.meta.url).href);
   for (const el of ELEMENTS) GEM_IMG[el] = mk(new URL(`${el}.png`, GEM_DIR).href);
   for (const s of SKILL_LIBRARY) SKILL_IMG[s.id] = mk(new URL(`../../assets/icons/skills/${s.id}.png`, import.meta.url).href);
   for (let i = 1; i <= 16; i++) PLAYER_FRAMES.push(mk(new URL(`../../assets/sprites/player/idle_${String(i).padStart(2, '0')}.png`, import.meta.url).href));
   for (let i = 1; i <= 3; i++) PLAYER_ATK_FRAMES.push(mk(new URL(`../../assets/sprites/player/walk_start_${String(i).padStart(2, '0')}.png`, import.meta.url).href));
+  for (let i = 1; i <= 6; i++) PLAYER_WALK_FRAMES.push(mk(new URL(`../../assets/sprites/player/walk_${String(i).padStart(2, '0')}.png`, import.meta.url).href));
   for (const [type, t] of Object.entries(ENEMY_TYPES)) {
     ENEMY_FRAMES[type] = t.frames.map(n => mk(new URL(`../../assets/sprites/${t.dir}/${t.prefix}${String(n).padStart(3, '0')}_nobg.png`, import.meta.url).href));
   }
@@ -154,17 +171,20 @@ const GEM_IMG = {};      // 棋子贴图(M10:assets/icons/elements/<el>.png;缺�
 const SKILL_IMG = {};    // 技能图标(M10:assets/icons/skills/<id>.png;缺图文字兜底)
 const PLAYER_FRAMES = [];      // 主角 idle 16 帧(缺图人形色块兜底)
 const PLAYER_ATK_FRAMES = [];  // 主角攻击 walk_start 3 帧
+const PLAYER_WALK_FRAMES = []; // 主角跑步循环 walk 6 帧(-07:开始界面原地跑;walk_start 差异微小视觉近似静止)
 const ENEMY_FRAMES = {};       // 六类敌人序列帧(缺图椭圆兜底)
 const seqFrame = (frames, t, fps) => frames[Math.floor(t * fps) % frames.length];
 
 // M14:行内资产图标+数字(coin/pick 贴图;返回文字起点 x 供继续排布;miss 回退 emoji 文字)
+// BEAUTIFY-01 F1(P1):y 语义=**图标顶边**(原按文字基线但调用处混传基线/顶部,战斗与养成
+// 图标整体偏高 17~21px 出 chip);统一按 chip 中心对齐:顶边=chipY+(chipH-size)/2
 function drawAssetIcon(ctx, key, emoji, x, y, size = 20) {
   const img = UI_IMG[key];
   if (img && img.complete && img.naturalWidth) {
-    ctx.drawImage(img, x, y - size + 3, size, size);
+    ctx.drawImage(img, x, y, size, size);
     return x + size + 6;
   }
-  ctx.fillText(`${emoji} `, x, y);
+  ctx.fillText(`${emoji} `, x, y + size - 3); // emoji 回退:基线≈顶边+size-3
   return x + ctx.measureText(`${emoji} `).width;
 }
 
@@ -173,12 +193,202 @@ let worldT = 0; // 表现层动画时钟(按 render 回调实际 dt 推进,帧�
 // 只读探针(单测/CDP 验证时钟推进与帧率解耦)
 export function animClock() { return worldT; }
 
+// ===== BEAUTIFY-01 共享样式令牌(五屏同类组件单一来源;只收文字/材质色,命中区几何不变) =====
+// 对比度(白底机械复算):ink 7.09 / primaryBtn 白字 5.20 / accentText 5.20 / sub 3.05(仅 20px+ 辅助说明)
+const UI_STYLE = {
+  ink: '#794f27',      // 正文深棕(全项目资产数字/标题统一)
+  sub: '#9f927d',      // 次要说明
+  dim: '#c4b89e',      // 弱化/禁用
+  paper: '#f0e8d8',    // 纸面底(底栏/按钮 ghost)
+  cardLine: '#dcd8d1', // 白卡描边
+  chipLine: '#e8e2d6', // chip/浅卡描边
+  primaryBtn: '#0e7a70', // 主按钮深青绿(白字对比 5.20:1;原 #19c8b9 白字仅 2.10:1)
+  accentText: '#0e7a70', // 青绿文字(数值行;原 #19c8b9 文字同低对比)
+};
+// ===== BEAUTIFY -06 掉落表现(需求方 2026-10-19):怪物死亡掉落货币/材料 → 停留 →
+// 二次贝塞尔曲线+拖尾飞向货币栏 chip → 图标 spring 放大回弹 + 数字滚动 + 金币音效 =====
+// 表现与逻辑分离:真值先行入账(battle.coinsGained→profile 不变),显示值=已到账
+// (dropBank disp 向「真值−在途」逼近);fx 关不生成且在途强制到账(终态收口)。
+const dropBank = {
+  coinDisp: null, matDisp: null,          // 显示值(向 base 滚动)
+  coinBump: 0, matBump: 0,                // chip 图标 bump 计时(0.35s spring)
+  coinAnchor: { x: 660, y: 12 }, matAnchor: { x: 700, y: 12 }, // chip 图标锚点(货币栏绘制每帧原地更新)
+  coinArrive: 0, matArrive: 0,            // 到达计数器(main 轮询差值播金币音效)
+  coinSfxPend: 0, matSfxPend: 0,          // -07 Q3:同帧多到达排队(每帧最多响一次,余量留到下帧)
+};
+const DROPS = Array.from({ length: 24 }, () => ({ active: false })); // 固定池(满则丢弃新掉落,不新建)
+const TRAILS = Array.from({ length: 48 }, () => ({ active: false })); // 拖尾池
+// 掉落物 value 登记表(-07 Q4:在途合计写模块级标量,不再每帧返回新对象)
+let _infC = 0, _infM = 0;
+function computeInflight() {
+  _infC = 0; _infM = 0;
+  for (const d of DROPS) if (d.active) { if (d.kind === 'coin') _infC += d.value; else _infM += d.value; }
+}
+// main 每帧喂真值:显示值向「真值−在途」滚动(时间常数型,帧率无关;与养成 chips 同机制)
+// -07 Q3:dt=表现层实际经过时间(rdt)——暂停冻结;原误传模拟 dt(暂停期掉落继续飞)
+export function syncDropBank(coins, mats, fxOn, dt) {
+  computeInflight();
+  const cBase = coins - _infC, mBase = mats - _infM;
+  if (dropBank.coinDisp === null) { dropBank.coinDisp = cBase; dropBank.matDisp = mBase; }
+  if (!fxOn) {
+    resetDropPools();
+    dropBank.coinDisp = coins; dropBank.matDisp = mats; // 关动效:清池强制到账(终态)
+    dropBank.coinBump = 0; dropBank.matBump = 0; // -07 S1:回弹存量一并清零(否则 dt=0 时放大图标常驻)
+  }
+  else {
+    dropBank.coinDisp = rollToward(dropBank.coinDisp, cBase, dt);
+    dropBank.matDisp = rollToward(dropBank.matDisp, mBase, dt);
+  }
+  if (dropBank.coinBump > 0) dropBank.coinBump = Math.max(0, dropBank.coinBump - dt);
+  if (dropBank.matBump > 0) dropBank.matBump = Math.max(0, dropBank.matBump - dt);
+}
+// -07 Q2:清池=清 DROPS/TRAILS/排队音效(跨局残留根因——原只清 disp/等飞行自然结束)
+function resetDropPools() {
+  for (const d of DROPS) d.active = false;
+  for (const tr of TRAILS) tr.active = false;
+  dropBank.coinSfxPend = 0; dropBank.matSfxPend = 0;
+}
+export function resetDropBank() {
+  resetDropPools();
+  dropBank.coinDisp = null; dropBank.matDisp = null;
+  dropBank.coinBump = 0; dropBank.matBump = 0;
+  dropBank.coinArrive = 0; dropBank.matArrive = 0;
+}
+// -07 Q4:到达计数改标量 getter(原返回新对象,main 每帧分配)
+export function dropArriveCoin() { return dropBank.coinArrive; }
+export function dropArriveMat() { return dropBank.matArrive; }
+// 击杀掉落生成(kind 物携带 value;battle kill 事件→main 调用;-07 Q4 逐字段赋值不 Object.assign)
+export function spawnCoinDrop(kind, value, x, y) {
+  const slot = DROPS.find(d => !d.active);
+  if (!slot) return; // 池满丢弃(表现层;数值已入账)
+  slot.active = true; slot.kind = kind; slot.value = value; slot.x = x; slot.y = y - 20;
+  slot.groundY = y + 24 + Math.random() * 18; // 落地点(敌心下方散布)
+  slot.vx = (Math.random() - 0.5) * 140; slot.vy = -(150 + Math.random() * 90);
+  slot.phase = 'drop'; slot.t = 0; slot.rest = 0.45 + Math.random() * 0.35; // 停留+错峰
+  slot.sx = 0; slot.sy = 0; slot.cx = 0; slot.cy = 0; slot.tx = 0; slot.ty = 0; slot.trailT = 0;
+}
+// 每帧推进(表现层 dt;由 render 渲染路径在 fx 开且非暂停时调用——暂停冻结)
+function updateCoinDrops(dt) {
+  for (const d of DROPS) {
+    if (!d.active) continue;
+    if (d.phase === 'drop') { // 抛物线散落
+      d.x += d.vx * dt; d.y += d.vy * dt; d.vy += 520 * dt;
+      if (d.vy > 0 && d.y >= d.groundY) { d.y = d.groundY; d.phase = 'rest'; d.t = 0; }
+    } else if (d.phase === 'rest') { // 地面停留+错峰
+      d.t += dt;
+      if (d.t >= d.rest) { // 起飞:锁定 chip 图标锚点为终点,二次贝塞尔控制点上拱
+        const anc = d.kind === 'coin' ? dropBank.coinAnchor : dropBank.matAnchor;
+        d.phase = 'fly'; d.t = 0;
+        d.sx = d.x; d.sy = d.y;
+        d.tx = anc.x + 10; d.ty = anc.y + 10;
+        d.cx = (d.sx + d.tx) / 2 + (Math.random() - 0.5) * 120;
+        d.cy = Math.min(d.sy, d.ty) - 130 - Math.random() * 70;
+      }
+    } else { // fly:ease-in-out 贝塞尔(调研口径 300~500ms→0.6s 屏内飞行)
+      d.t += dt;
+      const p = Math.min(1, d.t / 0.6);
+      const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+      const u = 1 - e;
+      d.x = u * u * d.sx + 2 * u * e * d.cx + e * e * d.tx;
+      d.y = u * u * d.sy + 2 * u * e * d.cy + e * e * d.ty;
+      d.trailT += dt;
+      if (d.trailT >= 0.03) { // 拖尾粒子(池 48;逐字段赋值不 Object.assign)
+        d.trailT = 0;
+        const tr = TRAILS.find(t2 => !t2.active);
+        if (tr) { tr.active = true; tr.x = d.x; tr.y = d.y; tr.t = 0; tr.life = 0.25; tr.kind = d.kind; }
+      }
+      if (p >= 1) { // 到达:chip bump+到账计数+排队音效(main 每帧消费一次)+出池
+        d.active = false;
+        if (d.kind === 'coin') { dropBank.coinBump = 0.35; dropBank.coinArrive++; dropBank.coinSfxPend++; }
+        else { dropBank.matBump = 0.35; dropBank.matArrive++; dropBank.matSfxPend++; }
+      }
+    }
+  }
+  for (const tr of TRAILS) {
+    if (!tr.active) continue;
+    tr.t += dt;
+    if (tr.t >= tr.life) tr.active = false;
+  }
+}
+// -07 Q3:音效排队消费(每帧最多取一个,同帧多到达逐帧补响=「每到达一次一响」;
+// 返回常量字符串无分配:'coin'|'mat'|'none')
+export function takeDropSfx() {
+  if (dropBank.coinSfxPend > 0) { dropBank.coinSfxPend--; return 'coin'; }
+  if (dropBank.matSfxPend > 0) { dropBank.matSfxPend--; return 'mat'; }
+  return 'none';
+}
+function drawCoinDrops(ctx) {
+  // 拖尾(渐隐小圆)
+  for (const tr of TRAILS) {
+    if (!tr.active || !_fxOn) continue;
+    ctx.globalAlpha = (1 - tr.t / tr.life) * 0.5;
+    ctx.fillStyle = tr.kind === 'coin' ? '#f5c31c' : '#b8b09e';
+    ctx.beginPath(); ctx.arc(tr.x, tr.y, 5 * (1 - tr.t / tr.life) + 2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // 掉落物本体(UI_IMG 贴图优先;miss 回退圆形)
+  for (const d of DROPS) {
+    if (!d.active) continue;
+    const img = UI_IMG[d.kind === 'coin' ? 'coin' : 'pick'];
+    if (img && img.complete && img.naturalWidth) {
+      ctx.drawImage(img, d.x - 9, d.y - 9, 18, 18);
+    } else {
+      ctx.fillStyle = d.kind === 'coin' ? '#f5c31c' : '#b8b09e';
+      ctx.strokeStyle = '#794f27'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(d.x, d.y, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+  }
+}
+// 按钮按压反馈(BEAUTIFY -04 R2 整改):**归属在按下时确定**——setPressPoint 带 tag 仅在
+// 按下时调用;移动跟随调 pressMove(只更新坐标,不重写 tag,跨屏移动不会在新界面重新绑定);
+// 松手/取消/离开画布由 main 清除。tag 绑定「屏:浮层:养成页」身份——界面归属变化后作废;
+// 关动效(fxEnabled=false)无按压视觉;固定单一状态,无每帧分配
+let pressPt = null, pressTag = null;
+let _ctxTag = '', _scrIn = 1; // render 入口每帧同步(当前「屏:浮层:养成页」tag 与入屏进度)
+export function setPressPoint(p, tag) {
+  pressPt = p ? { x: p.x, y: p.y } : null;
+  pressTag = (p && tag) ? tag : null;
+}
+// 移动跟随:只更新坐标——tag 保持按下时的归属,不随当前界面重写(R2:导航后移动不得重新绑定)
+export function pressMove(p) { if (pressPt && p) { pressPt.x = p.x; pressPt.y = p.y; } }
+const isPressed = (r) => !!(_fxOn && pressPt && pressTag === _ctxTag
+  && pressPt.x >= r.x && pressPt.x <= r.x + r.w && pressPt.y >= r.y && pressPt.y <= r.y + r.h);
+
+// 浮层入场淡入(180ms;BEAUTIFY-01 F7;-03 B3 整改:render 每帧末尾检查——本帧无浮层绘制
+// 即清空 ovFade.key,同一浮层**关闭后重开**会重新计时淡入,不再沿用旧起点直接终态;
+// 关动效(fxEnabled=false)直接终态。退场不做:关闭=立即响应是既有验收口径(取舍记录于送审说明)
+const ovFade = { key: null, t0: 0 };
+let ovDrawnThisFrame = false;
+let _fxOn = true; // render 入口每帧同步 engine.fxEnabled(fade/呼吸类动效关闭时直接终态)
+function overlayIn(key) {
+  if (ovFade.key !== key) { ovFade.key = key; ovFade.t0 = worldT; }
+  ovDrawnThisFrame = true;
+  return _fxOn ? Math.min(1, (worldT - ovFade.t0) / 0.18) : 1;
+}
+// 屏切换入屏层次(P3;BEAUTIFY-01 F12;-03 B3 整改:render 入口每帧调用(观察全部屏切换,
+// 含 loadout 往返),进度存 _scrIn 供各屏绘制消费;0.3s 内 0→1;fx 关=直接 1
+let scrFadeScr = null, scrFadeT0 = 0;
+function screenIn(scr) {
+  if (scrFadeScr !== scr) { scrFadeScr = scr; scrFadeT0 = worldT; }
+  return _fxOn ? Math.min(1, Math.max(0, (worldT - scrFadeT0) / 0.3)) : 1;
+}
+let _ovA = 1; // 当前浮层 fade alpha(drawPickPanel 内层 alpha 需相乘)
+
 export function render(ctx, engine, hud, dt = 1 / 60) {
   worldT += dt; // 需求方 2026-10-19:主角动画异常快——worldT 原按帧数固定 +1/60,高刷屏(120Hz+)下 2 倍速;改按渲染回调实际 dt 推进(帧率无关)
   ctx.clearRect(0, 0, 720, 1280);
   const battle = hud.battle;
   const px = hud.parallax;
+  // BEAUTIFY-01 F3(P1):屏幕路由前置——开始/选关/备战/养成屏**不再绘制**被遮住的战斗区、
+  // 棋盘与结算(此前先全绘再被覆盖;旧局结束后还会继续画被盖的结算与彩带)。
+  // 只保留公共时钟 worldT 与置顶 toast;命中区几何零改动。
+  const scr = hud.screen ? hud.screen() : 'playing';
+  const inBattle = scr === 'playing';
+  _fxOn = engine.fxEnabled !== false; // BEAUTIFY-01:动效开关同步(fade/呼吸/入屏直接终态)
+  _scrIn = screenIn(scr); // BEAUTIFY -03 B3:每帧观察屏切换(含 loadout 往返),进度供各屏消费
+  _ctxTag = `${scr}:${(hud.panel ? hud.panel() : '') ?? ''}:${hud.growPanel ? (hud.growPanel() ? 1 : 0) : 0}:${hud.paused ? (hud.paused() ? 1 : 0) : 0}`; // 按压态界面身份(屏:浮层:养成页:暂停;与 main tag 同源)
 
+  if (inBattle) {
   // ===== 战斗区(FR-1.5 视差三层;screenshake/zoom pulse 变换) =====
   const tf = px ? px.transform() : { ox: 0, oy: 0, scale: 1 };
   ctx.save();
@@ -288,6 +498,8 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   ctx.restore(); // 视差/震动变换结束(联动栏与棋盘不参与 screenshake)
   // ===== 战斗区货币栏条带(需求方 2026-10-19:货币统一放在战斗区域更上一层,以货币栏
   // 形式显示货币/材料;底栏的第几关/击杀/货币行同步移除)=====
+  // BEAUTIFY -06 掉落表现:chip 数字=**已到账值**(dropBank disp 向 base 滚动;真值先行入账,
+  // 在途掉落不计数)——图标 bump 由掉落到达触发,数字滚动与到达同步。
   if (battle && battle.phase === 'FIGHTING' && hud.profile) {
     const prof = hud.profile();
     const TB = { x: 0, y: 0, w: 720, h: 44 };
@@ -302,21 +514,33 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     ctx.font = FONT(17); ctx.fillStyle = '#9f927d';
     ctx.fillText('战斗产出实时入账', 84, TB.y + 29);
     let cxr = 704; // 右缘
-    for (const [val, icon, emoji] of [[prof.materials, 'pick', '⛏'], [prof.coins, 'coin', '💰']]) {
-      const label = `${val}`;
+    for (const [val, icon, emoji, dispKey, bumpKey] of [[prof.materials, 'pick', '⛏', 'matDisp', 'matBump'], [prof.coins, 'coin', '💰', 'coinDisp', 'coinBump']]) {
+      const bankV = dropBank[dispKey] === null ? val : dropBank[dispKey];
+      const label = `${Math.round(bankV)}`;
       ctx.font = FONT(19, 'bold');
       const w = 64 + ctx.measureText(label).width;
       const x = cxr - w, y = TB.y + 4;
       ctx.fillStyle = '#fff';
       roundRect(ctx, x, y, w, 36, 16); ctx.fill();
       ctx.strokeStyle = '#dac9a7'; ctx.lineWidth = 2; roundRect(ctx, x, y, w, 36, 16); ctx.stroke();
-      drawAssetIcon(ctx, icon, emoji, x + 12, y + 8, 20);
+      // 图标 bump(掉落到达:spring 放大→回弹,0.35s;-07 S1:关动效直接原尺寸,dt=0 不残留放大)
+      const bp = dropBank[bumpKey];
+      const iconScale = (_fxOn && bp > 0) ? 1 + 0.35 * Math.sin((1 - bp / 0.35) * Math.PI) : 1;
+      drawAssetIcon(ctx, icon, emoji, x + 12 + (20 - 20 * iconScale) / 2, y + 8 + (20 - 20 * iconScale) / 2, 20 * iconScale);
       ctx.fillStyle = '#794f27';
       ctx.fillText(label, x + 40, y + 24);
+      // 记录 chip 图标锚点(掉落飞行目标;每帧**原地更新**不新建,-07 Q4)
+      const anch = dropBank[bumpKey === 'coinBump' ? 'coinAnchor' : 'matAnchor'];
+      anch.x = x + 12; anch.y = y + 8;
       cxr = x - 10;
     }
     ctx.textAlign = 'left';
   }
+  // 掉落表现推进与绘制(-07 Q3:表现层 rdt 推进[此处 dt 即渲染实际经过时间],fx 门控+
+  // 暂停冻结[hud.paused 与 main 同源]——暂停掉落不再继续飞;关动效不推进,清池强制到账由
+  // syncDropBank 处理。掉落物压在货币栏条带上)
+  if (_fxOn && !(hud.paused && hud.paused() && battle && battle.phase === 'FIGHTING')) updateCoinDrops(dt);
+  drawCoinDrops(ctx);
   // M13 战斗区 HUD(头像/二段血条/关卡名/BOSS 条/技能框/波次进度;draw 自带快照,只读;
   // 自 2026-10-19 起整体下移 44px,避让上方货币栏条带)
   if (hud.battleHud) hud.battleHud.draw(ctx, hud);
@@ -534,16 +758,31 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     ctx.restore();
   }
 
+  // BEAUTIFY-01 F8:点选交换预选提示(main firstSel 只读转发;fx 关=静态框)
+  // 细边框仅视觉,不改命中区;呼吸 alpha 随 worldT(帧率无关)
+  {
+    const fsel = hud.firstSel ? hud.firstSel() : null;
+    if (fsel) {
+      ctx.save();
+      ctx.globalAlpha = _fxOn ? 0.55 + 0.3 * Math.sin(worldT * 5) : 0.85;
+      ctx.strokeStyle = '#794f27';
+      ctx.lineWidth = 3;
+      roundRect(ctx, fsel.c * CELL + 4, BOARD_Y + fsel.r * CELL + 4, CELL - 8, CELL - 8, 12);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====
   if (battle && battle.phase === 'VICTORY') {
     drawResult(ctx, hud, battle, true, dt);
   } else if (battle && battle.phase === 'DEFEAT') {
     drawResult(ctx, hud, battle, false, dt);
   }
+  } // ===== inBattle 结束(BEAUTIFY-01 F3:非战斗屏跳过战斗区/棋盘/结算绘制) =====
 
-  // ===== M11 界面路由(UI 设计稿五屏;01 开始 / 02 选关 / 03 备战;战斗与结算见上) =====
-  const scr = hud.screen ? hud.screen() : 'playing';
-  if (scr === 'start') drawStartScreen(ctx, hud);
+  // ===== M11 界面路由(UI 设计稿五屏;01 开始 / 02 选关 / 03 备战;scr 已在函数入口计算) =====
+  if (scr === 'start') drawStartScreen(ctx, hud, dt);
   if (scr === 'menu') {
     drawMenuScreen(ctx, hud);
     if (hud.growPanel && hud.growPanel()) drawGrowPanel(ctx, hud, dt); // FR-10 养成面板(选关入口,保留)
@@ -553,12 +792,16 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     drawPauseOverlay(ctx, hud); // M11 暂停
   }
   if (scr === 'start' || scr === 'menu' || scr === 'loadout' || (scr === 'playing' && hud.paused && hud.paused())) {
-    if (hud.panel && hud.panel() === 'settings') drawSettingsPanel(ctx, hud); // M11 设置(开始/暂停共用)
-    if (hud.panel && hud.panel() === 'about') drawAboutPanel(ctx, hud);
+    // BEAUTIFY-01 F7:浮层入场 180ms 淡入(fx 关=直接终态;退场维持「点按即关」不延迟)
+    if (hud.panel && hud.panel() === 'settings') { ctx.save(); ctx.globalAlpha = _ovA = overlayIn('settings'); drawSettingsPanel(ctx, hud); ctx.restore(); }
+    if (hud.panel && hud.panel() === 'about') { ctx.save(); ctx.globalAlpha = _ovA = overlayIn('about'); drawAboutPanel(ctx, hud); ctx.restore(); }
   }
 
   // 事件提示浮层(需求方 2026-10-19:绘制移到所有界面/面板**之后**——toast 被养成/备战
   // 面板盖住导致「点了没提示」;现置顶可见。文字居中显式设置)
+  // BEAUTIFY -03 B3:本帧无浮层绘制→清空 fade 键(下次打开重新计时淡入)
+  if (!ovDrawnThisFrame) ovFade.key = null;
+  ovDrawnThisFrame = false;
   if (hud.toast && hud.toast.t > 0) {
     ctx.fillStyle = 'rgba(121,79,39,.85)';
     roundRect(ctx, 180, 160, 360, 44, 12);
@@ -593,11 +836,12 @@ const growAnim = {
   floats: [],                              // 属性冒字(+12HP 等)
   skillPop: {},                            // 技能按钮 pop 计时(key=col*8+row)
   gacha: null,                             // 抽卡浮层 {skillId, name, el, t}
+  statGlowT: 0,                            // BEAUTIFY-01 F10:HP/ATK 数值行高光计时(0.6s;升级后金色渐隐)
   tipsId: null,                            // 技能说明浮层(需求方 2026-10-19:单击行卡图标看描述;点任意处关闭)
   listScroll: 0, listMax: 0,               // 技能列表滚动偏移/上限(drawGrowPanel 每帧按拥有数复算,F1 整改)
 };
 export function growDeductFx(kind) { if (growAnim.flash[kind] !== undefined) growAnim.flash[kind] = 0.45; }
-export function growLevelUpFx() { growAnim.lvBounceT = 0.6; growAnim.burstT = 0.8; }
+export function growLevelUpFx() { growAnim.lvBounceT = 0.6; growAnim.burstT = 0.8; growAnim.statGlowT = 0.6; } // BEAUTIFY-01 F10:数值行同步高光
 export function growSkillUpFx(col, row) { growAnim.skillPop[col * 8 + row] = 0.35; }
 // 技能说明浮层(需求方 2026-10-19:养成技能行卡单击图标=看描述;点任意处关闭,与备战 tips 同口径)
 export function growTipsShow(skillId) { growAnim.tipsId = skillId; }
@@ -657,7 +901,7 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
     ctx.fillStyle = '#fff';
     roundRect(ctx, c.x + shake, chipY, c.w, chipH, 22); ctx.fill();
     ctx.strokeStyle = '#e8e2d6'; ctx.lineWidth = 2; roundRect(ctx, c.x + shake, chipY, c.w, chipH, 22); ctx.stroke();
-    drawAssetIcon(ctx, c.icon, c.kind === 'coin' ? '💰' : '⛏', c.x + shake + 14, chipY + 12, 24);
+    drawAssetIcon(ctx, c.icon, c.kind === 'coin' ? '💰' : '⛏', c.x + shake + 14, chipY + 12, 24); // 顶边:图标中心=chip 中心(chipY+24)
     ctx.fillStyle = '#794f27';
     ctx.fillText(c.label, c.x + shake + 48, chipY + 32);
   }
@@ -708,10 +952,12 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
     ctx.fillText(`Lv.${prof.level}`, 0, 0);
     ctx.restore();
   }
-  ctx.fillStyle = '#794f27'; // F5 整改(UIV2-02):立绘正常分支不设 fillStyle,HP 文字沿用立绘框底色 #efe9db 致低对比;显式恢复深色
+  // BEAUTIFY-01 F10:升级后 0.6s 内 HP/ATK 数值行金色高光渐隐(fx 关=直接终态无高光)
+  const sg = _fxOn && growAnim.statGlowT > 0 ? growAnim.statGlowT / 0.6 : 0; // _fxOn 由 render 入口每帧同步(drawGrowPanel 无 engine 作用域)
+  ctx.fillStyle = sg > 0 ? mixHex('#794f27', '#f5a623', sg) : '#794f27'; // F5 整改(UIV2-02):显式恢复深色(升级瞬间向金过渡)
   ctx.font = FONT(23);
   ctx.fillText(`HP ${maxHpText(prof.level)}`, 288, 232);
-  ctx.fillStyle = '#794f27'; // 血条移除(需求方 2026-10-19:与备战主角卡样式一致,数值保留)
+  ctx.fillStyle = sg > 0 ? mixHex('#794f27', '#f5a623', sg) : '#794f27'; // 血条移除(需求方 2026-10-19:与备战主角卡样式一致,数值保留)
   ctx.fillText(`ATK ${atkText(prof.level)}`, 288, 270);
   ctx.font = FONT(20); ctx.fillStyle = '#9f927d';
   ctx.fillText(`升级消耗材料:${levelUpCost(prof.level)}`, 288, 308);
@@ -750,8 +996,7 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
     if (img && img.complete && img.naturalWidth > 0) {
       ctx.drawImage(img, x0 + 14, y0 + 16, 64, 64);
     } else {
-      const WX = { fire: '#ff4444', water: '#4488ff', wood: '#44ff44', metal: '#ccccff', earth: '#cc8844' };
-      ctx.fillStyle = WX[skill && skill.el] || '#ccc';
+      ctx.fillStyle = GEM_SRC[skill && skill.el] || '#ccc'; // BEAUTIFY-01 F5:引用共享元素色表(原 WX 旧五色)
       ctx.beginPath(); ctx.arc(x0 + 46, y0 + 48, 32, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#333'; ctx.font = FONT(24, 'bold'); ctx.textAlign = 'center';
       ctx.fillText(ELEMENT_NAME[skill && skill.el] || '?', x0 + 46, y0 + 56);
@@ -794,8 +1039,8 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
   const poolFull = prof.ownedSkills.length >= SKILL_LIBRARY.length;
   drawBtn(ctx, GROW_LAYOUT.gachaBtn, poolFull ? '技能已集齐' : '✦ 抽卡 · 100 币/次', poolFull ? 'disabled' : 'warn', 30);
   drawBtn(ctx, GROW_LAYOUT.closeBtn, '←', 'ghost', 30);
-  // 属性冒字(+12HP 等)
-  for (const f of growAnim.floats) {
+  // 属性冒字(+12HP 等);-04 R4:关动效不绘制存量冒字(与战斗侧「停止绘制存量粒子/冒字」同口径)
+  if (_fxOn) for (const f of growAnim.floats) {
     const pr = f.t / f.life;
     ctx.globalAlpha = pr < 0.25 ? pr / 0.25 : 1 - (pr - 0.25) / 0.75;
     ctx.fillStyle = f.color; ctx.font = FONT(28, 'bold'); ctx.textAlign = 'center';
@@ -808,6 +1053,7 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
   if (growAnim.tipsId) {
     const sk = skillById(growAnim.tipsId);
     if (sk) {
+      ctx.save(); ctx.globalAlpha = _ovA = overlayIn(`growTips:${growAnim.tipsId}`); // BEAUTIFY-01 F7
       ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, 720, 1280);
       const lv = prof.skillLevels?.[sk.id] || 1;
       ctx.fillStyle = '#fff';
@@ -837,12 +1083,13 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
       ctx.fillStyle = '#9f927d';
       ctx.fillText(`${vline.label}(${vline.formula}):`, 118, 682);
       ctx.font = FONT(22, 'bold');
-      ctx.fillStyle = '#19c8b9';
+      ctx.fillStyle = UI_STYLE.accentText; // BEAUTIFY-01 F2:文字对比 2.10→5.20
       ctx.fillText(vline.text, 118, 716);
       ctx.font = FONT(19);
       ctx.fillStyle = '#c4b89e';
       ctx.textAlign = 'center';
       ctx.fillText('点按任意处关闭', 360, 796);
+      ctx.restore(); // BEAUTIFY-01 F7 fade 结束
     }
   }
   if (growAnim.gacha) {
@@ -861,11 +1108,18 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
       ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, -190, -220, 380, 440, 24); ctx.stroke();
       ctx.fillStyle = '#f5c31c'; ctx.font = FONT(26, 'bold'); ctx.textAlign = 'center';
       ctx.fillText('✦ 获得新技能 ✦', 0, -160);
-      const WX2 = { fire: '#ff4444', water: '#4488ff', wood: '#44ff44', metal: '#ccccff', earth: '#cc8844' };
-      ctx.fillStyle = WX2[g.el] || '#ccc';
-      ctx.beginPath(); ctx.arc(0, -40, 70, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#333'; ctx.font = FONT(52, 'bold');
-      ctx.fillText(ELEMENT_NAME[g.el] || '?', 0, -22);
+      // BEAUTIFY-01 F5:正式结果优先画技能图标(与技能库/备战同源);缺图回退元素色圆
+      const gimg = SKILL_IMG[g.skillId];
+      if (gimg && gimg.complete && gimg.naturalWidth > 0) {
+        ctx.fillStyle = '#f0e8d8';
+        ctx.beginPath(); ctx.arc(0, -40, 76, 0, Math.PI * 2); ctx.fill();
+        ctx.drawImage(gimg, -62, -102, 124, 124);
+      } else {
+        ctx.fillStyle = GEM_SRC[g.el] || '#ccc';
+        ctx.beginPath(); ctx.arc(0, -40, 70, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#333'; ctx.font = FONT(52, 'bold');
+        ctx.fillText(ELEMENT_NAME[g.el] || '?', 0, -22);
+      }
       ctx.fillStyle = '#794f27'; ctx.font = FONT(30, 'bold');
       ctx.fillText(g.name, 0, 80);
       ctx.font = FONT(20); ctx.fillStyle = '#9f927d';
@@ -877,6 +1131,7 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
   // 动效计时推进(真实 dt,帧率无关;面板不显示时不推进)
   for (const k of ['coin', 'mat']) if (growAnim.flash[k] > 0) growAnim.flash[k] = Math.max(0, growAnim.flash[k] - dt);
   if (growAnim.lvBounceT > 0) growAnim.lvBounceT = Math.max(0, growAnim.lvBounceT - dt);
+  if (growAnim.statGlowT > 0) growAnim.statGlowT = Math.max(0, growAnim.statGlowT - dt); // BEAUTIFY-01 F10
   if (growAnim.burstT > 0) {
     growAnim.burstT = Math.max(0, growAnim.burstT - dt);
     if (growAnim.sparks.length < 24 && Math.random() < 0.5) {
@@ -983,9 +1238,11 @@ void TIER_MULT; void PLAYER_Y; void ENEMY_SPAWN_X;
 // 布局常量导出:main.js 命中区与测试共用(单一来源,与 draw* 逐字一致)
 export const UI = {
   start: {
-    playBtn: { x: 160, y: 900, w: 400, h: 110 },
-    settingsBtn: { x: 160, y: 1030, w: 190, h: 90 },
-    aboutBtn: { x: 370, y: 1030, w: 190, h: 90 },
+    // 需求方 2026-10-19:下方为圆形可行走草地+主角原地行走(草顶 1060,主角 1064..1384→头 744),
+    // 按钮上移到中部让位(命中区单一来源,main 同步)
+    playBtn: { x: 160, y: 600, w: 400, h: 100 },
+    settingsBtn: { x: 160, y: 724, w: 190, h: 86 },
+    aboutBtn: { x: 370, y: 724, w: 190, h: 86 },
   },
   menu: {
     backBtn: { x: 24, y: 20, w: 80, h: 70 },
@@ -999,7 +1256,7 @@ export const UI = {
     // v2(03-loadout.html 样板):主角面板+出战信息窄卡+4 大槽(140)+底部换装抽屉;技能库列表移除
     heroCard: { x: 32, y: 140, w: 656, h: 300 },
     infoCard: { x: 32, y: 470, w: 656, h: 150 },
-    panelY: 660, slotsY: 760, slotSize: 140, slotGap: 32, // 4 槽:x0=32,步进 172(4×140+3×32=656 满宽)
+    panelY: 660, slotsY: 760, slotSize: 128, slotGap: 32, // 4 槽:x0=56,步进 160(4×128+3×32=608;面板 656 内左右各留 24px——需求方 2026-10-19:槽框不再贴面板两边)
     fightBtn: { x: 160, y: 1050, w: 400, h: 120 },
     // 换装抽屉(底部;两列 6 行;关闭按钮在面板内右上——需求方 2026-10-19:超框/居中整改)
     pickTop: 560, pickRowH: 84, pickCloseBtn: { x: 528, y: 584, w: 120, h: 64 },
@@ -1051,7 +1308,7 @@ export const uiCardBtn = (L) => ({
   w: UI.menu.cardBtn.w, h: UI.menu.cardBtn.h,
 });
 export const uiSlotRect = (i) => ({
-  x: 32 + i * (UI.loadout.slotSize + UI.loadout.slotGap),
+  x: 56 + i * (UI.loadout.slotSize + UI.loadout.slotGap),
   y: UI.loadout.slotsY, w: UI.loadout.slotSize, h: UI.loadout.slotSize,
 });
 // M11-06:槽右上角「更换」按钮(双环形箭头)命中区——先于槽选中判定
@@ -1075,19 +1332,21 @@ const uiPickRowRect = (row) => {
   const col = Math.floor(row / 6), rr = row % 6;
   return { x: 60 + col * 310, y: UI.loadout.pickTop + 104 + rr * UI.loadout.pickRowH, w: 290, h: UI.loadout.pickRowH - 8 };
 };
-// 通用小按钮(底栏 ⏸/⚙ 等 ghost 风格)
+// 通用小按钮(底栏 ⏸/⚙ 等 ghost 风格;BEAUTIFY-01 F4/F6:材质走 UI_STYLE 令牌+按压态)
 function drawIconBtn(ctx, r, glyph, iconKey) {
-  ctx.fillStyle = '#fff';
+  const pressed = isPressed(r);
+  ctx.fillStyle = pressed ? '#f3ece0' : '#fff';
   roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.fill();
-  ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 2;
+  ctx.strokeStyle = UI_STYLE.cardLine; ctx.lineWidth = 2;
   roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.stroke();
+  if (pressed) { ctx.strokeStyle = 'rgba(14,122,112,.45)'; ctx.lineWidth = 3; roundRect(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4, 8); ctx.stroke(); }
   // M14:优先贴图(UI_IMG,替换 emoji);miss 回退原文字
   const icon = iconKey ? UI_IMG[iconKey] : null;
   if (icon && icon.complete && icon.naturalWidth) {
     ctx.drawImage(icon, r.x + r.w / 2 - 16, r.y + r.h / 2 - 16, 32, 32);
     return;
   }
-  ctx.fillStyle = '#794f27';
+  ctx.fillStyle = UI_STYLE.ink;
   ctx.font = FONT(22, 'bold');
   ctx.textAlign = 'center';
   ctx.fillText(glyph, r.x + r.w / 2, r.y + r.h / 2 + 8);
@@ -1095,22 +1354,40 @@ function drawIconBtn(ctx, r, glyph, iconKey) {
 }
 
 // 通用 clay 按钮(kind: primary|ghost|warn|disabled)
+// BEAUTIFY-01 F2(P1):primary 底 #19c8b9→UI_STYLE.primaryBtn #0e7a70(白字对比 2.10→5.20);
+// BEAUTIFY-01 F6:按压态=底色加深+内亮边(无位移不改命中区;main setPressPoint 喂点)
 function drawBtn(ctx, r, text, kind = 'primary', fontSize = 26) {
   const colors = {
-    primary: ['#19c8b9', '#fff'],
-    ghost: ['#f0e8d8', '#794f27'],
-    warn: ['#f5c31c', '#794f27'],
-    disabled: ['#d8d2c4', '#c4b89e'],
+    primary: [UI_STYLE.primaryBtn, '#fff'],
+    ghost: [UI_STYLE.paper, UI_STYLE.ink],
+    warn: ['#f5c31c', UI_STYLE.ink],
+    disabled: ['#d8d2c4', UI_STYLE.dim],
   };
   const [bg, fg] = colors[kind] || colors.primary;
-  ctx.fillStyle = bg;
+  const pressed = kind !== 'disabled' && isPressed(r);
+  ctx.fillStyle = pressed ? shade(bg, 0.88) : bg;
   roundRect(ctx, r.x, r.y, r.w, r.h, Math.min(24, r.h / 2)); ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 3;
   roundRect(ctx, r.x, r.y, r.w, r.h, Math.min(24, r.h / 2)); ctx.stroke();
+  if (pressed) { ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2; roundRect(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6, Math.max(4, Math.min(21, r.h / 2) - 3)); ctx.stroke(); }
   ctx.fillStyle = fg;
   ctx.font = FONT(fontSize, 'bold');
   ctx.textAlign = 'center';
   ctx.fillText(text, r.x + r.w / 2, r.y + r.h / 2 + fontSize * 0.36);
+}
+// 两色插值(高光渐隐;hex #rrggbb;位运算无数组/映射分配;-03 B6 整改)
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const r = Math.round(((pa >> 16) & 255) + (((pb >> 16) & 255) - ((pa >> 16) & 255)) * t);
+  const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * t);
+  const c = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * t);
+  return '#' + ((r << 16) | (g << 8) | c).toString(16).padStart(6, '0');
+}
+// 颜色加深(按压态;hex #rrggbb ×系数;位运算无数组分配;-03 B6 整改)
+function shade(hex, k) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 255) * k), g = Math.round(((n >> 8) & 255) * k), c = Math.round((n & 255) * k);
+  return '#' + ((r << 16) | (g << 8) | c).toString(16).padStart(6, '0');
 }
 
 // 顶栏(选关/备战共用;UI 设计稿 02/03:h=110 青绿浅底)
@@ -1143,7 +1420,10 @@ function drawTopBar(ctx, title, prof) {
 }
 
 // ===== 01 开始界面 =====
-function drawStartScreen(ctx, hud) {
+// -07 Q2:草地自转/主角跑步接 fx 门控——关动效时静帧(专用表现时钟,不用 worldT 全局墙钟)
+let meadowT = 0;
+function drawStartScreen(ctx, hud, dt) {
+  if (_fxOn) meadowT += dt || 0;
   // M15 Task 51:开始界面背景=生图产物(720×1280 全屏;缺图回退田园渐变+云/远山程序化兜底)
   const startBg = START_IMG.bg;
   if (startBg && startBg.complete && startBg.naturalWidth > 0) {
@@ -1189,18 +1469,67 @@ function drawStartScreen(ctx, hud) {
   ctx.fillStyle = '#794f27';
   ctx.fillText('消除五行 · 合成技能 · 守卫到底', 360, ty + 140);
   }
-  // 主角立绘(player idle 序列帧,绘制 210×374)
-  const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
-  if (pf && pf.complete && pf.naturalWidth > 0) {
-    drawFlipH(ctx, pf, 255, 420, 210, 374); // M11-05:idle 立绘水平镜像(面右)
+  // ===== 圆形可行走草地+主角原地跑步(需求方 2026-10-19;样板 .tmp/start-circle-demo.html 口径) =====
+  // 草地圆心 (360,1340) 显示半径 280(贴图 560×560);绕圆心自转 0.12rad/s(跑步机式行走错觉);
+  // 主角站草圆**最上方贴地**:绘制底 y=1122(草圆顶 1060+62),逻辑可见底 ≈1068.25~1069.50
+  // (逐帧 alpha 复算见 m15-beautify-r9/q1-alpha-recheck.md),原地循环跑动 walk 10fps,位置固定。
+  const MC = MEADOW_CIRCLE; // -07 Q4:常量提升模块级(原每帧新建对象)
+  const md = MEADOW_IMG.img;
+  ctx.save();
+  ctx.translate(MC.x, MC.y);
+  ctx.rotate(meadowT * MC.spin);
+  if (md && md.complete && md.naturalWidth > 0) {
+    ctx.drawImage(md, -MC.r, -MC.r, MC.r * 2, MC.r * 2);
+  } else {
+    // 程序化兜底(样板同款:草面渐变+土层环+草丛/花/石子固定地面坐标随转;渐变按 ctx 缓存)
+    if (!MEADOW_FALLBACK_GRAD || MEADOW_FALLBACK_GRAD.ctx !== ctx) {
+      const g = ctx.createRadialGradient(0, -MC.r * 0.55, 30, 0, -MC.r * 0.55, MC.r);
+      g.addColorStop(0, '#8ed05e'); g.addColorStop(0.8, '#7bc24d'); g.addColorStop(1, '#63a638');
+      MEADOW_FALLBACK_GRAD = { ctx, g };
+    }
+    ctx.fillStyle = MEADOW_FALLBACK_GRAD.g;
+    ctx.beginPath(); ctx.arc(0, 0, MC.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#9a6b3f'; ctx.lineWidth = 13;
+    ctx.beginPath(); ctx.arc(0, 0, MC.r - 7, 0, Math.PI * 2); ctx.stroke();
+    for (let i = 0; i < 40; i++) {
+      const a = i * 2.399963, rr = (0.35 + 0.6 * ((i * 37 % 100) / 100)) * MC.r;
+      ctx.fillStyle = i % 3 ? 'rgba(74,148,44,.75)' : '#f5d95a';
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(a) * rr, Math.sin(a) * rr, 7, 3, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+  // 主角:草圆顶贴地原地跑步(-07:walk 6 帧循环 10fps,用户确认「用跑的动作」;面右镜像与战斗一致)
+  // Q1 贴地口径(-10 逐帧 alpha 复算,绑定 m15-beautify-r9/q1-alpha-recheck.md):
+  // 绘制底 y=1122(=草地贴图顶 1060+62),绘制顶 802,六帧原图 720×1280 按 1/4 缩放,
+  // 非透明区域下边界(原图行 1065~1070)→ 逻辑可见底 ≈1068.25~1069.50,位于草面顶
+  // (1075)上方 5.5~6.75px;接触观感以绑定截图复核为准。
+  const heroFootY = MC.y - MC.r + 62;
+  ctx.fillStyle = 'rgba(40,60,30,.28)';
+  ctx.beginPath(); ctx.ellipse(360, heroFootY + 4, 54, 14, 0, 0, Math.PI * 2); ctx.fill();
+  // 跑步动画:walk 6 帧循环 10fps(跑动步态帧差异明显;-07 前误用 walk_start 起手 3 帧,差异微小视觉近似静止)
+  const pfw = PLAYER_WALK_FRAMES.length ? seqFrame(PLAYER_WALK_FRAMES, meadowT, 10) : (PLAYER_ATK_FRAMES[0] || PLAYER_FRAMES[0]);
+  if (pfw && pfw.complete && pfw.naturalWidth > 0) {
+    drawFlipH(ctx, pfw, 360 - 90, heroFootY - 320, 180, 320);
   } else {
     ctx.fillStyle = '#3f6fb5';
-    roundRect(ctx, 285, 440, 150, 340, 30); ctx.fill();
+    roundRect(ctx, 360 - 45, heroFootY - 260, 90, 260, 24); ctx.fill();
   }
   // 主按钮(有存档「开始冒险」/无档「开始游戏」——存档信息条有无同步)
   const prof = hud.profile ? hud.profile() : null;
   const hasSave = !!(prof && ((prof.level > 1) || (prof.expTotal ?? 0) > 0 || (hud.progress ? hud.progress().lastLevelCleared : 0) > 0));
   drawBtn(ctx, UI.start.playBtn, hasSave ? '开 始 冒 险' : '开 始 游 戏', 'primary', 36);
+  {
+    const pIn = _scrIn; // BEAUTIFY-01 F12:首现轻高光(0.3s;-03 B3:进度由 render 入口每帧算)
+    if (pIn < 1) {
+      ctx.save();
+      ctx.globalAlpha = (1 - pIn) * 0.7;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4;
+      roundRect(ctx, UI.start.playBtn.x + 3, UI.start.playBtn.y + 3, UI.start.playBtn.w - 6, UI.start.playBtn.h - 6, Math.min(24, UI.start.playBtn.h / 2) - 3); ctx.stroke();
+      ctx.restore();
+    }
+  }
   drawBtn(ctx, UI.start.settingsBtn, '设 置', 'ghost', 28);
   drawBtn(ctx, UI.start.aboutBtn, '关 于', 'ghost', 28);
   // 存档信息条
@@ -1222,19 +1551,8 @@ function drawMenuScreen(ctx, hud) {
   ctx.fillStyle = '#f8f8f0'; ctx.fillRect(0, 0, 720, 1280);
   const prof = hud.profile ? hud.profile() : { level: 1, coins: 0, materials: 0 };
   const prog = hud.progress ? hud.progress() : { unlockedLevel: 1, lastLevelCleared: 0 };
-  drawTopBar(ctx, '关卡选择', prof);
-  // 货币/材料(FR-7 v0.2;F7 整改:卡顶 200 下移,HUD 行不再被首卡覆盖)
-  ctx.fillStyle = '#794f27';
-  ctx.font = FONT(24, 'bold');
-  ctx.textAlign = 'left';
-  {
-    // M14:资产行改贴图
-    let ix = 124;
-    ix = drawAssetIcon(ctx, 'coin', '💰', ix, 178, 22);
-    ctx.fillText(`${prof.coins ?? 0}`, ix, 178); ix += ctx.measureText(`${prof.coins ?? 0}`).width + 24;
-    ix = drawAssetIcon(ctx, 'pick', '⛏', ix, 178, 22);
-    ctx.fillText(`${prof.materials ?? 0}`, ix, 178);
-  }
+  drawTopBar(ctx, '关卡选择'); // 需求方 2026-10-19 第三批:选关顶栏移除等级/经验 chip(不传 prof;备战本就不传)
+  // 需求方 2026-10-19 第三批:选关顶部货币/材料行移除(资产在养成/战斗/结算有承载,选关不再重复)
   ctx.textAlign = 'center';
   // 关卡卡片 ×5(三态:已通关重打 / 当前高亮挑战 / 锁定)
   for (let i = 1; i <= 5; i++) {
@@ -1249,11 +1567,22 @@ function drawMenuScreen(ctx, hud) {
     ctx.strokeStyle = current ? '#19c8b9' : cleared ? '#dcd8d1' : '#e8e2d6';
     ctx.lineWidth = current ? 4 : 3;
     roundRect(ctx, 32, y, 656, UI.menu.cardH, 24); ctx.stroke();
+    if (current) {
+      const pIn = _scrIn; // BEAUTIFY-01 F12:当前挑战卡短亮边(0.3s;-03 B3:进度由 render 入口每帧算)
+      if (pIn < 1) {
+        ctx.save();
+        ctx.globalAlpha = (1 - pIn) * 0.8;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+        roundRect(ctx, 36, y + 4, 648, UI.menu.cardH - 8, 20); ctx.stroke();
+        ctx.restore();
+      }
+    }
     // Boss 缩略图(boss 序列帧首帧;缺图灰盒)
     const th = 126, tx = 56, tyy = y + 22;
     ctx.fillStyle = '#efe9db';
     roundRect(ctx, tx, tyy, th, th, 16); ctx.fill();
-    const bossImg = ENEMY_FRAMES.boss && ENEMY_FRAMES.boss[0];
+    // 需求方 2026-10-19 第三批:缩略图=该关 Boss 类型帧首帧(LEVEL_BOSS:fox/zombie/snake/tiger/boss)
+    const bossImg = ENEMY_FRAMES[bossType(i)] && ENEMY_FRAMES[bossType(i)][0]; // 循环变量 i=关卡号
     if (!unlocked) {
       ctx.fillStyle = '#c4b89e'; ctx.font = FONT(34);
       ctx.fillText('🔒', tx + th / 2, tyy + th / 2 + 4);
@@ -1431,31 +1760,32 @@ function drawLoadoutScreen(ctx, hud) {
     if (sk) {
       const img = SKILL_IMG[sk.id];
       if (img && img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, sx + 34, sy + 18, 72, 72); // 需求方 2026-10-19:86×86 改为 72×72,四周留边距,右缘 106 恰让开「更换」徽章
+        ctx.drawImage(img, sx + 28, sy + 16, 72, 72); // 需求方 2026-10-19:86×86 改为 72×72 槽内居中;128 槽左右留 28px(右缘 100 让开「更换」徽章命中区 94 起)
       } else {
         ctx.fillStyle = GEM_SRC[sk.el];
-        ctx.beginPath(); ctx.arc(sx + 70, sy + 54, 33, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(sx + 64, sy + 52, 30, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = ['fire', 'water', 'earth'].includes(sk.el) ? '#fff' : '#794f27';
         ctx.font = FONT(32, 'bold');
-        ctx.fillText(sk.el[0].toUpperCase(), sx + 70, sy + 66);
+        ctx.fillText(sk.el[0].toUpperCase(), sx + 64, sy + 63);
       }
       ctx.fillStyle = '#794f27';
       ctx.font = FONT(21, 'bold');
-      ctx.fillText(fitText(ctx, sk.name, 126), sx + 70, sy + 122);
+      ctx.fillText(fitText(ctx, sk.name, 116), sx + 64, sy + 114);
       // M11-06:右上角「更换」双环形箭头(点击打开换装列表)
       drawSwapIcon(ctx, sx + UI.loadout.slotSize - 19, sy + 19);
     } else {
       ctx.fillStyle = '#c4b89e';
       ctx.font = FONT(22);
-      ctx.fillText('空槽', sx + 70, sy + 70);
+      ctx.fillText('空槽', sx + 64, sy + 70);
     }
   }
   ctx.textAlign = 'center';
   // 出战按钮
   drawBtn(ctx, UI.loadout.fightBtn, '出 战', 'primary', 38);
   // M11-06:换装面板/技能 tips 浮层(在主界面之上)
-  if (lo.panel === 'skillPick') drawPickPanel(ctx, hud, prof, lo);
-  else if (lo.panel === 'skillTips') drawSkillTips(ctx, prof, lo);
+  // BEAUTIFY-01 F7:浮层入场淡入(键=面板类型;关闭后重开重新计时)
+  if (lo.panel === 'skillPick') { ctx.save(); ctx.globalAlpha = _ovA = overlayIn('skillPick'); drawPickPanel(ctx, hud, prof, lo); ctx.restore(); }
+  else if (lo.panel === 'skillTips') { ctx.save(); ctx.globalAlpha = _ovA = overlayIn(`skillTips:${lo.tipsSlot}`); drawSkillTips(ctx, prof, lo); ctx.restore(); } // 键含槽位(换槽重放淡入)
 }
 
 // M11-06:「更换」双环形箭头图标(两段弧+箭头,animal-island primary 色)
@@ -1542,7 +1872,7 @@ function drawSkillTips(ctx, prof, lo) {
   ctx.fillStyle = '#9f927d';
   ctx.fillText(`${vline.label}(${vline.formula}):`, 118, 682);
   ctx.font = FONT(22, 'bold');
-  ctx.fillStyle = '#19c8b9';
+  ctx.fillStyle = UI_STYLE.accentText; // BEAUTIFY-01 F2:文字对比 2.10→5.20
   ctx.fillText(vline.text, 118, 716);
   ctx.font = FONT(19);
   ctx.fillStyle = '#c4b89e';
@@ -1586,23 +1916,27 @@ function drawPickPanel(ctx, hud, prof, lo) {
     roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 16); ctx.stroke();
     const img = SKILL_IMG[sk.id];
     if (img && img.complete && img.naturalWidth > 0) {
-      if (!unlocked) ctx.globalAlpha = 0.45;
+      if (!unlocked) ctx.globalAlpha = 0.45 * _ovA; // BEAUTIFY-01 F7:内层 alpha 相乘外层 fade
       ctx.drawImage(img, rect.x + 12, rect.y + 12, 52, 52);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = _ovA;
     } else {
       ctx.fillStyle = GEM_SRC[sk.el];
       ctx.beginPath(); ctx.arc(rect.x + 38, rect.y + 38, 24, 0, Math.PI * 2); ctx.fill();
     }
     ctx.textAlign = 'left';
+    // 需求方 2026-10-19 第三批:换装行补技能描述(skillDetailText 一行 fitText;三行版式:名/描述/Lv·CD)
     ctx.fillStyle = unlocked ? '#794f27' : '#c4b89e';
-    ctx.font = FONT(20, 'bold');
-    ctx.fillText(fitText(ctx, sk.name, rect.w - 76 - 12), rect.x + 76, rect.y + 32);
-    ctx.font = FONT(13);
+    ctx.font = FONT(18, 'bold');
+    ctx.fillText(fitText(ctx, sk.name, rect.w - 76 - 12), rect.x + 76, rect.y + 26);
+    ctx.font = FONT(15);
+    ctx.fillStyle = unlocked ? '#5a4a32' : '#c4b89e';
+    ctx.fillText(fitText(ctx, skillDetailText(sk), rect.w - 76 - 12), rect.x + 76, rect.y + 47);
+    ctx.font = FONT(14, 'bold');
     ctx.fillStyle = unlocked ? '#9f927d' : '#c4b89e';
     const sub = unlocked
       ? `Lv.${prof.skillLevels?.[sk.id] || 1} · CD ${sk.cd}s`
       : (prof.ownedSkills || []).includes(sk.id) ? `Lv.${sk.unlockLevel} 解锁` : '未拥有';
-    ctx.fillText(fitText(ctx, sub, rect.w - 76 - 12), rect.x + 76, rect.y + 56);
+    ctx.fillText(fitText(ctx, sub, rect.w - 76 - 12), rect.x + 76, rect.y + 66);
   });
   ctx.textAlign = 'center';
 }
@@ -1628,10 +1962,11 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
   ctx.fillStyle = victory ? `rgba(232,246,224,${0.88 * mA})` : `rgba(243,226,224,${0.9 * mA})`;
   ctx.fillRect(0, 0, 720, 1280);
   // 彩带(胜利;0.8s 起生成,持续下落,落底循环;位移按真实 dt)
-  if (victory && t > 0.8 && T.confetti.length < 120) {
-    const colors = ['#ff4444', '#4488ff', '#44ff44', '#ccccff', '#cc8844', '#f5c31c'];
-    for (let i = 0; i < 6 && T.confetti.length < 120; i++) {
-      T.confetti.push({ x: Math.random() * 720, y: -24, vy: 220 + Math.random() * 140, rot: Math.random() * 360, vr: 200 + Math.random() * 240, w: 9 + Math.random() * 6, h: 13 + Math.random() * 8, color: colors[Math.floor(Math.random() * colors.length)] });
+  // BEAUTIFY-01 F11:发射节奏按经过秒数(45 片/s,上限 120)——同壁钟时刻片数与帧率无关(原每帧 ≤6 片,120fps 密度翻倍)
+  if (victory && t > 0.8) {
+    const target = Math.min(120, Math.floor((t - 0.8) * 45));
+    while (T.confetti.length < target) {
+      T.confetti.push({ x: Math.random() * 720, y: -24, vy: 220 + Math.random() * 140, rot: Math.random() * 360, vr: 200 + Math.random() * 240, w: 9 + Math.random() * 6, h: 13 + Math.random() * 8, color: CONFETTI_COLORS[Math.floor(Math.random() * 6)] }); // 池上限 120,满后不再新建
     }
   }
   ctx.save();
@@ -1696,7 +2031,7 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
       rows.push({ key: 'vcoin', label: '通关奖励', target: battle.victoryCoins || 0, fmt: (v) => `${v}`, mats: battle.victoryMats || 0, color: '#5a4a32' });
       rows.push({ key: 'coin', label: '本局产出', target: battle.coinsGained, fmt: (v) => `${v}`, mats: battle.matsGained, color: '#b06f1f' });
     } else {
-      rows.push({ key: 'gain', label: '本局获得', target: battle.coinsGained, fmt: (v) => `💰${v} ⛏${battle.matsGained}`, color: '#b06f1f' });
+      rows.push({ key: 'gain', label: '本局获得', target: battle.coinsGained, mats: battle.matsGained, color: '#b06f1f' }); // BEAUTIFY-01 F5:与胜利奖励行同构(图标+两数字,不再 emoji)
       rows.push({ key: 'hp', label: '剩余主角 HP', target: 0, fmt: () => '0', color: '#e05a5a' });
     }
     // 数字滚动逼近系数(时间常数型,帧率无关;60fps 时 ≈0.18 与原手感一致)
@@ -1771,7 +2106,7 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
           const imgC = UI_IMG.coin, imgP = UI_IMG.pick;
           const hasIcons = !!(imgC && imgC.complete && imgC.naturalWidth && imgP && imgP.complete && imgP.naturalWidth);
           ctx.font = FONT(25);
-          ctx.fillStyle = '#f5c31c';
+          ctx.fillStyle = UI_STYLE.ink; // BEAUTIFY-01 F2:金色数字白底对比仅 1.65,改深棕(7.09,与资产数字全项目统一)
           ctx.textAlign = 'right';
           const sN = `${prof.coins ?? 0}`, sM = `${prof.materials ?? 0}`;
           let ix = 628;
@@ -1806,6 +2141,14 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
     }
     ctx.globalAlpha = 1;
   }
+  // BEAUTIFY-01 F11:点按跳过提示(就绪前显示;终态空串不占视觉)
+  {
+    ctx.font = FONT(17);
+    ctx.fillStyle = '#9f927d';
+    ctx.textAlign = 'center';
+    ctx.fillText(t < RESULT_READY_T ? '点按任意处跳过' : '', 360, 1258);
+    ctx.textAlign = 'left';
+  }
   // 按钮组(1.55s 起弹入;动效期内点按=跳过由 main 处理,按钮在 resultReady 前不接点击)
   // F8 整改:最后一关(第 5 关)主按钮文案=「完 成」(点击返回选关,与 main 路由一致)
   const btnIn = stage(1.55, 1.85);
@@ -1833,6 +2176,7 @@ const resultAnim = { t: 0, confetti: [], rolls: {} };
 // 按钮可点时刻=时间轴完整终态(F4 整改:末按钮 1.55+2×0.08+0.30=2.01s 全部入场完成;
 // 跳过直达此刻,与「完整终态」同帧,不再有 1.85s 半程态)
 const RESULT_READY_T = 2.01;
+const CONFETTI_COLORS = [GEM_SRC.fire, GEM_SRC.water, GEM_SRC.wood, GEM_SRC.metal, GEM_SRC.earth, '#f5c31c']; // BEAUTIFY -03 B6:静态色表(不再每帧建数组)
 export function resultRestart() { resultAnim.t = 0; resultAnim.confetti = []; resultAnim.rolls = {}; }
 export function resultSkip() { resultAnim.t = Math.max(resultAnim.t, RESULT_READY_T); }
 export function resultReady() { return resultAnim.t >= RESULT_READY_T; }
@@ -1871,7 +2215,7 @@ function drawSettingsPanel(ctx, hud) {
   const fxOn = hud.fxEnabled ? hud.fxEnabled() : true;
   drawBtn(ctx, UI.settings.bgmBtn, `音乐:${bgmOn ? '开' : '关'}`, 'ghost', 26);
   drawBtn(ctx, UI.settings.sfxBtn, `音效:${sfxOn ? '开' : '关'}`, 'ghost', 26);
-  drawBtn(ctx, UI.settings.fxBtn, `消除动效:${fxOn ? '开' : '关'}`, 'ghost', 26);
+  drawBtn(ctx, UI.settings.fxBtn, `动效:${fxOn ? '开' : '关'}`, 'ghost', 26); // BEAUTIFY-01 F4:与暂停面板同名称(同一开关)
   drawBtn(ctx, UI.settings.closeBtn, '关 闭', 'primary', 24);
 }
 
