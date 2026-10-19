@@ -302,12 +302,24 @@ ws.onclose = () => { for (const { rej } of pending.values()) rej(new Error('CDP 
     ok(alphaOk, `atlas 帧数据非全透明(全量帧 alpha 占比;${frameAlpha ? alphaDetail : '索引不可读'})`);
 
     // 负例 a:透明敌帧等价路径(敌移出时实时采=背景 vs 基线同坐标)→ 差分≈0 应 FAIL
+    // (UIV2 -06 F3 整改:采样无效[空/none]时记 FAIL,不得因取反判 null 恒真而记 PASS;
+    //  有效采样须先断言非空,再记录差分率/兜底色比例。alpha 全帧检查耗时可能跨越敌人存活期,
+    //  采样前重建敌人存活态——否则 PIX_FN 返回 {none:true,'no enemy'},负例从未真正执行)
+    const reArm = await ev(`(() => { const w = window.__ssww; if (!w || !w.battle) return -1;
+      const b = w.battle; b.phase = 'FIGHTING';
+      b.enemies.forEach(e => { e.alive = true; e.deathT = 0; });
+      return b.enemies.filter(e => e.alive).length; })()`);
+    await sleep(600);
     const negBg = await ev(`(${PIX_FN})('transparent')`);
-    ok(!passPix(negBg), `透明敌帧负例自检(真实判定路径:实时画布 vs 基线同坐标,应 FAIL;差分 ${(negBg && !negBg.none ? (negBg.diffRatio * 100).toFixed(0) : '?')}%)`);
+    const negBgValid = !!negBg && !negBg.none && typeof negBg.diffRatio === 'number';
+    ok(negBgValid && !passPix(negBg) && negBg.diffRatio < 0.1,
+      `透明敌帧负例自检(采样有效[${reArm} 敌存活]且差分<10% 应 FAIL;${negBgValid ? `差分 ${(negBg.diffRatio * 100).toFixed(0)}%` : '采样无效(' + (negBg && negBg.why || '空') + ')→FAIL'})`);
 
     // 负例 b:背景基线上叠兜底绿椭圆(离屏=putImageData(基线)+椭圆,参照=基线同坐标)→ 兜底绿≈1 应 FAIL
     const negEllipse = await ev(`(${PIX_FN})('ellipse')`);
-    ok(!passPix(negEllipse), `兜底椭圆负例自检(基线+叠 #5fae5f 椭圆 vs 基线同坐标,应 FAIL;兜底绿 ${(negEllipse && !negEllipse.none ? (negEllipse.ellipseRatio * 100).toFixed(0) : '?')}%)`);
+    const negElValid = !!negEllipse && !negEllipse.none && typeof negEllipse.ellipseRatio === 'number';
+    ok(negElValid && !passPix(negEllipse) && negEllipse.ellipseRatio > 0.6,
+      `兜底椭圆负例自检(采样有效且兜底绿>60% 应 FAIL;${negElValid ? `兜底绿 ${(negEllipse.ellipseRatio * 100).toFixed(0)}%` : '采样无效(' + (negEllipse && negEllipse.why || '空') + ')→FAIL'})`);
   }
 } catch (e) {
   console.log(`FAIL  执行异常(${e.message})`);
