@@ -712,13 +712,13 @@ test('BEAUTIFY F9 释放反馈:带参定位不依赖预热缓存,墙钟 160ms(-0
   // R3:不预热缓存(update 不调),直接按产品顺序 noteCast——首局首帧可亮
   let clock = 1000;
   v._now = () => clock;
-  v.noteCast('fire_bolt', loadout);
-  v.noteCast('water_bolt', loadout);
+  assert.deepEqual(v.noteCast('fire_bolt', loadout), { x: 428, y: 366 });
+  assert.deepEqual(v.noteCast('water_bolt', loadout), { x: 506, y: 366 });
   assert.equal(v.castAt[0], 1000, '槽 0 记录释放时刻(构造后缓存为空也能定位)');
   assert.equal(v.castAt[1], 1000, '同帧双技能两槽均记');
   assert.equal(v.castAt[2], 0, '未释放槽不亮');
   const before = [...v.castAt];
-  v.noteCast('metal_pulse', loadout); // 未装配:忽略不覆盖
+  assert.equal(v.noteCast('metal_pulse', loadout), null);
   assert.deepEqual(v.castAt, before, '未装配技能被忽略');
   // R3:墙钟口径——160ms 内有效、超过即过期(与模拟 dt 封顶解耦)
   const hudStub = { battle: {}, caster: { loadout, skillCds: {} }, fxEnabled: () => true };

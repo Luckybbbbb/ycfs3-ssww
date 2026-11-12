@@ -105,6 +105,8 @@ const CALL_BUB_D = 0.26, CALL_BUB_T = 0.26;        // 气泡弹入延迟/时长
 const CALL_NAME_D = 0.34, CALL_NAME_T = 0.16;      // 技能名砸落延迟/时长
 const CALL_HOLD = 0.50, CALL_EXIT_T = 0.35;        // 定格结束点/退场时长
 const CALL_TOTAL = CALL_HOLD + CALL_EXIT_T;
+const CAST_ARRIVAL = 0.16;
+const CAST_FLIGHT_LIMIT = 8;
 const CALL_CD = 2.0;                               // 喊话冷却:2s 内最多 1 次(需求方 2026-10-18;演出中再触发直接忽略)
 const CALL_W = 720, CALL_H = BATTLE_H;             // 战斗区逻辑尺寸(高度取 parallax 单一定义源)
 const CALL_INK = '#1b1a2e';                        // 技能名描边色
@@ -137,6 +139,7 @@ export function bindCallImages(map) {
 export class FxLayer {
   constructor() {
     this.particles = []; // 棋盘内的合成光点与爆发碎片
+    this.castFlights = [];
     this.floaters = [];  // {x,y,text,t,life,size,color}
     this.combatTexts = []; // v0.3 伤害冒字(上限 64 字符位;M8 A 整条一体运动/暴击,03 文档 6.1)
     this.announces = [];   // M9 连锁播报 [{chain,text,color,t,life}](engine chain_announce 事件驱动)
@@ -164,6 +167,61 @@ export class FxLayer {
         size: 3 + Math.random() * (shards ? 6 : 3), color, shards, angle: a,
       });
     }
+  }
+
+  flyCast(x, y, target, el) {
+    const distance = Math.hypot(target.x - x, target.y - y);
+    if (this.castFlights.length >= CAST_FLIGHT_LIMIT) this.castFlights.shift();
+    this.castFlights.push({
+      x, y, target,
+      bendX: x + (target.x - x) * 0.35,
+      bendY: target.y + Math.min(168, (y - target.y) * 0.45),
+      color: GEM_FLOAT[el] || '#fff1c6',
+      t: 0, travel: Math.min(0.38, 0.17 + distance / 3400),
+    });
+  }
+
+  clearCastFlights() { this.castFlights.length = 0; }
+
+  drawCastFlights(ctx) {
+    if (!this.castFlights.length) return;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const f of this.castFlights) {
+      const p = Math.min(1, f.t / f.travel);
+      const fade = 1 - Math.max(0, f.t - f.travel) / CAST_ARRIVAL;
+      const steps = 8;
+      ctx.beginPath();
+      let x, y;
+      for (let i = 0; i <= steps; i++) {
+        const k = Math.max(0, p - (1 - i / steps) * 0.16 * fade);
+        const u = 1 - k;
+        x = u * u * f.x + 2 * u * k * f.bendX + k * k * f.target.x;
+        y = u * u * f.y + 2 * u * k * f.bendY + k * k * f.target.y;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.globalAlpha = 0.26 * fade;
+      ctx.strokeStyle = '#2e2520';
+      ctx.lineWidth = 16;
+      ctx.stroke();
+      ctx.globalAlpha = 0.94 * fade;
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 10;
+      ctx.stroke();
+      ctx.strokeStyle = '#fff4ce';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = '#fff9e4';
+      ctx.beginPath(); ctx.arc(x, y, 6.5, 0, Math.PI * 2); ctx.fill();
+      if (p === 1) {
+        ctx.globalAlpha = fade * 0.72;
+        ctx.strokeStyle = f.color;
+        ctx.beginPath(); ctx.arc(x, y, 9 + (1 - fade) * 19, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   // 飞字:x/y 逻辑坐标,text 文本,color CSS 色
@@ -239,6 +297,8 @@ export class FxLayer {
   }
 
   update(dt) {
+    for (const flight of this.castFlights) flight.t += dt;
+    if (this.castFlights.length) this.castFlights = this.castFlights.filter(f => f.t < f.travel + CAST_ARRIVAL);
     if (this.call) { this.call.t += dt; if (this.call.t >= CALL_TOTAL) this.call = null; } // M12
     if (this.callCdT > 0) this.callCdT = Math.max(0, this.callCdT - dt); // M12 喊话 CD 衰减
     for (const p of this.particles) {

@@ -11,6 +11,7 @@ import { BATTLE_ASSET_BAR_H as TOPBAR_H } from './draw_util.js';
 import { ENEMY_NAME, bossType } from '../battle/wave.js';
 
 export const BATTLE_H = 448; // 战斗区高度(与 parallax BATTLE_H 同口径;本地常量避免循环依赖)
+const SLOT_X = 392, SLOT_Y = 330, SLOT_SIZE = 72, SLOT_STEP = 78;
 const ITEM_STATUS_Y = 212, ITEM_STATUS_H = 36;
 const ITEM_STATUS = {
   invincible: { x: 228, w: 116, bg: '#5c431e', edge: '#e7be72', mark: '✦' },
@@ -223,7 +224,9 @@ export class BattleHudView {
   noteCast(skillId, loadout) {
     const slots = Array.isArray(loadout) ? loadout : this._slotsCache || [];
     const i = slots.indexOf(skillId);
-    if (i >= 0) this.castAt[i] = this._now();
+    if (i < 0 || i >= this.castAt.length) return null;
+    this.castAt[i] = this._now();
+    return { x: SLOT_X + i * SLOT_STEP + SLOT_SIZE / 2, y: SLOT_Y + SLOT_SIZE / 2 };
   }
 
   // dt 累加入口(main 主循环逐帧调用);快照字段见 _snapshot
@@ -342,29 +345,16 @@ export class BattleHudView {
     ctx.fillText(slotsLabel, 690, 321);
     ctx.textAlign = 'left';
     combatTextObstacles.push({ left: 700 - labelWidth, right: 700, top: 304, bottom: 327 });
-    if (s.slots.length) {
-      combatTextObstacles.push({ left: 392, right: 392 + (s.slots.length - 1) * 78 + 72, top: 330, bottom: 402 });
-    }
+    if (s.slots.length) combatTextObstacles.push({
+      left: SLOT_X, right: SLOT_X + (s.slots.length - 1) * SLOT_STEP + SLOT_SIZE, top: SLOT_Y, bottom: SLOT_Y + SLOT_SIZE,
+    });
     s.slots.forEach((id, i) => {
-      const x = 392 + i * 78, y = 330;
+      const x = SLOT_X + i * SLOT_STEP, y = SLOT_Y;
       const fr = HUD_IMG.skillFrame;
-      if (fr && fr.complete && fr.naturalWidth) ctx.drawImage(fr, x, y, 72, 72);
-      else { ctx.fillStyle = '#f0e8d8'; _rr(ctx, x, y, 72, 72, 18); ctx.fill(); }
+      if (fr && fr.complete && fr.naturalWidth) ctx.drawImage(fr, x, y, SLOT_SIZE, SLOT_SIZE);
+      else { ctx.fillStyle = '#f0e8d8'; _rr(ctx, x, y, SLOT_SIZE, SLOT_SIZE, 18); ctx.fill(); }
       const img = hud.skillImg ? hud.skillImg(id) : null;
       if (img && img.complete && img.naturalWidth) ctx.drawImage(img, x + 8, y + 8, 56, 56);
-      // BEAUTIFY-01 F9:实际释放槽位短亮 160ms(白亮边);-04 R3:墙钟计时(低帧也兑现 160ms);
-      // -04 R4:draw 读实时开关(hud.fxEnabled()——暂停期主循环不 update,缓存会过期)
-      const gi = s.slots.indexOf(id);
-      const fxOn = hud.fxEnabled ? hud.fxEnabled() : true;
-      const elapsed = this._now() - this.castAt[gi];
-      if (fxOn && gi >= 0 && this.castAt[gi] > 0 && elapsed < 160) {
-        ctx.save();
-        ctx.globalAlpha = 1 - elapsed / 160;
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 4;
-        _rr(ctx, x + 2, y + 2, 68, 68, 16); ctx.stroke();
-        ctx.restore();
-      }
       // CD 扫描(就绪 frac=0;深色扇形自 12 点顺时针)
       // BEAUTIFY-01 F9:扇形半径 38 略超 72px 框(内切圆 36)——裁剪到框内,不再盖到框外
       const cd = s.skillCds[id] || 0;
@@ -372,7 +362,7 @@ export class BattleHudView {
         const meta = hud.skillMeta ? hud.skillMeta(id) : null;
         const frac = meta ? Math.min(1, cd / meta.cd) : 1;
         ctx.save();
-        _rr(ctx, x, y, 72, 72, 18); ctx.clip();
+        _rr(ctx, x, y, SLOT_SIZE, SLOT_SIZE, 18); ctx.clip();
         ctx.fillStyle = 'rgba(40,32,40,.55)';
         ctx.beginPath();
         ctx.moveTo(x + 36, y + 36);
@@ -385,6 +375,16 @@ export class BattleHudView {
         ctx.lineWidth = 2;
         _rr(ctx, x + 2, y + 2, 68, 68, 16);
         ctx.stroke();
+      }
+      // 释放闪光画在冷却扫描之上，保留 160ms 墙钟窗口。
+      const elapsed = this._now() - this.castAt[i];
+      if (hud.fxEnabled?.() !== false && this.castAt[i] > 0 && elapsed < 160) {
+        ctx.save();
+        ctx.globalAlpha = 1 - elapsed / 160;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        _rr(ctx, x + 2, y + 2, 68, 68, 16); ctx.stroke();
+        ctx.restore();
       }
     });
 

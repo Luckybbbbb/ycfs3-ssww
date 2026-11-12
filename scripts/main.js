@@ -160,6 +160,7 @@ function startLevel(L) {
   battle.startLevel(L);
   caster.resetForNewLevel(); // REQ-05:终局清预约/档位/两项累计归零;CD 属局内进度同清
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
+  hud.fx.clearCastFlights();
   parallax.setLevel(battle.level); parallax.bindImages(images); // M13:分关卡背景切换
   hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
   caster.resetTempState(); // F7 续审:CD 加速等道具临时状态不带入新局
@@ -191,6 +192,7 @@ function retryLevel() {
   caster.resetForNewLevel();
   caster.resetTempState();
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
+  hud.fx.clearCastFlights();
   hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
   battle.kills = 0;
   battle.expGained = 0;
@@ -236,7 +238,10 @@ function toggleFx() {
   profile.settings.effects = profile.settings.effects === false; // false→true,其余→false
   engine.fxEnabled = profile.settings.effects;
   parallax.effects = engine.fxEnabled;
-  if (!engine.fxEnabled) hud.battleHud.waveCue = null;
+  if (!engine.fxEnabled) {
+    hud.battleHud.waveCue = null;
+    hud.fx.clearCastFlights();
+  }
   persistProfile();
   showToast(`动效 ${profile.settings.effects ? '开' : '关'}`);
   sfx.item();
@@ -633,7 +638,7 @@ function boot(images) {
         // 渲染层查不到 pending,必须按 tick 的执行记录认领);同一 resKey 重复回写不扩散。
         for (const used of usedList) {
           parallax.triggerPulse();
-          hud.battleHud.noteCast(used.skill.id, caster.loadout); // -04 R3:带当前装配定位(首帧/换装后均准确;墙钟计时)
+          const slot = hud.battleHud.noteCast(used.skill.id, caster.loadout);
           // M12 技能喊话(方案 B「冲击斜切」):非普攻属性弹技能执行即触发纯表现演出(~0.9s,
           // 不阻塞逻辑);背景变体按解锁档位取用(Lv3→1,Lv6→2);震屏走 parallax 可变参数。
           // M12M13-ACCEPT F3:skillCall 返回 false(演出中/CD 期被忽略)时**不震屏**——
@@ -647,6 +652,12 @@ function boot(images) {
           // resRound undefined=预约本帧阶段2新建即执行(未经 pending 回写盖章)→ 视为本轮
           if (used.from === 'elim' && (used.resRound === undefined || used.resRound === engine.roundSeq)) {
             engine.claimBlockFx(used.skill.el, used.skill.id, used.tier, used.resKey);
+            if (engine.fxEnabled && slot) {
+              const origin = engine.clearing.find(cell => engine.blockFx.get(cell.bk)?.resKey === used.resKey);
+              if (origin) {
+                hud.fx.flyCast((origin.cc + 0.5) * CELL, BOARD_Y + (origin.cx + 0.5) * CELL, slot, used.skill.el);
+              }
+            }
           }
         }
         for (const p of caster.pending) {
@@ -675,6 +686,7 @@ function boot(images) {
         // 未消费事件丢弃(终局后不再充能),棋盘未完成轮次快进收口到 IDLE(重试不留旧局残轮)
         caster.resetForNewLevel();
         hud.fx.clearCall(); // M12:旧局喊话演出不残留
+        hud.fx.clearCastFlights();
         caster.resetTempState();
         engine.drainEvents();
         let ffGuard = 0;

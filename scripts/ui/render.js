@@ -851,6 +851,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
   if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx, combatHudBounds);
   ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
+  if (engine.fxEnabled !== false) hud.fx?.drawCastFlights?.(ctx);
   if (waveNotice) hud.battleHud.drawWaveNotice(ctx, waveNotice);
 
   // M9:预输入缓冲预选提示(FALLING 等忙时滑动被记住——两格金色虚线框+「落定执行」微标)

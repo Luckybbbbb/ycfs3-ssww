@@ -67,6 +67,29 @@ function mkHud(engine, { fxLayer = new FxLayer(), caster = null, charge = null }
   };
 }
 
+test('消除出招光迹经过棋盘和战场，在对应槽位收束，关闭动效时隐藏', () => {
+  const engine = mkStage(true);
+  const fx = new FxLayer();
+  const hud = mkHud(engine, { fxLayer: fx });
+  const target = { x: 506, y: 366 };
+  fx.flyCast(315, 898, target, 'water');
+  const [flight] = fx.castFlights;
+  fx.update(flight.travel / 2);
+  const mid = mkCtx();
+  render(mid.ctx, engine, hud);
+  assert.ok(mid.rec.arcs.some(arc => arc.radius === 6.5 && arc.x > 315 && arc.x < target.x && arc.y > 448 && arc.y < 898));
+  fx.update(flight.travel / 2 + 0.04);
+  const arrived = mkCtx();
+  render(arrived.ctx, engine, hud);
+  assert.ok(arrived.rec.arcs.some(arc => arc.radius === 6.5 && arc.x === target.x && arc.y === target.y));
+  engine.fxEnabled = false;
+  const off = mkCtx();
+  render(off.ctx, engine, hud);
+  assert.ok(!off.rec.arcs.some(arc => arc.radius === 6.5 && arc.x === target.x && arc.y === target.y));
+  fx.update(0.16);
+  assert.equal(fx.castFlights.length, 0);
+});
+
 test('F8 render 接线:段②合成光圈与五行色粒子 ≤8 在消除质心触发', () => {
   const e = mkStage(true);
   const fx = new FxLayer();
