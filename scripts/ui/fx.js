@@ -4,7 +4,7 @@
 // 数值: 粒子 ≤12/次、上限 200(00 文档 FR-1.5 粒子上限口径),飞字 0.9s 上浮 40px
 
 import { BOARD_W, BOARD_H, BOARD_Y } from '../board/grid.js';
-import { BATTLE_ASSET_BAR_H, GEM_COLORS as GEM_FLOAT } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
+import { BATTLE_ASSET_BAR_H, GEM_COLORS as GEM_FLOAT, roundRect } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { BATTLE_H } from '../battle/parallax.js'; // 战斗区高度单一来源(喊话演出以战斗区为舞台)
 import { ImpactEffects } from './combat_fx.js';
 import { ItemEffects } from './item_fx.js';
@@ -43,6 +43,7 @@ const FT_GRAV = 90;        // 微重力(px/s²,血滴下垂感)
 const FT_FADE_FROM = 0.7;  // 生命进度 ≥0.7 开始淡出(末 30%)
 const FT_V0_MULT = 4;      // 初速=speed×4(imp0 200/imp1 360/imp2 520 px/s)
 const FT_LAYOUT_GAP = 4;
+const FT_LAYOUT_SPEED = 260;
 const CRIT_COLOR = '#ffd700';   // 暴击金(非五行语义,与免伤同金)
 const CRIT_SIZE_MULT = 1.4;     // 暴击字号放大
 const CRIT_PEAK = 1.38;         // 暴击 pop 过冲更强
@@ -70,7 +71,7 @@ function closestFreeCoordinate(blocked, desired, min, max, maxShift) {
 // ===== M9 连锁播报(需求方 2026-10-17:王者「N连XX」屏幕定版播报)=====
 // 文案=王者 2017 官方播报(二连击破/三连决胜/四连超凡/五连绝世),≥6 延伸「连锁狂潮 ×N」;
 // 动效:0~0.12s 左滑入+easeOutBack 定版(0.3→1.15→1.0)→0.62s 停留(呼吸)→0.9s 上浮淡出;
-// 光带 0~0.25s 扫过;chain≥4 附棋盘微震(boardShakeT)。纯 Canvas 矢量,无外部素材。
+// 光带在 0~0.25s 扫过，棋盘保持固定。
 const ANNOUNCE_TABLE = [
   { min: 6, text: (c) => `连锁狂潮 ×${c}`, color: '#e05a5a' },
   { min: 5, text: () => '五连绝世', color: '#ffd700' },
@@ -78,10 +79,11 @@ const ANNOUNCE_TABLE = [
   { min: 3, text: () => '三连决胜', color: '#b06fd8' },
   { min: 2, text: () => '二连击破', color: '#4aa8cc' },
 ];
-const AN_LIFE = 0.9, AN_IN = 0.12, AN_HOLD = 0.62, AN_BAND = 0.25, AN_SHAKE = 0.3;
+const AN_LIFE = 0.9, AN_IN = 0.12, AN_HOLD = 0.62, AN_BAND = 0.25;
 
-// easeOutBack 弹跳缓动(段 pop 过冲回落;REQ-M7-01 F3 沿用);c1 可调过冲幅度(M12 立绘/气泡用减幅档)
-function easeOutBack(x, c1 = 1.70158) {
+// easeOutBack 弹跳缓动(段 pop 过冲回落;REQ-M7-01 F3 沿用)
+function easeOutBack(x) {
+  const c1 = 1.70158;
   const c3 = c1 + 1;
   return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
 }
@@ -94,42 +96,27 @@ function _mkCanvas(w, h) {
   return cv;
 }
 
-// ===== M12 技能喊话演出(方案 B「冲击斜切」,总长 ~0.9s,纯表现不阻塞逻辑) =====
-// 时间轴(秒,样板 mockup/skill-call-mockups.html 冻结口径):
-//   0.03 羽化遮罩自中心向左右展开(0.30s,两侧 8% 渐变带) → 0.10 立绘带倾角砸入(0.28s,过冲回弹)
-//   0.05 技能背景图 1.5→1 缩放淡入(0.50s,60% 处 0.97 回弹) → 0.12 闪白+冲击线(震屏由 parallax 承担)
-//   0.26 气泡弹入(0.26s) → 0.34 技能名砸落(0.16s) → 0.50 定格结束退场(0.35s:立绘回滑/气泡缩没/背景放大淡出)
-const CALL_CUT_T = 0.30, CALL_CUT_D = 0.03;        // 遮罩展开时长/延迟
-const CALL_BG_T = 0.50, CALL_BG_D = 0.05;          // 背景缩放淡入时长/延迟
-const CALL_FLASH_D = 0.12, CALL_FLASH_T = 0.25;    // 闪白延迟/时长(峰值 0.55 @30%)
-const CALL_POR_D = 0.10, CALL_POR_T = 0.28;        // 立绘砸入延迟/时长
-const CALL_LINES_D = 0.12, CALL_LINES_T = 0.50;    // 冲击线延迟/时长
-const CALL_BUB_D = 0.26, CALL_BUB_T = 0.26;        // 气泡弹入延迟/时长
-const CALL_NAME_D = 0.34, CALL_NAME_T = 0.16;      // 技能名砸落延迟/时长
+// 进阶技能名牌叠在战场上方，背景色仅在角色后方短暂浮现。
+const CALL_CUT_T = 0.30, CALL_CUT_D = 0.03;
+const CALL_BG_T = 0.50, CALL_BG_D = 0.05;
 const CALL_HOLD = 0.50, CALL_EXIT_T = 0.35;        // 定格结束点/退场时长
 const CALL_TOTAL = CALL_HOLD + CALL_EXIT_T;
 const CAST_ARRIVAL = 0.16;
 const CAST_FLIGHT_LIMIT = 8;
 const CALL_CD = 2.0;                               // 喊话冷却:2s 内最多 1 次(需求方 2026-10-18;演出中再触发直接忽略)
 const CALL_W = 720, CALL_H = BATTLE_H;             // 战斗区逻辑尺寸(高度取 parallax 单一定义源)
-const CALL_INK = '#1b1a2e';                        // 技能名描边色
-// 立绘/气泡几何(样板 420×280 战斗区 → 720×448 等比换算)
-const CALL_POR_H = Math.round(CALL_H * 1.08);      // 立绘高 = 战斗区高×108%,底边贴战斗区下缘
-const CALL_BUB = { x: 296, y: 54, w: 440 };        // 气泡左上/宽(高按图 3/2 比例)
+const CALL_PLATE = { left: 236, top: 163, right: 484, bottom: 207 };
 const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
-const easeOutQuart = (x) => 1 - Math.pow(1 - x, 4);
-const easeInCubic = (x) => x * x * x;
 
 // M12 贴图表(初始全空;生产唯一填充入口=bindCallImages(main 预载成功后调用)——
 // M11-03 F1 同口径:顶层零加载,启动期图片加载只发生在 preload 内)
-export const CALL_IMG = { hero: null, bubble: null, bg: {} };
+export const CALL_IMG = { hero: null, bg: {} };
 export function bindCallImages(map) {
   if (!map || typeof map.get !== 'function') return 0;
   let n = 0;
   CALL_IMG.hero = map.get('call:hero') || null;
-  CALL_IMG.bubble = map.get('call:bubble') || null;
   if (CALL_IMG.hero) n++;
-  if (CALL_IMG.bubble) n++;
+  CALL_IMG.bg = {};
   for (const el of ['fire', 'water', 'wood', 'metal', 'earth']) {
     for (const v of [1, 2]) {
       const img = map.get(`call:bg:${el}:${v}`);
@@ -147,13 +134,12 @@ export class FxLayer {
     this.itemEffects = new ItemEffects();
     this.floaters = [];  // {x,y,text,t,life,size,color}
     this.combatTexts = []; // v0.3 伤害冒字(上限 64 字符位;M8 A 整条一体运动/暴击,03 文档 6.1)
+    this.combatTextLayout = new WeakMap();
     this.announces = [];   // M9 连锁播报 [{chain,text,color,t,life}](engine chain_announce 事件驱动)
-    this.boardShakeT = 0;  // M9:播报棋盘微震计时(chain≥4 触发)
     this.call = null;      // M12 技能喊话 {name,el,variant,t}(2s CD 内最多 1 次;CD 期/演出中再触发忽略)
     this.callCdT = 0;      // M12 喊话冷却剩余(触发即计时,含演出期)
     this._bgWork = null;   // 技能背景羽化离屏画布(惰性建,720×448)
     this._bgWorkCtx = null; // 其 2D context(_ensureBgWork 返回值)
-    this._linesTile = null; // 冲击线预渲染瓦片(惰性建,静态辐条+径向渐隐)
   }
 
   // 消除粒子爆裂:cx/cy 格中心(逻辑坐标),el 元素名,count 消除数(越多越密);
@@ -283,7 +269,7 @@ export class FxLayer {
     });
   }
 
-  // M9 连锁播报(main 转发 engine chain_announce 事件):文案/颜色按表;chain≥4 附微震;
+  // M9 连锁播报由 main 转发，文案和颜色按表。
   // 替换式(M9-F5):新播报入队时把未完成旧播报直接推入淡出段(t≥AN_HOLD)——高连锁下
   // 连续播报不相互静止叠加(修复前最多 3 条共用中央位互相覆盖)
   chainAnnounce(chain) {
@@ -292,14 +278,6 @@ export class FxLayer {
     for (const old of this.announces) old.t = Math.max(old.t, AN_HOLD + (AN_LIFE - AN_HOLD) * 0.5); // 推入淡出段中点(alpha≈0.5,0.14s 内消亡——立即让位不再全亮叠加)
     this.announces.push({ chain, text: row.text(chain), color: row.color, t: 0, life: AN_LIFE });
     this.announces = this.announces.slice(-3); // 防堆积(淡出尾最多 3 条)
-    if (chain >= 4) this.boardShakeT = AN_SHAKE;
-  }
-
-  // 棋盘微震偏移(render 每帧读取;±2px 衰减,chain≥4 播报附带)
-  boardShake() {
-    if (this.boardShakeT <= 0) return { dx: 0, dy: 0 };
-    const a = (this.boardShakeT / AN_SHAKE) * 2;
-    return { dx: Math.sin(this.boardShakeT * 70) * a, dy: Math.cos(this.boardShakeT * 53) * a * 0.6 };
   }
 
   update(dt) {
@@ -329,7 +307,6 @@ export class FxLayer {
     this.combatTexts = this.combatTexts.filter(c => c.t < c.life);
     for (const an of this.announces) an.t += dt;
     this.announces = this.announces.filter(an => an.t < an.life);
-    if (this.boardShakeT > 0) this.boardShakeT = Math.max(0, this.boardShakeT - dt);
   }
 
   // pop→回落→恒定 scale(M8:过冲后回落 1.0 保持基础字号可读,不再缩小消失)
@@ -387,7 +364,11 @@ export class FxLayer {
     ctx.lineJoin = 'round'; // 描边圆角避免尖刺
     ctx.textBaseline = 'alphabetic';
     const occupied = [...combatHudBounds];
-    const ordered = this.combatTexts.slice().sort((a, b) => b.imp - a.imp || Number(b.crit) - Number(a.crit) || b.seq - a.seq);
+    const ordered = this.combatTexts.slice().sort((a, b) => {
+      const aPlaced = this.combatTextLayout.has(a), bPlaced = this.combatTextLayout.has(b);
+      if (aPlaced || bPlaced) return aPlaced === bPlaced ? a.seq - b.seq : Number(bPlaced) - Number(aPlaced);
+      return b.imp - a.imp || Number(b.crit) - Number(a.crit) || b.seq - a.seq;
+    });
     for (const c of ordered) {
       const p = c.t / c.life;
       const scale = this._scale(c);
@@ -408,8 +389,12 @@ export class FxLayer {
       const descent = Math.max(font * 0.18, metrics.actualBoundingBoxDescent ?? 0) + edge / 2;
       const minX = leftPad + 6, maxX = BOARD_W - rightPad - 6;
       const minY = BATTLE_ASSET_BAR_H + 6 + ascent, maxY = BATTLE_H - 42 - descent;
-      let x = Math.max(minX, Math.min(maxX, c.x));
-      let y = Math.max(minY, Math.min(maxY, c.y - (c.imp === 2 ? 12 : 0)));
+      const baseX = Math.max(minX, Math.min(maxX, c.x));
+      const baseY = Math.max(minY, Math.min(maxY, c.y - (c.imp === 2 ? 12 : 0)));
+      const last = this.combatTextLayout.get(c);
+      const projectedX = Math.max(minX, Math.min(maxX, baseX + (last?.dx ?? 0)));
+      const projectedY = Math.max(minY, Math.min(maxY, baseY + (last?.dy ?? 0)));
+      let x = projectedX, y = projectedY;
       const vertical = [];
       const horizontal = [];
       for (const box of occupied) {
@@ -425,10 +410,23 @@ export class FxLayer {
         y = freeY;
       } else {
         const freeX = closestFreeCoordinate(horizontal, x, minX, maxX, 144);
-        if (freeX === null) continue;
-        x = freeX;
+        if (freeX !== null) x = freeX;
+        else if (!last) continue;
       }
-      occupied.push({ left: x - leftPad, right: x + rightPad, top: y - ascent, bottom: y + descent });
+      if (last) {
+        const distance = Math.hypot(x - projectedX, y - projectedY);
+        const maxStep = FT_LAYOUT_SPEED * Math.max(0, c.t - last.t);
+        if (distance > maxStep) {
+          x = projectedX + (x - projectedX) * maxStep / distance;
+          y = projectedY + (y - projectedY) * maxStep / distance;
+        }
+      }
+      this.combatTextLayout.set(c, { dx: x - baseX, dy: y - baseY, t: c.t });
+      const bounds = { left: x - leftPad, right: x + rightPad, top: y - ascent, bottom: y + descent };
+      // 避让过程中只推进位置，等整条文字移出遮挡区再绘制。
+      if (occupied.some(box => bounds.left < box.right && bounds.right > box.left &&
+        bounds.top < box.bottom && bounds.bottom > box.top)) continue;
+      occupied.push(bounds);
       ctx.globalAlpha = p < FT_FADE_FROM ? 1 : Math.max(0, 1 - (p - FT_FADE_FROM) / (1 - FT_FADE_FROM));
       if (hasIcon) ctx.drawImage(img, x - leftPad + edge / 2, y - font * 0.82, iconSize, iconSize);
       const textX = x + lead / 2;
@@ -488,7 +486,7 @@ export class FxLayer {
       ctx.restore();
     }
     ctx.globalAlpha = 1;
-    this._drawCallTop(ctx); // M12 技能喊话顶层(立绘/气泡/闪白/冲击线;背景层经 drawCallBg 在战场内绘制)
+    this._drawCallTop(ctx);
   }
 
   // ===== M12 技能喊话(方案 B「冲击斜切」) =====
@@ -507,7 +505,7 @@ export class FxLayer {
   // 终局/重开清场(REQ-M6-05 同口径:表现层不残留旧局演出);CD 同清(与 caster.resetTempState 对齐)
   clearCall() { this.call = null; this.callCdT = 0; }
 
-  // 技能背景层:render 在战场变换内、敌人绘制之前调用(z 序:场景 < 技能背景 < 敌人 < 立绘/气泡)。
+  // 技能背景层:render 在战场变换内、敌人绘制之前调用(z 序:场景 < 技能背景 < 敌人 < 技能名牌)。
   // 羽化遮罩自中心向左右展开(替代 clip-path 硬边):离屏画布合成 destination-in 横向渐变。
   drawCallBg(ctx) {
     const c = this.call;
@@ -549,98 +547,46 @@ export class FxLayer {
     g.fillRect(0, 0, CALL_W, CALL_H);
     g.globalCompositeOperation = 'source-over';
     ctx.save();
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha *= alpha * 0.24;
     ctx.drawImage(this._bgWork, 0, 0);
     ctx.restore();
   }
 
-  // 顶层:闪白/冲击线/立绘砸入/气泡+技能名(裁剪到战斗区,fx.draw 末尾调用)
+  callBounds() {
+    return this.call ? CALL_PLATE : null;
+  }
+
   _drawCallTop(ctx) {
     const c = this.call;
     if (!c) return;
-    const t = c.t;
+    const { left, top, right, bottom } = CALL_PLATE;
+    const alpha = c.t < CALL_HOLD ? Math.min(1, c.t / 0.09)
+      : Math.max(0, 1 - (c.t - CALL_HOLD) / CALL_EXIT_T);
+    const color = GEM_FLOAT[c.el] || '#e6c17d';
+    const hero = CALL_IMG.hero;
     ctx.save();
-    ctx.beginPath(); ctx.rect(0, 0, CALL_W, CALL_H); ctx.clip(); // 演出只作用于战斗区(样板 call-stage inset)
-    // 冲击线(预渲染辐条瓦片:缩放 0.6→1.25 + 旋转 0→6°,先升后降透明度)
-    const lp = Math.min(1, Math.max(0, (t - CALL_LINES_D) / CALL_LINES_T));
-    const tile = lp > 0 && lp < 1 ? this._ensureLinesTile() : this._linesTile;
-    if (lp > 0 && lp < 1 && tile) {
-      const la = lp < 0.3 ? 0.85 * (lp / 0.3) : 0.85 * (1 - (lp - 0.3) / 0.7);
+    ctx.globalAlpha *= alpha;
+    roundRect(ctx, left, top, right - left, bottom - top, 20);
+    ctx.fillStyle = 'rgba(21, 19, 28, .91)';
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    if (hero) {
       ctx.save();
-      ctx.globalAlpha = la;
-      ctx.translate(CALL_W / 2, CALL_H / 2);
-      ctx.rotate(lp * Math.PI / 30);
-      const ls = 0.6 + 0.65 * lp;
-      ctx.scale(ls, ls);
-      ctx.drawImage(tile, -CALL_W / 2, -CALL_H / 2);
+      roundRect(ctx, left + 8, top + 5, 34, 34, 16);
+      ctx.clip();
+      ctx.drawImage(hero, 160, 40, 320, 320, left + 8, top + 5, 34, 34);
       ctx.restore();
     }
-    // 立绘:左侧带倾角砸入(-6°→+2°@60%→-3° 定版,过冲回弹),退场回滑
-    const hero = CALL_IMG.hero;
-    if (hero) {
-      const porW = CALL_POR_H * hero.width / hero.height;
-      let px = 0, rot = -3 * Math.PI / 180;
-      const pp = Math.min(1, Math.max(0, (t - CALL_POR_D) / CALL_POR_T));
-      const eb = easeOutBack(pp, 0.9); // 减幅过冲(~1.05,样板 cubic-bezier(.2,1.4,.3,1))
-      px = -porW * (1 - eb);
-      rot = (pp < 0.6 ? -6 + 8 * (pp / 0.6) : 2 - 5 * ((pp - 0.6) / 0.4)) * Math.PI / 180;
-      if (t >= CALL_HOLD) px = -porW * easeInCubic(Math.min(1, (t - CALL_HOLD) / 0.30));
-      if (pp > 0 || t >= CALL_HOLD) {
-        ctx.save();
-        ctx.translate(px, CALL_H);
-        ctx.rotate(rot);
-        ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 18;
-        ctx.drawImage(hero, 0, -CALL_POR_H, porW, CALL_POR_H);
-        ctx.restore();
-      }
-    }
-    // 气泡 + 技能名:弹入(squash 0.3→1 过冲)→ 名字砸落(1.35→1);退场缩没
-    const bub = CALL_IMG.bubble;
-    if (bub) {
-      const bp = Math.min(1, Math.max(0, (t - CALL_BUB_D) / CALL_BUB_T));
-      if (bp > 0 || t >= CALL_HOLD) {
-        const bubH = CALL_BUB.w * bub.height / bub.width;
-        let scale = 0.3 + 0.7 * easeOutBack(bp, 1.2), alpha = Math.min(1, bp * 3);
-        if (t >= CALL_HOLD) {
-          const ep = Math.min(1, (t - CALL_HOLD) / 0.25);
-          scale *= 1 - 0.15 * ep; alpha *= 1 - ep;
-        }
-        const ox = CALL_BUB.x + 0.08 * CALL_BUB.w, oy = CALL_BUB.y + 0.70 * bubH; // 变换原点 8%/70%(样板)
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.translate(ox, oy); ctx.scale(scale, scale); ctx.translate(-ox, -oy);
-        ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 6;
-        ctx.drawImage(bub, CALL_BUB.x, CALL_BUB.y, CALL_BUB.w, bubH);
-        ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-        // 技能名:加粗+描边(样板 name 样式);名字砸落独立于气泡缩放
-        if (c.name) {
-          const np = Math.min(1, Math.max(0, (t - CALL_NAME_D) / CALL_NAME_T));
-          const ns = 1.35 - 0.35 * easeOutCubic(np);
-          const nx = CALL_BUB.x + CALL_BUB.w * 0.48, ny = CALL_BUB.y + bubH * 0.42;
-          ctx.translate(nx, ny); ctx.scale(ns, ns);
-          ctx.font = "900 42px 'Nunito','Noto Sans SC',sans-serif";
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.lineJoin = 'round';
-          ctx.strokeStyle = CALL_INK; ctx.lineWidth = 8;
-          ctx.strokeText(c.name, 0, 0);
-          ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 6;
-          ctx.fillStyle = '#fff';
-          ctx.fillText(c.name, 0, 0);
-        }
-        ctx.restore();
-      }
-    }
-    // 闪白(压轴:0.55 峰值 @30%,样板 B-flash; mix-screen 近似为普通叠加)
-    const fp0 = t - CALL_FLASH_D;
-    if (fp0 > 0 && fp0 < CALL_FLASH_T) {
-      const fp = fp0 / CALL_FLASH_T;
-      ctx.fillStyle = `rgba(255,255,255,${0.55 * (fp < 0.3 ? fp / 0.3 : 1 - (fp - 0.3) / 0.7)})`;
-      ctx.fillRect(0, 0, CALL_W, CALL_H);
-    }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff3d8';
+    ctx.font = "bold 28px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.fillText(c.name, (left + right) / 2 + (hero ? 14 : 0), (top + bottom) / 2, 180);
     ctx.restore();
   }
 
-  // 羽化离屏画布(惰性建;返回 2D context,画布本体存 _bgWork 供 drawImage;无 DOM 环境返回 null 兜底)
   _ensureBgWork() {
     if (!this._bgWork) {
       this._bgWork = _mkCanvas(CALL_W, CALL_H);
@@ -648,36 +594,4 @@ export class FxLayer {
     }
     return this._bgWorkCtx;
   }
-
-  // 冲击线预渲染瓦片(48 根辐条 + 径向渐隐;惰性建,静态一次合成)
-  _ensureLinesTile() {
-    if (this._linesTile) return this._linesTile;
-    const cv = _mkCanvas(CALL_W, CALL_H);
-    if (!cv) return null;
-    const g = cv.getContext('2d');
-    g.translate(CALL_W / 2, CALL_H / 2);
-    g.fillStyle = 'rgba(255,255,255,.55)';
-    for (let i = 0; i < 48; i++) {
-      g.save();
-      g.rotate(i * Math.PI / 24);
-      g.beginPath();
-      g.moveTo(130, -1.5);
-      g.lineTo(400, -5);
-      g.lineTo(400, 5);
-      g.lineTo(130, 1.5);
-      g.closePath();
-      g.fill();
-      g.restore();
-    }
-    g.globalCompositeOperation = 'destination-in';
-    const rg = g.createRadialGradient(0, 0, 106, 0, 0, 340); // 28%→88% 径向渐隐(样板 mask 口径)
-    rg.addColorStop(0, 'rgba(0,0,0,0)');
-    rg.addColorStop(0.5, 'rgba(0,0,0,1)');
-    rg.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = rg;
-    g.fillRect(-CALL_W / 2, -CALL_H / 2, CALL_W, CALL_H);
-    this._linesTile = cv;
-    return this._linesTile;
-  }
-
 }

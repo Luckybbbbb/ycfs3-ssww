@@ -16,6 +16,8 @@ import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
 import { drawElementBolt } from './combat_fx.js';
+import { drawSkillAura, drawSkillBolt, drawSkillRoots, drawSkillShield, drawSkillZone } from './skill_effects.js';
+import { drawHeroMotion, heroMotionFrame } from './hero_motion.js';
 import { drawBoardGuide, drawBoardHint } from './board_guide.js';
 import { UI_ICON_NAMES } from '../assets/manifest.js';
 
@@ -561,8 +563,11 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   if (inBattle) {
   const enemyStatusBounds = [];
   // ===== 战斗区(FR-1.5 视差三层;screenshake/zoom pulse 变换) =====
-  const tf = px ? px.transform() : { ox: 0, oy: 0, scale: 1 };
+  const scene = px ? px.transform() : { ox: 0, oy: 0, scale: 1 };
+  const kick = _fxOn && hud.fx?.impacts?.cameraOffset();
+  const tf = { ox: scene.ox + (kick?.ox ?? 0), oy: scene.oy + (kick?.oy ?? 0), scale: scene.scale };
   ctx.save();
+  ctx.beginPath(); ctx.rect(0, BATTLE_ASSET_BAR_H, BOARD_W, BATTLE_H - BATTLE_ASSET_BAR_H); ctx.clip();
   ctx.translate(360 + tf.ox, 224 + tf.oy);
   ctx.scale(tf.scale, tf.scale);
   ctx.translate(-360, -224);
@@ -573,6 +578,20 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
 
   if (battle) {
     const waveCue = hud.battleHud?.activeWaveCue?.(hud);
+    const page = hud.skillFxPage;
+    for (const z of battle.zones || []) {
+      const animated = _fxOn && drawSkillZone(ctx, page, z, battle.clock);
+      ctx.fillStyle = z.kind === 'dot' ? 'rgba(255,120,50,.18)' : 'rgba(120,190,255,.18)';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
+      if (!animated) ctx.fill();
+      ctx.strokeStyle = z.kind === 'dot' ? 'rgba(255,120,50,.5)' : 'rgba(120,190,255,.5)';
+      ctx.lineWidth = 2; ctx.stroke();
+    }
+    if (battle.aura && !(_fxOn && drawSkillAura(ctx, page, PLAYER_X, 402, battle.clock))) {
+      ctx.strokeStyle = 'rgba(90,220,130,.5)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(PLAYER_X, 300, 110, 0, Math.PI * 2); ctx.stroke();
+    }
     // ===== 敌人(六类序列帧,尺寸=贴图×scale;死亡淡出放大) =====
     for (const e of battle.enemies) {
       const t = ENEMY_TYPES[e.name] || ENEMY_TYPES.slime;
@@ -584,6 +603,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
         continue;
       }
       if (e.isBoss) drawBossGroundMark(ctx, e, t, battle.clock, _fxOn, waveCue?.kind === 'boss' ? waveCue.t : undefined);
+      if (_fxOn && e.bindT > 0) drawSkillRoots(ctx, page, e, e.y + t.srcH * t.scale * 0.39, battle.clock);
       drawEnemy(ctx, e, t, 1);
       // 血条(Boss 另有 HUD 大血条,此处保留小血条)——M13 双血条:主条立即扣+淡红残影
       // 二段扣除(punch 0.4s→恒速 30%/s→1.2s 兜底,与 battle_hud 同一状态机;关动效直接同步)。
@@ -606,38 +626,55 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
     }
-    for (const b of battle.bolts) drawElementBolt(ctx, b, _fxOn);
-    // ===== M4 行为视觉:区域(dot=灼烧橙 / field=寒霜蓝)+ 生机光环(木绿圈) =====
-    for (const z of battle.zones || []) {
-      ctx.fillStyle = z.kind === 'dot' ? 'rgba(255,120,50,.18)' : 'rgba(120,190,255,.18)';
-      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = z.kind === 'dot' ? 'rgba(255,120,50,.5)' : 'rgba(120,190,255,.5)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+    for (const b of battle.bolts) {
+      if (!(_fxOn && drawSkillBolt(ctx, page, b))) drawElementBolt(ctx, b, _fxOn);
     }
-    if (battle.aura) {
-      ctx.strokeStyle = 'rgba(90,220,130,.5)';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(PLAYER_X, 300, 110, 0, Math.PI * 2); ctx.stroke();
-    }
-    if (_fxOn) hud.fx?.impacts?.draw(ctx);
+    if (_fxOn) hud.fx?.impacts?.draw(ctx, page);
     if (battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawShield(ctx, battle.invincibleT, _fxOn);
-    // ===== 主角:战斗待机=idle 8fps 循环;释放技能时 walk_start 3 帧单次(攻击动画) =====
+    if (_fxOn && battle.phase === 'FIGHTING' && battle.shield > 0 && !(battle.invincibleT > 0)) {
+      drawSkillShield(ctx, page, PLAYER_X, 306, battle.clock);
+    }
+    // 主角战斗图集包含待机、施法和受击，旧素材供演示入口回退。
+    const contact = _fxOn && hud.fx?.impacts?.heroHit;
+    const hold = contact && contact.t < 0.105 ? contact.t : 0;
+    const attack = battle.playerAttackT > 0;
+    const heroAtlas = hud.heroMotion?.();
+    const hasMotion = heroAtlas?.complete && heroAtlas.naturalWidth >= 1024 && heroAtlas.naturalHeight >= 768;
+    const frame = heroMotionFrame(battle.clock ?? worldT, battle.playerAttackT, contact ? contact.t : null);
     let pf;
-    if (battle.playerAttackT > 0) {
-      const p = 1 - Math.max(0, battle.playerAttackT) / 0.18;
+    if (attack) {
+      const p = 1 - Math.min(0.18, battle.playerAttackT + hold) / 0.18;
       pf = PLAYER_ATK_FRAMES[Math.min(2, Math.floor(p * 3))];
     } else {
-      pf = seqFrame(PLAYER_FRAMES, worldT, 8);
+      pf = seqFrame(PLAYER_FRAMES, Math.max(0, (battle.clock ?? worldT) - hold), 8);
     }
-    if (pf && pf.complete && pf.naturalWidth > 0) {
+    ctx.save();
+    if (contact) {
+      const recoil = 7 * Math.exp(-contact.t * 13) * Math.cos(contact.t * 82);
+      ctx.translate(Math.cos(contact.angle) * recoil, Math.sin(contact.angle) * recoil * 0.45);
+    }
+    if (hasMotion) {
+      drawHeroMotion(ctx, heroAtlas, frame);
+      if (contact && contact.t < 0.086) {
+        ctx.globalAlpha *= 0.76 * (1 - contact.t / 0.086);
+        ctx.filter = 'brightness(0) invert(1)';
+        drawHeroMotion(ctx, heroAtlas, frame);
+      }
+    } else if (pf && pf.complete && pf.naturalWidth > 0) {
       // M11-05:待机 idle 帧水平镜像(素材面左);攻击帧 walk_start 朝向正确,保持原样不翻
-      if (battle.playerAttackT > 0) ctx.drawImage(pf, PLAYER_X - 90, 448 - 320, 180, 320);
+      if (attack) ctx.drawImage(pf, PLAYER_X - 90, 448 - 320, 180, 320);
       else drawFlipH(ctx, pf, PLAYER_X - 90, 448 - 320, 180, 320);
+      if (contact && contact.t < 0.086) {
+        ctx.globalAlpha *= 0.76 * (1 - contact.t / 0.086);
+        ctx.filter = 'brightness(0) invert(1)';
+        if (attack) ctx.drawImage(pf, PLAYER_X - 90, 448 - 320, 180, 320);
+        else drawFlipH(ctx, pf, PLAYER_X - 90, 448 - 320, 180, 320);
+      }
     } else {
       ctx.fillStyle = '#3f6fb5';
       roundRect(ctx, PLAYER_X - 40, 448 - 220, 80, 220, 24); ctx.fill();
     }
+    ctx.restore();
     if (_fxOn && battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawHeal(ctx);
     if (_fxOn && battle.hurtT > 0) {
       const fade = Math.min(1, battle.hurtT / 0.2);
@@ -704,12 +741,11 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   if (hud.toast?.t > 0) combatHudBounds.push(TOAST_BOUNDS);
   const waveNotice = hud.battleHud?.waveNotice?.(hud);
   if (waveNotice) combatHudBounds.push(waveNotice);
+  const skillCallBounds = _fxOn && hud.fx?.callBounds?.();
+  if (skillCallBounds) combatHudBounds.push(skillCallBounds);
 
   // ===== 三消棋盘 =====
-  // M9:播报棋盘微震(chain≥4 播报附带 ±2px 衰减;覆盖棋盘+演出+特效层,底栏/弹层不参与)
-  const bShake = hud.fx && hud.fx.boardShake ? hud.fx.boardShake() : { dx: 0, dy: 0 };
   ctx.save();
-  ctx.translate(bShake.dx, bShake.dy);
   drawBoardSurface(ctx, hud.boardSurface?.());
   if (engine.fxEnabled !== false && engine.clearing?.length) drawClearCellHighlights(ctx, engine);
   // 果冻拖拽/回弹状态(M6:v0.2 02 文档 2.2;hud.drag = input.dragState() 快照 {drag,bounces})
@@ -896,7 +932,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     hud.fx.itemEffects?.drawBoard(ctx);
     hud.fx.draw(ctx, combatHudBounds, UI_IMG);
   }
-  ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
+  ctx.restore(); // 棋盘与底栏使用固定坐标。
   ctx.fillStyle = '#e1e8dc';
   ctx.fillRect(0, 1168, 720, 112);
   ctx.fillStyle = '#b09b6c';
@@ -1431,20 +1467,23 @@ function drawEnemy(ctx, e, t, scale) {
   const w = t.srcW * t.scale * scale, h = t.srcH * t.scale * scale;
   // 白闪使用递减的半透明剪影，露出敌人轮廓和贴图细节。
   const flashing = _fxOn && e.hitFlashT > 0;
-  const shake = _fxOn && e.hitStopT > 0 ? Math.sin((e.hitFlashT + e.hitStopT) * 90) * 3 : 0;
-  const ex = e.x + shake;
+  const shake = _fxOn && e.hitStopT > 0
+    ? Math.cos((e.hitFlashT + e.hitStopT) * 86) * Math.min(e.isBoss ? 6.5 : 4.6, e.hitStopT * 94)
+    : 0;
+  const ex = e.x + Math.cos(e.hitAngle ?? 0) * shake;
+  const ey = e.y + Math.sin(e.hitAngle ?? 0) * shake * 0.55;
   if (f && f.complete && f.naturalWidth > 0) {
-    drawFlipH(ctx, f, ex - w / 2, e.y - h / 2, w, h); // M11-05:敌人帧整体水平镜像(面左向主角)
+    drawFlipH(ctx, f, ex - w / 2, ey - h / 2, w, h); // M11-05:敌人帧整体水平镜像(面左向主角)
     if (flashing) {
       ctx.save();
-      ctx.globalAlpha *= Math.min(0.55, e.hitFlashT * 3.4);
+      ctx.globalAlpha *= Math.min(0.74, e.hitFlashT * 5.8);
       ctx.filter = 'brightness(0) invert(1)';
-      drawFlipH(ctx, f, ex - w / 2, e.y - h / 2, w, h);
+      drawFlipH(ctx, f, ex - w / 2, ey - h / 2, w, h);
       ctx.restore();
     }
   } else {
     ctx.fillStyle = flashing ? '#ffffff' : '#5fae5f';
-    ctx.beginPath(); ctx.ellipse(ex, e.y, (t.radius || 45) * scale, (t.radius || 45) * 1.4 * scale, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(ex, ey, (t.radius || 45) * scale, (t.radius || 45) * 1.4 * scale, 0, 0, Math.PI * 2); ctx.fill();
   }
 }
 

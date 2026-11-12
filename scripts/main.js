@@ -23,6 +23,7 @@ import { createApi } from './api/api.js';
 import { maxHpAt, atkAt } from './meta/exp.js';
 import { PLAYER_X } from './skills/registry.js';
 import { PLAYER_Y } from './battle/enemy.js';
+import { HERO_CAST_TIME } from './ui/hero_motion.js';
 import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpCost, COIN_PER_GACHA, SKILL_LEVEL_CAP } from './meta/economy.js';
 import { canPlay, onVictory, mergeRunResult, WAVES_PER_LEVEL } from './meta/levels.js';
 import { applyItem } from './board/items.js';
@@ -328,6 +329,8 @@ function boot(images) {
   hud.battleAssets = () => battlePacks.get(packKey(selLevel));
   hud.boardGuide = () => boardGuide;
   hud.boardSurface = () => assets.images.get('ui:board_surface');
+  hud.skillFxPage = page => assets.images.get(`skill-fx:${page}`);
+  hud.heroMotion = () => assets.images.get('player:battle_motion');
   hud.hintAvailable = hintAvailable;
   hud.boardHint = currentBoardHint;
   // M11-02 F5:音效开关启动恢复(档内 settings.sfx;与 effects 同一套写档)
@@ -677,7 +680,6 @@ function boot(images) {
     }
   }
 
-  let prevShakeT = 0; // 上一帧 battle.shakeT(边沿触发,避免每帧重置震动延长时长)
   let lastRafT = 0; // 上一帧 rAF 时间戳(F4-02:表现层动效时钟与模拟 dt 上限分开——
   // loop.js 的 update dt 钳制 0.05s 只约束模拟;表现层动效用原始 rAF 墙钟差,10fps 低帧下
   // 2.01s 动效不再放慢一倍)
@@ -744,16 +746,14 @@ function boot(images) {
         // 存续预约回写 blockFx——含「预约建立后同帧即执行移除」的场景(0.80s CD 就绪,
         // 渲染层查不到 pending,必须按 tick 的执行记录认领);同一 resKey 重复回写不扩散。
         for (const used of usedList) {
+          battle.playerAttackT = HERO_CAST_TIME;
           parallax.triggerPulse();
           const slot = hud.battleHud.noteCast(used.skill.id, caster.loadout);
           if (boardGuide?.mode === 'charge' && used.from === 'elim') {
             boardGuide = { mode: 'complete', skill: used.skill.name, element: used.skill.el, slot, time: 2 };
             rememberBoardGuide();
           }
-          // M12 技能喊话(方案 B「冲击斜切」):非普攻属性弹技能执行即触发纯表现演出(~0.9s,
-          // 不阻塞逻辑);背景变体按解锁档位取用(Lv3→1,Lv6→2);震屏走 parallax 可变参数。
-          // M12M13-ACCEPT F3:skillCall 返回 false(演出中/CD 期被忽略)时**不震屏**——
-          // CD 期整体忽略,不是只忽略画面。
+          // 进阶技能名牌和背景按解锁档位取色，名牌冷却内跳过施法震动。
           if (used.skill.kind !== 'bolt' && engine.fxEnabled !== false) {
             if (hud.fx.skillCall(used.skill.name, used.skill.el, used.skill.unlockLevel >= 6 ? 2 : 1)) {
               parallax.triggerShake(5, 0.35);
@@ -846,10 +846,6 @@ function boot(images) {
           if (bossWave) sfx.bossArrival();
         }
       }
-      // screenshake 边沿触发:battle.shakeT 从 0 变正(新一次受击)才 triggerShake,
-      // 不再每帧重置(REQ-M3-03 整改 7:此前震动被反复续时,150ms 仍有偏移)
-      if (battle.shakeT > 0 && prevShakeT <= 0) parallax.triggerShake();
-      prevShakeT = battle.shakeT;
       if (screen === 'playing') input.update(dt); // 果冻拖拽回弹计时(表现层)
       hud.drag = () => input.dragState();
       parallax.update(dt);

@@ -55,6 +55,7 @@ export class Enemy {
     this.bindT = 0;            // M4 藤蔓束缚剩余秒(behaviors.applyBind;停止移动/攻击)
     this.stunT = 0;            // M4 裂地眩晕剩余秒(behaviors.applyPulse 附加;停止攻击)
     this.attackAnimT = 0;      // 攻击动画剩余秒(开火时置满,单次播放)
+    this.hitAngle = 0;
     this.hitFlashT = 0;        // 受击白闪剩余秒(M8 受击反馈;仅直击类伤害触发,DOT 不闪)
     this.hitStopT = 0;         // 受击卡肉剩余秒(M8;冻结自身移动/攻击/动画,弹幕与冒字不受影响)
     this.animClock = 0;        // 待机动画时钟(M8-F1:构造即初始化——首次 update 前受击也有定格语义;
@@ -148,6 +149,7 @@ export class Enemy {
       // 白闪 0.10s(暴击 0.16s)+卡肉 0.05s(暴击 0.09s);同帧多段取 max 不叠长
       this.hitFlashT = Math.max(this.hitFlashT, opts.crit ? HIT_FLASH_CRIT : HIT_FLASH);
       this.hitStopT = Math.max(this.hitStopT, opts.crit ? HIT_STOP_CRIT : HIT_STOP);
+      this.hitAngle = opts.angle ?? 0;
     }
     return { applied: d, killed: !this.alive };
   }

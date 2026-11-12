@@ -1,4 +1,4 @@
-// tests/m12.test.mjs — M12 批次:技能喊话演出(方案 B「冲击斜切」实装)
+// tests/m12.test.mjs — 技能名牌与战场背景
 // 覆盖:manifest 喊话清单/bindCallImages 绑定入口/演出状态机(CD 门控+自动过期+清场)/
 //       无 DOM 环境绘制不抛错(z 序双钩子)/parallax 可变震屏参数
 // 运行: node --test tests/m12.test.mjs
@@ -31,12 +31,12 @@ function mkCtx() {
 }
 
 // ---- M12-1 资源清单 ----
-test('M12 manifest:技能喊话 12 项(立绘+气泡+五行背景×2 变体)入全量清单', () => {
+test('M12 manifest:头像与五行背景各有对应素材', () => {
   const m = fullManifest();
   const call = m.filter(it => it.entity === 'skillcall');
-  assert.equal(call.length, 12, `喊话条目数=12,实际 ${call.length}`);
+  assert.equal(call.length, 11);
   const keys = new Set(call.map(it => it.key));
-  assert.ok(keys.has('call:hero') && keys.has('call:bubble'), '立绘+气泡在清单');
+  assert.ok(keys.has('call:hero'));
   for (const el of ['fire', 'water', 'wood', 'metal', 'earth']) {
     assert.ok(keys.has(`call:bg:${el}:1`) && keys.has(`call:bg:${el}:2`), `五行 ${el} 两变体在清单`);
   }
@@ -45,10 +45,12 @@ test('M12 manifest:技能喊话 12 项(立绘+气泡+五行背景×2 变体)入�
   }
 });
 
-test('M12 bindCallImages:生产唯一填充入口,绑定数=12;Map 缺项不抛错', () => {
+test('M12 bindCallImages:绑定头像与五行背景，缺图安全回退', () => {
   const imgs = new Map();
   for (const it of fullManifest().filter(i => i.entity === 'skillcall')) imgs.set(it.key, { _src: it.url });
-  assert.equal(bindCallImages(imgs), 12, '12 项全部绑定');
+  assert.equal(bindCallImages(imgs), 11);
+  assert.equal(bindCallImages(new Map()), 0);
+  assert.deepEqual(CALL_IMG.bg, {}, '切换素材包后清除旧背景');
   assert.equal(bindCallImages(null), 0, '非 Map 入参返回 0(不抛错)');
   // 绑定后 fx 内部表就绪
   const fx = new FxLayer();
@@ -103,8 +105,8 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   const { ctx, rec } = mkCtx();
   fx.skillCall('烈焰焚天', 'fire', 1);
   // CALL_IMG 为模块级共享单例(前序用例可能已绑定):显式清空保证「未绑定」分支,finally 还原
-  const saved = { hero: CALL_IMG.hero, bubble: CALL_IMG.bubble, bg: CALL_IMG.bg };
-  CALL_IMG.hero = null; CALL_IMG.bubble = null; CALL_IMG.bg = {};
+  const saved = { ...CALL_IMG };
+  CALL_IMG.hero = null; CALL_IMG.bg = {};
   try {
     for (let t = 0; t <= 0.9; t += 0.05) { // 全时间轴采样(含入场/定格/退场边界)
       fx.call.t = t;
@@ -112,10 +114,11 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
       fx.draw(ctx);
     }
     assert.equal(rec.draws.length, 0, '贴图未绑定时不产生 drawImage(静默跳过)');
+    assert.ok(rec.fillTexts.includes('烈焰焚天'), '缺图时仍绘制技能名');
   } finally {
-    CALL_IMG.hero = saved.hero; CALL_IMG.bubble = saved.bubble; CALL_IMG.bg = saved.bg;
+    Object.assign(CALL_IMG, saved);
   }
-  // 绑定贴图后再采样:背景与立绘/气泡按 z 序分别产出
+  // Node 环境跳过离屏背景，名牌仍画出小像。
   const imgs = new Map();
   for (const it of fullManifest().filter(i => i.entity === 'skillcall')) imgs.set(it.key, { _src: it.url });
   bindCallImages(imgs);
@@ -123,7 +126,10 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   fx.call.t = 0.4; // 定格段:各元素可见
   fx.drawCallBg(rec2.ctx);
   fx.draw(rec2.ctx);
-  assert.ok(rec2.rec.draws.length >= 2, '背景层+顶层(立绘/气泡)均有绘制输出');
+  assert.equal(rec2.rec.draws.length, 1);
+  const box = fx.callBounds();
+  assert.ok(box.left >= 0 && box.right <= 720 && box.top >= 44 && box.bottom <= 448);
+  assert.ok(box.right - box.left < 300 && box.bottom - box.top < 60);
 });
 
 test('M12 演出不阻塞逻辑:fx.update/draw 不写任何战斗状态(纯表现,技能名/元素/变体只读)', () => {

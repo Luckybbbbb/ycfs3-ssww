@@ -3,6 +3,7 @@
 
 import { BATTLE_ASSET_BAR_H, GEM_COLORS } from './draw_util.js';
 import { BATTLE_H } from '../battle/parallax.js';
+import { drawSkillImpact } from './skill_effects.js';
 
 const ELEMENT_ART = {
   metal: { light: '#fff2ae', dark: '#865720', aspect: 1.64, trail: 46 },
@@ -119,16 +120,26 @@ export class ImpactEffects {
   constructor() {
     this.active = [];
     this.bossFall = null;
+    this.heroHit = null;
+    this.cameraHit = null;
   }
 
   note(ev) {
     if (ev.kind === 'kill' && ev.boss) {
       this.bossFall = { x: ev.x, y: ev.y, t: 0 };
+      this.kickCamera(8.4, 0);
     }
-    const art = ELEMENT_ART[ev.el];
-    if (!ev.impact || !art || !(ev.n > 0)) return;
-    const { tier = 1, boss, primary } = ev.impact;
-    const priority = Number(!!ev.crit) * 3 + Number(!!boss) * 2 + Number(tier >= 4) + Number(!!primary);
+    const hero = ev.kind === 'hurt';
+    const art = ELEMENT_ART[hero ? 'earth' : ev.el];
+    if (!(ev.n > 0) || !art || (!ev.impact && !hero)) return;
+    const { tier = 1, boss, primary } = ev.impact || {};
+    const priority = hero ? 8 : Number(!!ev.crit) * 3 + Number(!!boss) * 2 + Number(tier >= 4) + Number(!!primary);
+    const angle = ev.linkFrom ? Math.atan2(ev.y - ev.linkFrom.y, ev.x - ev.linkFrom.x) : (ev.fromAngle ?? (hero ? Math.PI : 0));
+    if (hero) this.heroHit = { t: 0, angle };
+    if (hero || primary || ev.crit) {
+      const strength = hero ? 7.2 : ev.crit ? 6.7 : boss ? 4.8 : tier >= 4 ? 3.6 : 1.9;
+      this.kickCamera(strength, angle);
+    }
     if (this.active.length >= MAX_IMPACTS) {
       let least = 0;
       for (let i = 1; i < this.active.length; i++) {
@@ -137,27 +148,50 @@ export class ImpactEffects {
       if (this.active[least].priority > priority) return;
       this.active.splice(least, 1);
     }
-    const angle = ev.fromAngle ?? 0;
-    const contact = primary ? 15 : 0;
+    const contact = primary && !ev.radius ? 15 : 0;
     this.active.push({
       x: ev.x - Math.cos(angle) * contact, y: ev.y - Math.sin(angle) * contact,
-      el: ev.el, art, priority, angle, crit: ev.crit,
-      t: 0, life: ev.crit ? 0.37 : boss ? 0.31 : 0.24,
-      reach: (26 + tier * 4 + (ev.crit ? 12 : 0)) * (primary ? 1 : 0.75),
+      targetX: ev.x, targetY: ev.y, linkFrom: ev.linkFrom, targetName: ev.targetName,
+      el: hero ? 'earth' : ev.el, art, priority, angle, crit: ev.crit, hero, primary,
+      skillId: ev.skillId, radius: ev.radius,
+      t: 0, life: ev.radius && primary ? 0.62 : ev.linkFrom ? 0.39 : ev.crit ? 0.37 : boss ? 0.31 : 0.24,
+      reach: hero ? 44 : (26 + tier * 4 + (ev.crit ? 12 : 0)) * (primary ? 1 : 0.75),
       fragments: ev.crit || tier >= 4 ? 6 : primary ? 4 : 3,
     });
   }
 
-  clear() { this.active.length = 0; this.bossFall = null; }
+  kickCamera(strength, angle) {
+    if (!this.cameraHit || this.cameraHit.t >= 0.105 || strength > this.cameraHit.strength) {
+      this.cameraHit = { t: 0, strength, angle };
+    }
+  }
+
+  cameraOffset() {
+    const hit = this.cameraHit;
+    if (!hit) return { ox: 0, oy: 0 };
+    const force = hit.strength * (1 - hit.t / 0.22) ** 2;
+    const axis = Math.cos(hit.t * 77), across = Math.sin(hit.t * 101) * 0.36;
+    const x = Math.cos(hit.angle), y = Math.sin(hit.angle);
+    return { ox: force * (x * axis - y * across), oy: force * (y * axis + x * across) };
+  }
+
+  clear() {
+    this.active.length = 0;
+    this.bossFall = null;
+    this.heroHit = null;
+    this.cameraHit = null;
+  }
 
   update(dt) {
     if (this.bossFall && (this.bossFall.t += dt) >= BOSS_FALL_TIME) this.bossFall = null;
+    if (this.heroHit && (this.heroHit.t += dt) >= 0.22) this.heroHit = null;
+    if (this.cameraHit && (this.cameraHit.t += dt) >= 0.22) this.cameraHit = null;
     if (!this.active.length) return;
     for (const hit of this.active) hit.t += dt;
     this.active = this.active.filter(hit => hit.t < hit.life);
   }
 
-  draw(ctx) {
+  draw(ctx, skillFxPage) {
     if (!this.active.length && !this.bossFall) return;
     ctx.save();
     ctx.beginPath(); ctx.rect(0, BATTLE_ASSET_BAR_H, 720, BATTLE_H - BATTLE_ASSET_BAR_H); ctx.clip();
@@ -168,6 +202,9 @@ export class ImpactEffects {
       const p = hit.t / hit.life;
       const fade = 1 - p * p;
       const radius = hit.reach * (0.38 + 0.62 * (1 - (1 - p) ** 2));
+      const drawn = drawSkillImpact(ctx, skillFxPage, hit);
+      drawContactDrops(ctx, hit, p);
+      if (drawn) continue;
       ctx.save();
       ctx.translate(hit.x, hit.y);
       if (hit.crit) {
@@ -199,6 +236,26 @@ export class ImpactEffects {
     if (this.bossFall) drawBossFall(ctx, this.bossFall);
     ctx.restore();
   }
+}
+
+function drawContactDrops(ctx, hit, p) {
+  if (!hit.hero && !hit.targetName) return;
+  const spirit = hit.targetName === 'slime';
+  const color = spirit ? ['#9dd5e6', '#effcff'] : ['#8e3040', '#f58e83'];
+  const count = hit.hero || hit.crit ? 8 : hit.primary ? 6 : 3;
+  const motion = 1 - (1 - p) ** 2;
+  ctx.save();
+  ctx.globalAlpha *= (1 - p) ** 1.3;
+  for (let i = 0; i < count; i++) {
+    const angle = hit.angle - 0.95 + i * 1.9 / (count - 1);
+    const reach = (21 + i % 4 * 8 + Number(!!hit.crit) * 13) * motion;
+    const x = hit.x + Math.cos(angle) * reach;
+    const y = hit.y + Math.sin(angle) * reach - (15 + i % 3 * 3) * motion + p * p * 20;
+    const size = (2.1 + i % 3 * 0.55) * (1 - 0.45 * p);
+    ctx.fillStyle = color[i % 2];
+    ctx.beginPath(); ctx.ellipse(x, y, size * 1.45, size, angle, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawBossFall(ctx, fall) {

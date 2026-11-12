@@ -5,6 +5,7 @@
 import { ENEMY_TYPES, bossType, levelWeights } from '../battle/wave.js';
 import { LEVEL_THEMES, themeOf } from '../meta/levels.js';
 import { skillById } from '../skills/library.js';
+import { SKILL_FX_PAGES } from './skill_fx_art.js';
 
 // 主角帧清单(04 文档第 6 节:idle 16 / walk 6 / walk_start 3;M3 用 idle,walk 留 M4+)
 export const PLAYER_FRAMES = {
@@ -55,13 +56,11 @@ export function iconList() {
   return list;
 }
 
-// 技能喊话演出贴图(M12,方案 B「冲击斜切」):主角立绘 + 喊话气泡 + 五行技能背景 ×2 变体
-// (变体 1=Lv3 技能,变体 2=Lv6 技能;FR-9 预载校验,缺图停载;fx.js CALL_IMG 消费)
+// 技能名牌使用主角头像，五行背景按技能解锁档位选择变体。
 // 战斗区 UI 图素(M13):分关卡远近背景 5 主题×2 + 头像框/技能框(battle_hud.js/parallax.js 消费)
 export function skillCallList() {
   const list = [
     { key: 'call:hero', url: 'assets/sprites/skillcall/hero.png', entity: 'skillcall' },
-    { key: 'call:bubble', url: 'assets/sprites/skillcall/bubble.png', entity: 'skillcall' },
   ];
   for (const el of ['fire', 'water', 'wood', 'metal', 'earth']) {
     for (const v of [1, 2]) {
@@ -75,6 +74,9 @@ export function skillCallList() {
   list.push({ key: 'ui:avatar_frame', url: 'assets/ui/battle/avatar_frame.png', entity: 'battle-ui' });
   list.push({ key: 'ui:skill_frame', url: 'assets/ui/battle/skill_frame.png', entity: 'battle-ui' });
   list.push({ key: 'ui:board_surface', url: 'assets/backgrounds/board/celadon.png', entity: 'board-surface' });
+  for (const page of SKILL_FX_PAGES) {
+    list.push({ key: `skill-fx:${page}`, url: `assets/effects/pixelfx/${page}.webp`, entity: 'skill-fx' });
+  }
   // M15 开始界面生图产物(Task 51,codex image_gen):全屏背景+定名 LOGO(render.js START_IMG 消费,缺图走程序化兜底)
   list.push({ key: 'ui:start_bg', url: 'assets/backgrounds/start/start_bg.png', entity: 'battle-ui' });
   list.push({ key: 'ui:start_logo', url: 'assets/ui/start/logo.png', entity: 'battle-ui' });
@@ -97,6 +99,7 @@ export function fullManifest() {
     }
   }
   for (const type of Object.keys(ENEMY_TYPES)) list.push(...enemyFrameList(type));
+  list.push({ key: 'player:battle_motion', url: 'assets/sprites/player/battle_motion.webp', entity: 'player' });
   list.push(...iconList());
   list.push(...skillCallList());
   return list;
@@ -120,10 +123,10 @@ export function battleManifest(level, ownedSkills) {
     const skill = skillById(id);
     if (skill && skill.kind !== 'bolt') calls.add(`call:bg:${skill.el}:${skill.unlockLevel >= 6 ? 2 : 1}`);
   }
-  if (calls.size) calls.add('call:bubble');
   return ASSETS.filter(({ key }) =>
-    key.startsWith('player:idle:') || key.startsWith('player:walk_start:') ||
+    key === 'player:battle_motion' ||
     key.startsWith('icon:') || key === 'call:hero' || key === 'ui:avatar_frame' || key === 'ui:skill_frame' || key === 'ui:board_surface' ||
+    key === 'skill-fx:shots' || key === 'skill-fx:hits' || (key === 'skill-fx:fields' && calls.size > 0) ||
     key.startsWith(`bg:${theme}:`) || calls.has(key) || enemies.has(key.split(':')[0])
   );
 }

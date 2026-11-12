@@ -732,6 +732,60 @@ test('M8 暴击(6.2d):critChance=t1 9%~t5 25%;直击 roll 命中 → dmg×1.5+�
   assert.equal(b3.floatTexts.find(x => x.kind === 'splash').impact.primary, false);
 });
 
+test('飘字在战斗栏出现、持续和消失时平滑避让，整条文字始终可读', () => {
+  const fx = new FxLayer();
+  const labels = [];
+  const ctx = {
+    measureText: text => ({ width: text.length * 17 }),
+    strokeText() {},
+    fillText(text, x, y) {
+      const font = Number(this.font.match(/(\d+)px/)[1]);
+      const outline = this.lineWidth / 2;
+      const half = this.measureText(text).width / 2 + outline;
+      labels.push({ text, x, y, left: x - half, right: x + half,
+        top: y - font - outline, bottom: y + font * 0.18 + outline });
+    },
+  };
+  const box = { left: 510, right: 710, top: 239, bottom: 288 };
+  const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  let previous = null;
+  let elapsedFrames = 0;
+  function frame(hud = []) {
+    labels.length = 0;
+    elapsedFrames++;
+    fx.draw(ctx, hud);
+    for (const [i, label] of labels.entries()) {
+      assert.ok(!hud.some(bound => overlaps(label, bound)), `${label.text} 避开战斗栏`);
+      assert.ok(!labels.slice(0, i).some(bound => overlaps(label, bound)), `${label.text} 避开同帧文字`);
+    }
+    const point = labels.find(label => label.text === '-23');
+    if (point) {
+      if (previous) assert.ok(Math.hypot(point.x - previous.x, point.y - previous.y) < 12 * elapsedFrames);
+      previous = point;
+      elapsedFrames = 0;
+    }
+    return point;
+  }
+  fx.combatFloat({ kind: 'dmg', x: 596, y: 273, n: 23, el: 'fire', fromAngle: 0, jitter: 0 });
+  fx.update(0.19);
+  assert.ok(frame());
+  fx.update(1 / 60);
+  assert.equal(frame([box]), undefined, '遮挡突然出现时暂停绘制');
+  let recovered = false, bothVisible = false;
+  for (let i = 0; i < 20; i++) {
+    if (i === 4) fx.combatFloat({ kind: 'kill', x: 650, y: 280, boss: true, jitter: 0 });
+    fx.update(1 / 60);
+    if (frame([box])) {
+      recovered = true;
+      bothVisible ||= labels.some(label => label.text === '首领击破');
+    }
+  }
+  assert.ok(recovered, '战斗栏仍在时移到安全位置');
+  assert.ok(bothVisible, '新增高优先级文字与原文字可同时读到');
+  fx.update(1 / 60);
+  assert.ok(frame(), '战斗栏消失时原文字继续飞行');
+});
+
 test('只有实际首领击杀产生金色击破提示和退场效果', () => {
   const battle = new Battle({ rng: () => 0.99 });
   const guard = new Enemy({ hp: 1, x: 640, y: 200 });

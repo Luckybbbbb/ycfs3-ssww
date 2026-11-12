@@ -41,14 +41,18 @@ export function applyChain(ctx, skill, tier) {
     if (!e) break;
     picked.push(e);
   }
-  for (const e of picked) {
-    const r = e.hurt(dmg, { flash: true }); // M8 受击反馈:锁链直击白闪+卡肉(不暴击,暴击仅 applyHit)
+  for (const [i, e] of picked.entries()) {
+    const previous = picked[i - 1];
+    const linkFrom = previous ? { x: previous.x, y: previous.y } : { x: ctx.px ?? 110, y: 280 };
+    const angle = Math.atan2(e.y - linkFrom.y, e.x - linkFrom.x);
+    const r = e.hurt(dmg, { flash: true, angle }); // 锁链命中时播放对应方向的受击反馈。
     // 伤害冒字(03 文档 6.5:锁链直呼 e.hurt 不经 applyHit——行为内核产事件;元素来源=skill.el)
     // 方向=中心敌→被击敌;中心自身方向缺省(向上)
     ctx.floatEvent({
       kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: skill.el,
       impact: { tier, boss: e.isBoss, primary: e === primary },
       fromAngle: e === primary ? null : Math.atan2(e.y - primary.y, e.x - primary.x),
+      skillId: skill.id, targetName: e.name, linkFrom,
       importance: 1,
     });
     if (r.killed) ctx.registerKill(e); // 统一击杀登记(F2)
@@ -121,12 +125,13 @@ export function applyPulse(ctx, skill, tier) {
     if (!e.alive) continue;
     const dx = e.x - center.x, dy = e.y - center.y;
     if (dx * dx + dy * dy <= skill.params.r * skill.params.r) {
-      const r = e.hurt(dmg, { flash: true }); // M8 受击反馈:脉冲直击白闪+卡肉(不暴击)
+      const angle = e === center ? null : Math.atan2(e.y - center.y, e.x - center.x);
+      const r = e.hurt(dmg, { flash: true, angle }); // 脉冲保留原有白闪与卡肉。
       // 伤害冒字(6.5:脉冲直呼 e.hurt 不经 applyHit;元素来源=skill.el;方向=中心→被击敌)
       ctx.floatEvent({
         kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: skill.el,
         impact: { tier, boss: e.isBoss, primary: e === center },
-        fromAngle: e === center ? null : Math.atan2(e.y - center.y, e.x - center.x),
+        fromAngle: angle, skillId: skill.id, targetName: e.name, radius: skill.params.r,
         importance: 1,
       });
       if (r.killed) ctx.registerKill(e); // 统一击杀登记(F2)

@@ -45,7 +45,7 @@ export class Battle {
     this.phase = PHASE.FIGHTING;
     this.hurtT = 0;           // 主角受击闪白计时(FR-1.1 验收)
     this.shakeT = 0;          // 受击 screenshake(00 文档 3.1:4px/120ms)
-    this.playerAttackT = 0;   // 主角攻击动画计时(释放技能时播放 walk_start 单次,16.7fps×3帧≈0.18s)
+    this.playerAttackT = 0;   // 主角施法动作剩余时间
     this.zones = [];          // M4 行为区域(dotzone/field;behaviors.pushZone 维护,同技能刷新不叠加)
     this.aura = null;         // M4 生机光环(behaviors.applyAura 维护)
     this.invincibleT = 0;     // M5 无敌道具剩余秒(免伤;02 文档第 6 节)
@@ -198,7 +198,7 @@ export class Battle {
   launch(castResult) {
     const target = this.nearestAlive();
     if (!target) return null;
-    this.playerAttackT = 0.18; // 主角攻击动画(walk_start 3 帧 @16.7fps,对标 player.tscn startup)
+    this.playerAttackT = 0.18; // 直接发射入口沿用旧演示素材的施法时间。
     const el = castResult.element, tier = castResult.tier;
     const mult = castResult.mult || 1;
     const effAtk = this.atk * mult;
@@ -250,7 +250,10 @@ export class Battle {
       crit = this.roll() < critChance(b.tier);
       if (crit) dmg = Math.round(dmg * CRIT_MULT);
     }
-    const r = e.hurt(dmg, { flash: true, crit });
+    const fromAngle = center
+      ? Math.atan2(e.y - center.y, e.x - center.x)
+      : (typeof b.vx === 'number' || typeof b.vy === 'number' ? Math.atan2(b.vy || 0, b.vx == null ? -1 : b.vx) : null);
+    const r = e.hurt(dmg, { flash: true, crit, angle: fromAngle });
     this.log.push({ t: this.clock, ev: 'hit', el: b.el, tier: b.tier, dmg, mult, crit, hpAfter: e.hp, killed: r.killed, target: this.enemies.indexOf(e) });
     if (r.killed) this.registerKill(e);
     // 伤害冒字(v0.3 6.2a/6.4):N=本次结算实际 applied(致死溢出受剩余 HP 限制,enemy.hurt min(hp,dmg));
@@ -258,9 +261,7 @@ export class Battle {
     this.floatEvent({
       kind: isSplash ? 'splash' : 'dmg', x: e.x, y: e.y, n: r.applied, el: b.el, crit,
       impact: { tier: b.tier, boss: e.isBoss, primary: !center && !isSplash },
-      fromAngle: center
-        ? Math.atan2(e.y - center.y, e.x - center.x)
-        : (typeof b.vx === 'number' || typeof b.vy === 'number' ? Math.atan2(b.vy || 0, b.vx == null ? -1 : b.vx) : null),
+      fromAngle, skillId: b.skillId || `${b.el}_bolt`, targetName: e.name,
       importance: isSplash ? 0 : 1,
     });
     // 元素能力(4.3;灼烧刷新=覆盖 dpsFloat 并只延长 until,不重置跳伤时钟——4.4)

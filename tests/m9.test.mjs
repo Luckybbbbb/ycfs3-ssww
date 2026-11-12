@@ -248,16 +248,13 @@ test('M9 播报文案映射:二连击破/三连决胜/四连超凡/五连绝世/
     assert.equal(fx.announces.length, 1, `chain${chain} 播报 1 条`);
     assert.equal(fx.announces[0].text, text);
     assert.equal(fx.announces[0].color, color);
-    if (chain >= 4) assert.ok(fx.boardShakeT > 0, 'chain≥4 触发棋盘微震');
-    else assert.equal(fx.boardShakeT, 0, 'chain<4 不震');
   }
   const fx0 = new FxLayer();
   fx0.chainAnnounce(1);
   assert.equal(fx0.announces.length, 0, 'chain1 不播报');
-  assert.equal(fx0.boardShakeT, 0);
 });
 
-test('M9 播报动效生命周期:0.9s 消亡;微震衰减归零;替换式(新播报把旧播报推入淡出段,不静止叠加)', () => {
+test('连锁播报 0.9 秒结束，新播报使旧播报提前淡出', () => {
   const fx = new FxLayer();
   fx.chainAnnounce(2);
   const a0 = fx.announces[0];
@@ -275,13 +272,6 @@ test('M9 播报动效生命周期:0.9s 消亡;微震衰减归零;替换式(新�
   assert.ok(fx2.announces[1].t === 0, '新播报从 0 起播');
   fx2.update(0.4); // 旧:t≥1.02>0.9 消亡;新:t=0.4 定版停留中
   assert.equal(fx2.announces.length, 1, '旧播报淡出消亡,新播报独占中央');
-  const fx3 = new FxLayer();
-  fx3.chainAnnounce(5);
-  const sh = fx3.boardShake();
-  assert.ok(Math.abs(sh.dx) > 0 || Math.abs(sh.dy) > 0, `微震偏移非零(dx=${sh.dx.toFixed(3)},dy=${sh.dy.toFixed(3)})`);
-  fx3.update(0.5);
-  fx3.update(0.5);
-  assert.deepEqual(fx3.boardShake(), { dx: 0, dy: 0 }, '0.3s 后微震归零');
 });
 
 // ---- M9-F1 render 段③④随 RUSH 缩放(源码断言:判段/补间读实例 stageDur) ----
@@ -395,14 +385,14 @@ test('M9-F7 终态一致性:相同已接受操作序列(含并行交换)+固定�
 });
 
 // ---- M9 接线源码断言 ----
-test('M9 接线:input 放行演出期手势(canActInBusy);main 转发 chain_announce;render 微震/预选框', () => {
+test('M9 接线保留演出期手势、连锁播报和预选框，棋盘使用固定坐标', () => {
   const inputSrc = fs.readFileSync(new URL('../scripts/core/input.js', import.meta.url), 'utf-8');
   assert.ok(inputSrc.includes('canActInBusy'), 'input 手势放行回调接入');
   const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(mainSrc.includes("e.type === 'chain_announce'"), 'main 转发播报事件');
   assert.ok(mainSrc.includes('canActInBusy'), 'main 提供 canActInBusy');
   const renderSrc = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
-  assert.ok(renderSrc.includes('boardShake'), 'render 接棋盘微震');
+  assert.ok(!renderSrc.includes('boardShake'), '棋盘不跟随镜头震动');
   assert.ok(renderSrc.includes('swapBuffer'), 'render 绘制预输入预选框');
   const engineSrc = fs.readFileSync(new URL('../scripts/board/engine.js', import.meta.url), 'utf-8');
   assert.ok(engineSrc.includes('rushScale'), 'engine rush 缩放');
