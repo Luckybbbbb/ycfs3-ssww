@@ -6,7 +6,7 @@
 // 相对路径: scripts/battle/battle.js
 
 import { Enemy, ENEMY_SPAWN_X, MIN_QUEUE_GAP } from './enemy.js';
-import { advanceBolt, findHitTargets, advanceEnemyBolt, enemyBoltHitsPlayer } from './projectile.js';
+import { advanceBolt, findBoltContacts, advanceEnemyBolt, enemyBoltHitsPlayer } from './projectile.js';
 import { PLAYER_X, BOLT_SPEED, boltDamage, BURN_COEFF, LEECH_PCT, SHIELD_ATK, SLOW_PCT, critChance, CRIT_MULT } from '../skills/registry.js';
 import { buildWave, ENEMY_TYPES,
          enemyHp, enemyDmg, barrageDmg, enemySpd, attackInterval, barrageCount, fanAngle, barrageSpeed } from './wave.js';
@@ -226,7 +226,7 @@ export class Battle {
   }
 
   makeBolt(el, tier, raw, target, atkEff = null) {
-    // target 仅决定弹道 y 与初始朝向;命中归属按路径先后(projectile.findHitTargets x 升序),
+    // target 仅决定弹道 y 与初始朝向。命中归属按接触位置先后，
     // 不再按发射时距离冻结 flyTime(REQ-M3-03 整改 1:移动目标下原逻辑会穿过前排误中后排)
     // atkEff:发射时刻有效攻击(atk×skill_mult,REQ-M6-04 F5);null(行为内核造弹)时命中按 this.atk
     return {
@@ -240,7 +240,7 @@ export class Battle {
   // 命中一个目标:伤害+元素能力(命中点/目标为作用中心)
   // center:范围/溅射形态的爆炸中心(REQ-M7-01 F1:溅射与 tier4/5 范围伤害的方向=中心→被击敌,
   // 不用帧末弹位置——帧末弹已越过命中点,方向失真);直击缺省用弹速方向
-  applyHit(b, e, mult = 1, center = null) {
+  applyHit(b, e, mult = 1, center = null, contact = null) {
     // 暴击(2026-10-17 M8;03 文档 6.2d):仅弹道直击(mult=1,溅射/多段系数不暴击);
     // 率=critChance(b.tier)=5%+档位×4%,倍率 CRIT_MULT=1.5,先乘后结算(N 仍=实际 applied)
     const isSplash = mult !== 1 && b.splash;
@@ -258,9 +258,11 @@ export class Battle {
     if (r.killed) this.registerKill(e);
     // 伤害冒字(v0.3 6.2a/6.4):N=本次结算实际 applied(致死溢出受剩余 HP 限制,enemy.hurt min(hp,dmg));
     // 方向(6.3,REQ-M7-01 F1):溅射/范围=爆炸中心→被击敌;直击=弹速方向(makeBolt vx/vy 真实弹速)
+    const impact = { tier: b.tier, boss: e.isBoss, primary: !center && !isSplash };
+    if (contact) impact.contact = contact;
     this.floatEvent({
       kind: isSplash ? 'splash' : 'dmg', x: e.x, y: e.y, n: r.applied, el: b.el, crit,
-      impact: { tier: b.tier, boss: e.isBoss, primary: !center && !isSplash },
+      impact,
       fromAngle, skillId: b.skillId || `${b.el}_bolt`, targetName: e.name,
       importance: isSplash ? 0 : 1,
     });
@@ -376,11 +378,10 @@ export class Battle {
       advanceBolt(b, dt);
       // 命中归属:按路径先后(x 升序),谁先挡在弹道上谁先被命中,
       // 不再优先绑定目标(REQ-M3-03 整改 1);金穿透继续飞(每目标只一次,FR-1.3)
-      const cands = findHitTargets(b, this.enemies);
-      for (const cand of cands) {
+      for (const { enemy: cand, firstX } of findBoltContacts(b, this.enemies)) {
         if (b.hitSet.has(cand)) continue; // 爆炸/溅射已命中过的目标不再直击(REQ-M2-04 整改 1)
         b.hitSet.add(cand);
-        this.applyHit(b, cand, 1);
+        this.applyHit(b, cand, 1, null, { x: firstX, y: b.y });
         if (b.aoeAll && !b.blasted) {
           // 范围形态:命中点为圆心,范围内全体(不含已在本弹命中过的)全额
           b.blasted = true;

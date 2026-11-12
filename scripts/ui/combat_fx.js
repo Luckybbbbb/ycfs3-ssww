@@ -108,7 +108,7 @@ export class ImpactEffects {
     const hero = ev.kind === 'hurt';
     const art = ELEMENT_ART[hero ? 'earth' : ev.el];
     if (!(ev.n > 0) || !art || (!ev.impact && !hero)) return;
-    const { tier = 1, boss, primary } = ev.impact || {};
+    const { tier = 1, boss, primary, contact } = ev.impact || {};
     const priority = hero ? 8 : Number(!!ev.crit) * 3 + Number(!!boss) * 2 + Number(tier >= 4) + Number(!!primary);
     const angle = ev.linkFrom ? Math.atan2(ev.y - ev.linkFrom.y, ev.x - ev.linkFrom.x) : (ev.fromAngle ?? (hero ? Math.PI : 0));
     if (hero) this.heroHit = { t: 0, angle };
@@ -124,11 +124,12 @@ export class ImpactEffects {
       if (this.active[least].priority > priority) return;
       this.active.splice(least, 1);
     }
-    const contact = primary && !ev.radius ? 15 : 0;
+    const inset = primary && !ev.radius ? 15 : 0;
     this.active.push({
-      x: ev.x - Math.cos(angle) * contact, y: ev.y - Math.sin(angle) * contact,
+      x: contact?.x ?? ev.x - Math.cos(angle) * inset,
+      y: contact?.y ?? ev.y - Math.sin(angle) * inset,
       targetX: ev.x, targetY: ev.y, linkFrom: ev.linkFrom, targetName: ev.targetName,
-      el: hero ? 'earth' : ev.el, art, priority, angle, crit: ev.crit, hero, primary,
+      el: hero ? 'earth' : ev.el, art, priority, angle, crit: ev.crit, hero, primary, contact,
       skillId: ev.skillId, radius: ev.radius,
       t: 0, life: ev.radius && primary ? 0.62 : ev.linkFrom ? 0.52 : ev.crit ? 0.37 : boss ? 0.31 : 0.24,
       reach: hero ? 44 : (26 + tier * 4 + (ev.crit ? 12 : 0)) * (primary ? 1 : 0.75),

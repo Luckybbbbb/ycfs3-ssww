@@ -19,7 +19,7 @@ function recorder() {
       this.position = position;
       this.fillStyle = fill;
     },
-    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, stroke() {}, rotate() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, stroke() {}, rotate() {}, scale() {},
     translate(x, y) { this.position = [x,y]; },
     ellipse(...geometry) { arcs.push(geometry); },
     fill() { fills.push(this.fillStyle); },
@@ -105,6 +105,39 @@ test('范围冲击在首帧可见，冰链在技能名出现时仍有清晰轮�
   assert.ok(marks.some(mark => mark.color === '#2782b1' && mark.alpha > .7));
   fx.update(.17);
   assert.equal(fx.active.length, 0);
+});
+
+test('直击图集和亮斑从实际接触点展开，金弹穿透时只有在途拖尾', () => {
+  const fx = new ImpactEffects();
+  const contact = { x: 458, y: 242 };
+  const target = { x: 512, y: 220 };
+  for (const [el, color, frameName] of [['fire', '#bc3c24', 'fireHit'], ['metal', '#9d631d', 'critical']]) {
+    fx.clear();
+    const crit = el === 'metal';
+    fx.note({ kind: 'dmg', n: 10, el, ...target, targetName: 'fox', skillId: `${el}_bolt`, crit,
+      impact: { primary: true, tier: 1, contact } });
+    const hit = fx.active[0];
+    assert.deepEqual([hit.targetX, hit.targetY], [target.x, target.y]);
+    const drawing = (t) => {
+      const frame = recorder();
+      const marks = [], gradients = [];
+      frame.ctx.stroke = () => marks.push([frame.ctx.strokeStyle, frame.ctx.globalAlpha, frame.ctx.position]);
+      frame.ctx.createLinearGradient = (...geometry) => { gradients.push(geometry); return { addColorStop() {} }; };
+      assert.equal(drawSkillImpact(frame.ctx, page, { ...hit, t }), true);
+      return { ...frame, marks, gradients };
+    };
+    const first = drawing(0);
+    assert.deepEqual(first.marks, [[color, 1, [contact.x, contact.y]]]);
+    assert.deepEqual(first.sprites[0].position, [contact.x, contact.y]);
+    assert.deepEqual(first.sprites[0].frame, SKILL_FX_ART[frameName].frames[0]);
+    assert.deepEqual(first.gradients, crit ? [] : [[0, 0, -86, 0]]);
+    const next = drawing(.05);
+    assert.ok(next.marks[0][1] > .5 && next.marks[0][1] < 1);
+    if (!crit) assert.ok(next.gradients[0][2] > -86 && next.gradients[0][2] < 0);
+    const after = drawing(.15);
+    assert.equal(after.marks.length + after.gradients.length, 0);
+    assert.equal(after.sprites.length, 1);
+  }
 });
 
 test('火区与霜区按本次释放重启，投影固定在原落点并提示实际剩余时间', () => {

@@ -432,11 +432,16 @@ test('整改1 弹道归属:路径上最先碰到的敌人先被命中,不再按�
   b.enemies.push(rear);
   b.launch({ element: 'fire', tier: 1 });
   assert.equal(b.bolts.length, 1);
-  const front = new Enemy({ name: 'slime', hp: 30, x: 560, y: 240, w: 1 });
+  const front = new Enemy({ name: 'slime', hp: 30, x: 560, y: 195, w: 1 });
   b.enemies.push(front);
   runTo(b, b.clock, b.clock + 1.3);
   assert.ok(front.hp < front.maxHp, '前排先挡先中(REQ-M3-03 整改 1)');
   assert.equal(rear.hp, rear.maxHp, '后排未被误中');
+  const damage = b.drainFloatTexts().find(e => e.kind === 'dmg');
+  assert.deepEqual([damage.x, damage.y], [560, 195], '伤害冒字仍取被击敌中心');
+  assert.equal(damage.impact.contact.y, 240, '命中特效取实际弹道高度');
+  const expectedX = 560 - Math.sqrt(54 ** 2 - 45 ** 2);
+  assert.ok(Math.abs(damage.impact.contact.x - expectedX) < 1e-9, '擦边接触点取扫掠首次交点');
 });
 
 test('REQ-M3-04 整改1 命中顺序=首次相交:二档火弹双靶各归各靶,dt=0.047 与 0.001 一致', () => {
@@ -453,6 +458,9 @@ test('REQ-M3-04 整改1 命中顺序=首次相交:二档火弹双靶各归各靶
     // M8 暴击:单发伤=16 或 round(16×1.5)=24(种子决定)——各中一靶 ⇔ 每敌恰吃 1 发:
     // 无未受击者(200)且无双受击者(≤168);合法集 [176,176]/[176,184]/[184,184]
     assert.ok(hps[0] >= 176 && hps[1] <= 184, `dt=${dt} 双弹各中一靶(单发 16/24 含暴击;实得 [${hps}])`);
+    const contacts = b.drainFloatTexts().filter(e => e.kind === 'dmg')
+      .map(e => e.impact.contact).sort((a, c) => a.y - c.y);
+    assert.deepEqual(contacts, [{ x: 506, y: 150 }, { x: 506, y: 195 }], `dt=${dt} 接触点稳定`);
   }
 });
 

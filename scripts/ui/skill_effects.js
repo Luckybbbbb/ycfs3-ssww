@@ -4,6 +4,7 @@
 import { SKILL_FX_ART } from '../assets/skill_fx_art.js';
 import { ENEMY_TYPES } from '../battle/wave.js';
 import { skillById } from '../skills/library.js';
+import { PLAYER_X } from '../skills/registry.js';
 import { GEM_COLORS } from './draw_util.js';
 
 const BOLTS = {
@@ -367,13 +368,60 @@ function drawPulseShape(ctx, hit, y, p) {
   ctx.restore();
 }
 
+function drawBoltContact(ctx, hit) {
+  const p = hit.t / 0.14;
+  if (p >= 1) return;
+  const art = BOLTS[hit.el];
+  const radius = Math.min(46, hit.reach) * (0.73 + p * 0.48);
+  ctx.save();
+  ctx.translate(hit.x, hit.y);
+  ctx.rotate(hit.angle);
+  ctx.globalAlpha *= (1 - p) ** 1.45;
+  // 弹头消散后，最后一截拖尾沿弹道收向命中点。金弹穿透时由弹头继续带出拖尾。
+  const tail = Math.min(86, hit.x - PLAYER_X) * (1 - p);
+  if (hit.el !== 'metal' && tail > 0) {
+    const light = ctx.createLinearGradient(0, 0, -tail, 0);
+    light.addColorStop(0, art.light);
+    light.addColorStop(0.27, art.body);
+    light.addColorStop(1, 'transparent');
+    ctx.fillStyle = light;
+    ctx.beginPath(); ctx.moveTo(-tail, 0); ctx.lineTo(-3, -radius * 0.34);
+    ctx.lineTo(radius * 0.22, 0); ctx.lineTo(-3, radius * 0.34); ctx.closePath();
+    ctx.fill();
+  }
+  // 纵向闪光露出命中轮廓，让同帧的弹头、闪白和飘字仍能分辨。
+  ctx.beginPath();
+  ctx.moveTo(4, -radius);
+  ctx.lineTo(radius * 0.27, -radius * 0.29);
+  ctx.lineTo(radius * 0.68, -radius * 0.09);
+  ctx.lineTo(radius * 0.23, radius * 0.19);
+  ctx.lineTo(-3, radius * 0.79);
+  ctx.lineTo(-radius * 0.24, radius * 0.24);
+  ctx.lineTo(-radius * 0.59, radius * 0.07);
+  ctx.lineTo(-radius * 0.24, -radius * 0.19);
+  ctx.closePath();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = art.rim;
+  ctx.stroke();
+  ctx.fillStyle = art.body;
+  ctx.fill();
+  ctx.scale(0.55, 0.72);
+  ctx.fillStyle = art.light;
+  ctx.beginPath();
+  ctx.moveTo(4, -radius); ctx.lineTo(radius * 0.54, -radius * 0.11);
+  ctx.lineTo(-3, radius * 0.73); ctx.lineTo(-radius * 0.49, radius * 0.07);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
 export function drawSkillImpact(ctx, page, hit) {
   const p = hit.t / hit.life;
   const pulse = hit.primary && PULSES[hit.skillId];
   const key = pulse || (hit.hero ? 'heroHit' : hit.crit ? 'critical' : HITS[hit.el]);
   if (!key) return false;
   const art = SKILL_FX_ART[key];
-  const scale = pulse ? hit.radius * 2 / art.frames[0][2] : hit.reach * 1.8 / art.frames[0][2];
+  const width = pulse ? hit.radius * 2 : hit.reach * (hit.contact ? 2.7 : 1.8);
+  const scale = width / art.frames[0][2];
   const y = pulse ? enemyEffectFoot(hit.targetName, hit.y) : hit.y;
   if (hit.linkFrom) {
     const { x, y } = hit.linkFrom;
@@ -385,6 +433,8 @@ export function drawSkillImpact(ctx, page, hit) {
   }
   if (pulse) drawPulseShape(ctx, hit, y, p);
   const height = pulse && hit.skillId !== 'metal_pulse' ? scale * 0.83 : scale;
-  return sprite(ctx, page, key, hit.x, y, p * art.duration, scale, height,
+  const drawn = sprite(ctx, page, key, hit.x, y, p * art.duration, scale, height,
     pulse ? 0 : hit.angle, Math.min(1, (1 - p) * 2.8));
+  if (hit.contact) drawBoltContact(ctx, hit);
+  return drawn;
 }

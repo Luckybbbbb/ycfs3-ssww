@@ -21,9 +21,9 @@ export function advanceBolt(b, dt) {
 
 // 扫掠命中:本帧弹从 (prevX, y) 水平飞到 (b.x, y),线段到敌心距离 ≤ HIT_R 即可命中。
 // 与帧步长无关(帧末位置检测会漏掉跨过碰撞区的步长)。
-// 返回按「弹道与碰撞圆首次相交位置」升序:命中顺序=物理相遇顺序,
+// 返回敌人与首次接触位置，按接触位置升序。
 // 不按敌心 x 排序(同 x 不同 y 的圆进入弹道的先后不同,REQ-M3-04 整改 1)。
-export function findHitTargets(b, enemies) {
+export function findBoltContacts(b, enemies) {
   const prevX = b.x - BOLT_SPEED * b.lastDt;
   const y = b.y;
   const segLo = Math.min(prevX, b.x);
@@ -40,9 +40,9 @@ export function findHitTargets(b, enemies) {
     if (leave < segLo || enter > segHi) continue;   // 本帧线段未触及相交区间
     // 首次相交位置=线段起点与圆进入点的较大者(线段从左往右扫)
     const firstX = Math.max(segLo, enter);
-    cands.push({ e, firstX });
+    cands.push({ enemy: e, firstX });
   }
-  return cands.sort((a, c) => a.firstX - c.firstX).map(c => c.e);
+  return cands.sort((a, c) => a.firstX - c.firstX);
 }
 
 // ---- 敌方弹幕(FR-1.2:扇形弹;主角判定半径 40,圆形碰撞) ----
