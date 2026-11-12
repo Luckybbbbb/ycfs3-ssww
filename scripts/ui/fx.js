@@ -109,6 +109,7 @@ const CALL_PORTRAIT_DELAY = 0.10, CALL_PORTRAIT_ENTRY = 0.28, CALL_PORTRAIT_EXIT
 const CALL_BUBBLE = { x: 296, y: 54, w: 440 };
 const CALL_BUBBLE_DELAY = 0.26, CALL_BUBBLE_ENTRY = 0.26, CALL_BUBBLE_EXIT = 0.25;
 const CALL_NAME_DELAY = 0.34, CALL_NAME_ENTRY = 0.16;
+const CALL_NAME_W = 270;
 const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
 
 function callPortraitPose(t, hero) {
@@ -133,6 +134,12 @@ function callBubblePose(t, bubble) {
     ox: CALL_BUBBLE.x + 0.08 * CALL_BUBBLE.w,
     oy: CALL_BUBBLE.y + 0.70 * height,
   };
+}
+
+function callNamePose(t, height) {
+  const p = Math.min(1, (t - CALL_NAME_DELAY) / CALL_NAME_ENTRY);
+  return { x: CALL_BUBBLE.x + CALL_BUBBLE.w * 0.48, y: CALL_BUBBLE.y + height * 0.35,
+    scale: 1.35 - 0.35 * easeOutCubic(p) };
 }
 
 // M12 贴图表(初始全空;生产唯一填充入口=bindCallImages(main 预载成功后调用)——
@@ -534,7 +541,7 @@ export class FxLayer {
   // 终局/重开清场(REQ-M6-05 同口径:表现层不残留旧局演出);CD 同清(与 caster.resetTempState 对齐)
   clearCall() { this.call = null; this.callCdT = 0; }
 
-  // 技能背景层:render 在战场变换内、敌人绘制之前调用(z 序:场景 < 技能背景 < 敌人 < 喊话气泡)。
+  // 技能背景层在战场变换内绘制，敌人和技能特效在其上方。
   // 羽化遮罩自中心向左右展开(替代 clip-path 硬边):离屏画布合成 destination-in 横向渐变。
   drawCallBg(ctx) {
     const c = this.call;
@@ -622,14 +629,14 @@ export class FxLayer {
       if (right > 0) bounds.push({ left: 0, top: BATTLE_ASSET_BAR_H, right, bottom: CALL_H });
     }
     const bubble = callBubblePose(this.call.t, CALL_IMG.bubble);
-    if (bubble) {
-      const { x, y, w } = CALL_BUBBLE;
+    if (bubble && this.call.name && this.call.t >= CALL_NAME_DELAY) {
       const { scale, ox, oy, height } = bubble;
+      const name = callNamePose(this.call.t, height);
+      const x = ox + (name.x - ox) * scale, y = oy + (name.y - oy) * scale;
+      const halfW = (CALL_NAME_W / 2 + 6) * name.scale * scale, halfH = 28 * name.scale * scale;
       bounds.push({
-        left: ox + (x - ox) * scale,
-        top: Math.max(BATTLE_ASSET_BAR_H, oy + (y - oy) * scale),
-        right: Math.min(CALL_W, ox + (x + w - ox) * scale),
-        bottom: Math.min(CALL_H, oy + (y + height - oy) * scale),
+        left: Math.max(0, x - halfW), top: Math.max(BATTLE_ASSET_BAR_H, y - halfH),
+        right: Math.min(CALL_W, x + halfW), bottom: Math.min(CALL_H, y + halfH),
       });
     }
     return bounds;
@@ -639,10 +646,7 @@ export class FxLayer {
     const c = this.call;
     if (!c) return;
     const hero = CALL_IMG.hero;
-    const bubble = CALL_IMG.bubble;
     const portraitPose = callPortraitPose(c.t, hero);
-    const bubblePose = callBubblePose(c.t, bubble);
-    if (!portraitPose && !bubblePose) return;
     ctx.save();
     ctx.beginPath(); ctx.rect(0, BATTLE_ASSET_BAR_H, CALL_W, CALL_H - BATTLE_ASSET_BAR_H); ctx.clip();
     if (portraitPose) {
@@ -655,14 +659,39 @@ export class FxLayer {
       ctx.restore();
     }
 
-    if (bubblePose) {
+    this.drawCallBubble(ctx, true);
+    ctx.restore();
+  }
+
+  // 底图先画在战场背后，技能名最后画在前层。两层使用同一组坐标和入场曲线。
+  drawCallBubble(ctx, title = false) {
+    const c = this.call;
+    if (!c || (title && (!c.name || c.t < CALL_NAME_DELAY))) return;
+    const bubble = CALL_IMG.bubble;
+    const pose = callBubblePose(c.t, bubble);
+    if (!pose) return;
+    const { height, scale, alpha, ox, oy } = pose;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.translate(ox, oy);
+    ctx.scale(scale, scale);
+    ctx.translate(-ox, -oy);
+    if (title) {
+      const name = callNamePose(c.t, height);
+      ctx.translate(name.x, name.y);
+      ctx.scale(name.scale, name.scale);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = "900 42px 'Nunito','Noto Sans SC',sans-serif";
+      ctx.strokeStyle = '#1b1a2e';
+      ctx.lineWidth = 8;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(c.name, 0, 0, CALL_NAME_W);
+      ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 6;
+      ctx.fillStyle = '#fff';
+      ctx.fillText(c.name, 0, 0, CALL_NAME_W);
+    } else {
       const { x, y, w } = CALL_BUBBLE;
-      const { height, scale, alpha, ox, oy } = bubblePose;
-      ctx.save();
-      ctx.globalAlpha *= alpha;
-      ctx.translate(ox, oy);
-      ctx.scale(scale, scale);
-      ctx.translate(-ox, -oy);
       ctx.shadowColor = 'rgba(0,0,0,.6)';
       ctx.shadowBlur = 14;
       ctx.shadowOffsetY = 6;
@@ -672,25 +701,6 @@ export class FxLayer {
         ctx.fillStyle = '#fff2d2';
         roundRect(ctx, x + 22, y + height * 0.23, w - 65, height * 0.38, 22); ctx.fill();
       }
-      ctx.shadowOffsetY = 0;
-      if (c.name && c.t >= CALL_NAME_DELAY) {
-        const p = Math.min(1, (c.t - CALL_NAME_DELAY) / CALL_NAME_ENTRY);
-        const nameScale = 1.35 - 0.35 * easeOutCubic(p);
-        ctx.translate(x + w * 0.48, y + height * 0.42);
-        ctx.scale(nameScale, nameScale);
-        ctx.shadowBlur = 0;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.font = "900 42px 'Nunito','Noto Sans SC',sans-serif";
-        ctx.strokeStyle = '#1b1a2e';
-        ctx.lineWidth = 8;
-        ctx.lineJoin = 'round';
-        ctx.strokeText(c.name, 0, 0);
-        ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 6;
-        ctx.fillStyle = '#fff';
-        ctx.fillText(c.name, 0, 0);
-      }
-      ctx.restore();
     }
     ctx.restore();
   }

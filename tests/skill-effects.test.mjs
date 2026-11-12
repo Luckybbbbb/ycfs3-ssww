@@ -6,7 +6,7 @@ import { Battle } from '../scripts/battle/battle.js';
 import { dispatch } from '../scripts/skills/behaviors.js';
 import { skillById } from '../scripts/skills/library.js';
 import { ImpactEffects } from '../scripts/ui/combat_fx.js';
-import { drawShieldContact, drawSkillAura, drawSkillBolt, drawSkillRoots, drawSkillZone, enemyEffectFoot } from '../scripts/ui/skill_effects.js';
+import { drawShieldContact, drawSkillAura, drawSkillBolt, drawSkillImpact, drawSkillRoots, drawSkillZone, enemyEffectFoot } from '../scripts/ui/skill_effects.js';
 
 function recorder() {
   const layers = [], arcs = [], sprites = [], fills = [];
@@ -42,6 +42,28 @@ test('关闭动效后仍使用六种生图弹头，保留弹头大小并跳过�
     assert.deepEqual(frame.sprites,[{ frame:[i%3*160,Math.floor(i/3)*128,160,128], position:[350,238], alpha:1 }]);
     assert.equal(frame.fills.length,0);
   }
+});
+
+test('范围冲击在首帧可见，冰链在技能名出现时仍有清晰轮廓', () => {
+  const fx = new ImpactEffects();
+  const { ctx } = recorder();
+  const marks = [];
+  ctx.stroke = () => marks.push({ color: ctx.strokeStyle, alpha: ctx.globalAlpha });
+  for (const [id, color] of [['fire_pulse','#d54921'], ['metal_pulse','#d99e3e'], ['earth_pulse','#b16c35']]) {
+    const skill = skillById(id);
+    fx.note({ kind: 'dmg', n: 10, el: skill.el, skillId: id, x: 540, y: 240, targetName: 'fox',
+      radius: skill.params.r, impact: { primary: true, tier: 1 } });
+    drawSkillImpact(ctx, page, fx.active.at(-1));
+    assert.ok(marks.some(mark => mark.color === color && mark.alpha >= .64));
+  }
+  fx.clear();
+  fx.note({ kind: 'dmg', n: 10, el: 'water', skillId: 'water_chain', x: 540, y: 240,
+    impact: { primary: true }, linkFrom: { x: 198, y: 242 } });
+  fx.update(.36);
+  drawSkillImpact(ctx, page, fx.active[0]);
+  assert.ok(marks.some(mark => mark.color === '#2782b1' && mark.alpha > .7));
+  fx.update(.17);
+  assert.equal(fx.active.length, 0);
 });
 
 test('火区与霜区按本次释放重启，投影固定在原落点并提示实际剩余时间', () => {

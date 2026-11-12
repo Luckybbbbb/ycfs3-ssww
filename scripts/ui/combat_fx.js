@@ -130,7 +130,7 @@ export class ImpactEffects {
       targetX: ev.x, targetY: ev.y, linkFrom: ev.linkFrom, targetName: ev.targetName,
       el: hero ? 'earth' : ev.el, art, priority, angle, crit: ev.crit, hero, primary,
       skillId: ev.skillId, radius: ev.radius,
-      t: 0, life: ev.radius && primary ? 0.62 : ev.linkFrom ? 0.39 : ev.crit ? 0.37 : boss ? 0.31 : 0.24,
+      t: 0, life: ev.radius && primary ? 0.62 : ev.linkFrom ? 0.52 : ev.crit ? 0.37 : boss ? 0.31 : 0.24,
       reach: hero ? 44 : (26 + tier * 4 + (ev.crit ? 12 : 0)) * (primary ? 1 : 0.75),
       fragments: ev.crit || tier >= 4 ? 6 : primary ? 4 : 3,
     });

@@ -545,6 +545,12 @@ function drawBoardItem(ctx, cell, x, y) {
   ctx.restore();
 }
 
+function applyBattleCamera(ctx, { ox, oy, scale }) {
+  ctx.translate(360 + ox, 224 + oy);
+  ctx.scale(scale, scale);
+  ctx.translate(-360, -224);
+}
+
 export function render(ctx, engine, hud, dt = 1 / 60) {
   worldT += dt; // 需求方 2026-10-19:主角动画异常快——worldT 原按帧数固定 +1/60,高刷屏(120Hz+)下 2 倍速;改按渲染回调实际 dt 推进(帧率无关)
   ctx.clearRect(0, 0, 720, 1280);
@@ -567,9 +573,8 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   const tf = { ox: scene.ox + (kick?.ox ?? 0), oy: scene.oy + (kick?.oy ?? 0), scale: scene.scale };
   ctx.save();
   ctx.beginPath(); ctx.rect(0, BATTLE_ASSET_BAR_H, BOARD_W, BATTLE_H - BATTLE_ASSET_BAR_H); ctx.clip();
-  ctx.translate(360 + tf.ox, 224 + tf.oy);
-  ctx.scale(tf.scale, tf.scale);
-  ctx.translate(-360, -224);
+  ctx.save();
+  applyBattleCamera(ctx, tf);
   if (px) px.draw(ctx);
   else drawFlatBackdrop(ctx);
   // M12 技能喊话背景层(z 序:场景 < 技能背景 < 敌人;战场变换内绘制,随 screenshake/pulse 联动)
@@ -577,6 +582,9 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     hud.fx.drawCallBg(ctx);
     hud.fx.drawCallImpact?.(ctx);
   }
+  ctx.restore();
+  if (_fxOn) hud.fx?.drawCallBubble?.(ctx);
+  applyBattleCamera(ctx, tf);
 
   if (battle) {
     const waveCue = hud.battleHud?.activeWaveCue?.(hud);

@@ -316,7 +316,7 @@ function drawFrostLink(ctx, x, y, dx, dy, p) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(Math.atan2(dy, dx));
-  ctx.globalAlpha *= Math.min(1, (1 - p) * 1.8);
+  ctx.globalAlpha *= Math.min(1, (1 - p) * 2.35);
   ctx.beginPath(); ctx.moveTo(0, 0);
   for (let i = 1; i < count; i++) ctx.lineTo(i * length / count, i % 2 ? -5 : 5);
   ctx.lineTo(length, 0);
@@ -332,10 +332,10 @@ function drawFrostLink(ctx, x, y, dx, dy, p) {
 }
 
 function drawPulseShape(ctx, hit, y, p) {
-  const r = hit.radius * (0.42 + 0.58 * (1 - (1 - p) ** 3));
+  const r = hit.radius * (0.48 + 0.52 * (1 - (1 - p) ** 3));
   ctx.save();
   ctx.translate(hit.x, y);
-  ctx.globalAlpha *= Math.min(1, (1 - p) * 1.3) * Math.min(1, p * 18);
+  ctx.globalAlpha *= Math.min(1, (1 - p) * 1.55, 0.64 + p * 12);
   if (hit.skillId === 'metal_pulse') {
     for (let i = 0; i < 3; i++) {
       const angle = i * Math.PI * 2 / 3 + p * 5;

@@ -112,6 +112,7 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
     for (let t = 0; t <= 0.9; t += 0.05) { // 全时间轴采样(含入场/定格/退场边界)
       fx.call.t = t;
       fx.drawCallBg(ctx);
+      fx.drawCallBubble(ctx);
       fx.draw(ctx);
     }
     assert.equal(rec.draws.length, 0, '贴图未绑定时不产生 drawImage(静默跳过)');
@@ -129,19 +130,25 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   const rec2 = mkCtx();
   fx.call.t = 0.4; // 定格段:各元素可见
   fx.drawCallBg(rec2.ctx);
+  fx.drawCallBubble(rec2.ctx);
+  assert.equal(rec2.rec.draws.length, 1);
+  assert.ok(rec2.rec.draws[0].img.endsWith('/bubble.png'));
+  assert.equal(rec2.rec.fillTexts.length, 0);
   fx.draw(rec2.ctx);
   assert.equal(rec2.rec.draws.length, 2);
-  assert.ok(rec2.rec.draws.some(draw => draw.img.endsWith('/bubble.png')));
-  const [portrait, bubble] = fx.callBounds();
-  for (const box of [portrait, bubble]) {
+  assert.ok(rec2.rec.draws[1].img.endsWith('/hero.png'));
+  assert.ok(rec2.rec.fillTexts.includes('烈焰焚天'));
+  const [portrait, name] = fx.callBounds();
+  for (const box of [portrait, name]) {
     assert.ok(box.left >= 0 && box.right <= 720 && box.top >= 44 && box.bottom <= 448);
   }
   assert.equal(portrait.left, 0);
-  assert.ok(bubble.left >= 285 && bubble.right > 680);
+  assert.ok(name.left >= 285 && name.right > 600 && name.bottom < 220);
 
   function sample(t) {
     fx.call.t = t;
     const { ctx, rec } = mkCtx();
+    fx.drawCallBubble(ctx);
     fx.draw(ctx);
     return rec;
   }
@@ -155,7 +162,7 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   assert.equal(preName.draws.length, 2, '立绘之后弹出气泡');
   assert.equal(preName.fillTexts.length, 0, '气泡先于技能名');
   const hold = sample(0.49);
-  assert.equal(hold.translations[0][0], 0, '立绘停在画面左缘');
+  assert.ok(hold.translations.some(([x,y]) => x === 0 && y === 448), '立绘停在画面左缘');
   assert.ok(hold.fillTexts.includes('烈焰焚天'));
   assert.ok(sample(0.78).translations[0][0] < -200, '立绘向左滑出');
   assert.equal(sample(0.81).draws.length, 0);
