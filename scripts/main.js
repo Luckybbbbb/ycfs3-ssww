@@ -1,6 +1,6 @@
 // scripts/main.js
 // 入口：装配模块、启动主循环(M4:养成接线——经验升级/技能库装配/关卡解锁/存档 + M3 战斗闭环)
-// 启动顺序(FR-9):资源预载全部成功后才绑定输入、开波、启动主循环;缺图停载并给诊断。
+// 首页、选关、战斗分批准备。进入战斗前校验本局所需素材(FR-9)。
 // 相对路径: scripts/main.js
 
 import { startLoop } from './core/loop.js';
@@ -16,8 +16,8 @@ import { Caster } from './skills/cast.js';
 import { Battle } from './battle/battle.js';
 import { Parallax } from './battle/parallax.js';
 import { makeRng, BOARD_Y, CELL, swapCreatesMatch, isItem } from './board/grid.js';
-import { fullManifest } from './assets/manifest.js';
-import { preload } from './assets/loader.js';
+import { HOME_ASSETS, HOME_MOTION_ASSETS, menuManifest, battleManifest } from './assets/manifest.js';
+import { createAssetLoader } from './assets/loader.js';
 import { createApi } from './api/api.js';
 import { maxHpAt, atkAt } from './meta/exp.js';
 import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpCost, COIN_PER_GACHA, SKILL_LEVEL_CAP } from './meta/economy.js';
@@ -28,6 +28,7 @@ import { LEVEL_META } from './meta/levels.js';
 import { GROW_LAYOUT, UI, uiCardBtn, uiSlotRect, uiSlotSwapBtn, uiPickRows, bindImages, growDeductFx, growLevelUpFx, growSkillUpFx, growGachaFx, growGachaVisible, growGachaDismiss, growTipsShow, growTipsVisible, growTipsDismiss, growListScrollState, growListScrollTo, growFloatText, resultRestart, resultSkip, resultReady, startImagesBound, setPressPoint, pressMove, spawnCoinDrop, syncDropBank, resetDropBank, takeDropSfx, dropArriveCoin, dropArriveMat } from './ui/render.js'; // M11:UI 命中区常量与派生 helper(与 render 布局单一来源)
 
 const canvas = document.getElementById('game');
+const assets = createAssetLoader();
 fitCanvas(canvas);
 window.addEventListener('resize', () => fitCanvas(canvas));
 // -04 R2:画布外松手/取消/失焦清理按压态(丢失松手不留常驻反馈;window 级兜底与 onBlankUp 双清无害)
@@ -106,51 +107,80 @@ function persistProfile() {
   api.saveProfile({ ...profile, loadout: [...caster.loadout] });
 }
 
-// FR-9:先预载资源;缺文件报「缺 <路径>(实体:<名>)」并停载(不绑定输入、不启动主循环、无未处理拒绝)
-// M14 需求方 2026-10-18:预载期间在画布上画进度条(Pages 弱网 150 项资源下载可达数秒,消除黑屏卡顿感)
-function drawLoadProgress(done, total) {
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#14160f';
-  ctx.fillRect(0, 0, 720, 1280);
-  ctx.fillStyle = '#794f27';
-  ctx.font = "22px 'Nunito','Noto Sans SC',sans-serif";
-  ctx.textAlign = 'center';
-  ctx.fillText('言出法随之三生万物', 360, 560);
-  ctx.fillStyle = '#9f927d';
-  ctx.font = "18px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:16→18px
-  ctx.fillText(`资源加载中 ${done}/${total}`, 360, 610);
-  // 进度条(720 宽内 320px 奶油条+圆角;animal-island 同族配色)
-  ctx.fillStyle = 'rgba(240,232,216,.18)';
-  _loadRR(ctx, 200, 640, 320, 14, 7); ctx.fill();
-  ctx.fillStyle = '#f0e8d8';
-  _loadRR(ctx, 200, 640, Math.max(14, 320 * done / total), 14, 7); ctx.fill();
-  ctx.textAlign = 'left';
+const battlePacks = new Map();
+const packKey = (level) => level + ':' + caster.owned.join(',');
+let menuPending = null;
+let homeReady = false;
+
+function prepareMenu() {
+  if (menuPending) return;
+  menuPending = assets.load(menuManifest(progress.unlockedLevel))
+    .then(bindImages)
+    .catch(() => {}) // 选关可用；必需素材由出战入口重试并报告。
+    .finally(() => { menuPending = null; });
 }
-function _loadRR(ctx, x, y, w, h, r) {
-  r = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+
+function prepareBattle(level, retry = false) {
+  const key = packKey(level);
+  const existing = battlePacks.get(key);
+  if (existing && !(retry && existing.error)) return existing;
+  const pack = { progress: 0, ready: false, error: '' };
+  battlePacks.set(key, pack);
+  assets.load(battleManifest(level, caster.owned), (done, total) => {
+    pack.progress = Math.floor(done / total * 100);
+  }).then(images => {
+    bindImages(images);
+    pack.ready = true;
+  }).catch(error => { pack.error = error.message; });
+  return pack;
 }
-let loadError = null;
-let images = null;
-try {
-  images = await preload(fullManifest(), drawLoadProgress);
-} catch (err) {
-  loadError = err;
+
+function enterMenu() {
+  screen = 'menu';
+  if (progress.unlockedLevel === 1) prepareBattle(1);
+  prepareMenu();
 }
-if (loadError) {
-  document.body.innerHTML = `<pre style="color:#f66;font-size:20px;padding:24px">资源缺失:${loadError.message}</pre>`;
-} else {
+
+async function startHome() {
+  const cover = document.getElementById('boot-cover');
+  const status = document.getElementById('boot-status');
+  const retry = document.getElementById('boot-retry');
+  if (retry) retry.hidden = true;
+  if (status) status.textContent = '正在准备首页';
+  let images;
+  try {
+    images = await assets.load(HOME_ASSETS, null, { direct: true });
+  } catch (error) {
+    if (status && retry) {
+      status.textContent = error.message;
+      retry.hidden = false;
+      retry.onclick = startHome;
+    } else {
+      // 旧缓存里的 HTML 可能还没有启动面板。
+      const reload = document.createElement('button');
+      reload.textContent = `${error.message} · 重新加载`;
+      reload.onclick = () => location.reload();
+      document.body.replaceChildren(reload);
+    }
+    return;
+  }
   boot(images);
+  homeReady = true;
+  cover?.remove();
+  assets.load(HOME_MOTION_ASSETS, null, { direct: true }).then(bindImages).catch(error => {
+    showToast(error.message);
+  });
 }
 
 function startLevel(L) {
   if (!canPlay(progress, L)) { showToast('关卡未解锁'); return; }
+  if (!prepareBattle(L, true).ready) {
+    if (screen !== 'loadout') openLoadout(L);
+    return;
+  }
+  window.__sswwCallImagesBound = bindCallImages(assets.images);
+  window.__sswwHudImagesBound = bindHudImages(assets.images);
+  hud.heroImg = assets.images.get('call:hero') || null;
   engine.resetBoard(); // M11-03 F9:局界重置(放弃后重开不带旧局 clearing/falls/缓冲/事件)
   resetDropBank(); // -07 Q2:掉落显示值+在途池/拖尾/音效队列全清(新局从当前真值起步,跨局不残留)
   firstSel = null; // M11-03 F9:输入态局界清除(旧局点选状态不带入新局)
@@ -161,7 +191,8 @@ function startLevel(L) {
   caster.resetForNewLevel(); // REQ-05:终局清预约/档位/两项累计归零;CD 属局内进度同清
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
   hud.fx.clearCastFlights();
-  parallax.setLevel(battle.level); parallax.bindImages(images); // M13:分关卡背景切换
+  parallax.setLevel(battle.level);
+  window.__sswwParallaxImagesBound = parallax.bindImages(assets.images);
   hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
   caster.resetTempState(); // F7 续审:CD 加速等道具临时状态不带入新局
   battle.kills = 0;
@@ -215,6 +246,7 @@ function openLoadout(L) {
   pickSlot = -1; tipsSlot = -1; // M11-06:浮层状态随入口重置
   firstSel = null; // M11-03 F9:换装入口也清输入态(旧局点选不带入备战/新局)
   screen = 'loadout';
+  prepareBattle(L);
 }
 
 // M11:设置开关(音效/动效;开始界面与暂停面板共用,写档)
@@ -248,23 +280,17 @@ function toggleFx() {
 }
 
 function boot(images) {
-  // M11-02 F1 整改:渲染消费预载同一资源集合(render 各表以 preload 返回实例替换自建懒加载,
-  // 「预载成功 ⇒ 绘制资源就绪」;返回绑定数,CDP/测试校验)
-  window.__sswwImagesBound = bindImages(images);
-  window.__sswwCallImagesBound = bindCallImages(images); // M12 技能喊话贴图(同一预载集合,缺图停载口径不变)
-  window.__sswwHudImagesBound = bindHudImages(images); // M13 头像框/技能框
-  window.__sswwParallaxImagesBound = parallax.bindImages(images); // M13 分关卡背景(初始主题)
-  // M13 HUD 上下文(只读转发:battle_hud._snapshot 消费)
-  hud.heroImg = images.get('call:hero') || null; // 头像复用技能喊话立绘裁头部
+  bindImages(images);
+  hud.heroImg = null;
   hud.levelName = () => LEVEL_META[(battle.level - 1) % LEVEL_META.length].name;
-  hud.levelArt = (level) => images.get(`bg:${themeOf(level)}:far`) || null;
-  hud.skillImg = (id) => images.get(`icon:skills:${id}`) || null; // 技能图标(预载 Map 直取)
-  hud.itemImg = (id) => images.get(`icon:items:${id}`) || null;
+  hud.levelArt = (level) => assets.images.get(`bg:${themeOf(level)}:far`) || null;
+  hud.skillImg = (id) => assets.images.get(`icon:skills:${id}`) || null;
+  hud.itemImg = (id) => assets.images.get(`icon:items:${id}`) || null;
   hud.skillMeta = (id) => skillById(id);
+  hud.battleAssets = () => battlePacks.get(packKey(selLevel));
   // M11-02 F5:音效开关启动恢复(档内 settings.sfx;与 effects 同一套写档)
   sfx.enabled = profile.settings.sfx !== false;
   bgm.enabled = profile.settings.bgm !== false; // M14:BGM 默认开(档案缺省 true)
-  showToast('资源就绪');
 
   // 命中区工具
   const hit = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
@@ -348,7 +374,7 @@ function boot(images) {
       }
       // ---- 01 开始界面 ----
       if (screen === 'start') {
-        if (hit(p, UI.start.playBtn)) { screen = 'menu'; sfx.item(); return; }
+        if (hit(p, UI.start.playBtn)) { enterMenu(); sfx.item(); return; }
         if (hit(p, UI.start.settingsBtn)) { panel = 'settings'; sfx.item(); return; }
         if (hit(p, UI.start.aboutBtn)) { panel = 'about'; sfx.item(); return; }
         return;
@@ -707,6 +733,7 @@ function boot(images) {
         persistProfile();
         const { progress: p2 } = onVictory(progress, battle.level);
         progress = p2;
+        if (battle.level < LEVEL_META.length) prepareBattle(battle.level + 1);
         api.submitRun({ level: battle.level, victory: true, coins: battle.coinsGained + vr.coins, mats: battle.matsGained + vr.mats, kills: battle.kills })
           .then(res => { // 只回写 lastLevelCleared 且只增不减(F5 异步回归:乱序迟到回包不覆盖较新记录)
             progress = mergeRunResult(progress, res);
@@ -767,7 +794,8 @@ window.__ssww = {
   fx: () => hud.fx, // M12 调试句柄(CDP 触发喊话演出验证;只读转发)
   battleHud: () => hud.battleHud, // M13 调试句柄(CDP 读快照验证 Boss 显隐/Lv 徽标;只读转发)
   openLoadout, uiState: () => ({ screen, selLevel, selSlot, panel, paused, maxChain }),
-  imagesBound: () => window.__sswwImagesBound ?? 0, // M11-02 F1:预载→渲染绑定数(CDP 校验)
+  imagesBound: () => homeReady ? assets.images.size : 0,
+  battleAssets: level => battlePacks.get(packKey(level)),
   sfxEnabled: () => sfx.enabled, // M11-02 F5:音效开关实时态(CDP 验证刷新恢复)
   toggleSfx, toggleFx, setPaused: (v) => { paused = !!v; },
   // UIV2-01 F1:养成技能列表滚动状态(只读转发;CDP 验证滚动与末位技能可点)
@@ -783,3 +811,5 @@ window.__ssww = {
   dropSpawn: (k, v, x, y) => spawnCoinDrop(k, v, x, y),
   dropArrive: () => ({ coin: dropArriveCoin(), mat: dropArriveMat() }),
 };
+
+await startHome();

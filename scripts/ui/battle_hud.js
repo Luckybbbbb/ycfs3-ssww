@@ -111,9 +111,7 @@ export function bindHudImages(map) {
   return (HUD_IMG.avatarFrame ? 1 : 0) + (HUD_IMG.skillFrame ? 1 : 0);
 }
 
-// 主题映射:关卡 1..5 → meadow/swamp/mist/snow/volcano(>5 循环)
-export const LEVEL_THEMES = ['meadow', 'swamp', 'mist', 'snow', 'volcano'];
-export const themeOf = (level) => LEVEL_THEMES[(Math.max(1, level) - 1) % LEVEL_THEMES.length];
+export { LEVEL_THEMES, themeOf } from '../meta/levels.js';
 
 function drawItemStatus(ctx, hud, kind, label, remaining) {
   const { x, w, bg, edge, mark } = ITEM_STATUS[kind];

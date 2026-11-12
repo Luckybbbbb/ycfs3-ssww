@@ -3,6 +3,8 @@
 // 相对路径: scripts/meta/levels.js
 
 export const WAVES_PER_LEVEL = 10;
+export const LEVEL_THEMES = ['meadow', 'swamp', 'mist', 'snow', 'volcano'];
+export const themeOf = (level) => LEVEL_THEMES[(Math.max(1, level) - 1) % LEVEL_THEMES.length];
 
 // 初始仅第 1 关
 export function initialProgress() { return { unlockedLevel: 1, lastLevelCleared: 0 }; }

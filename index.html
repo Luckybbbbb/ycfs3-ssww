@@ -4,14 +4,35 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>言出法随之三生万物</title>
+<link rel="preload" as="image" href="assets/backgrounds/start/start_bg.png" fetchpriority="high">
+<link rel="preload" as="image" href="assets/ui/start/logo.png" fetchpriority="high">
 <style>
   html, body { margin: 0; padding: 0; background: #14160f; height: 100%; overflow: hidden; }
   /* 720×1280 逻辑分辨率画布，等比缩放 letterbox 居中（core/layout.js 控制尺寸） */
   #game { display: block; margin: 0 auto; touch-action: none; }
+  #boot-cover {
+    position: fixed; inset: 0; margin: auto; width: min(100vw, 56.25vh); height: min(100vh, 177.7778vw);
+    box-sizing: border-box; padding-top: min(18vw, 10vh); text-align: center;
+    background: radial-gradient(ellipse at 50% 26%, #376455, #152b25 64%, #14160f);
+    color: #fff1ce; font-family: system-ui, sans-serif;
+  }
+  #boot-cover h1 { margin: 0; font-size: clamp(28px, 8vw, 58px); letter-spacing: .12em; }
+  #boot-cover h1 span { display: block; margin-top: .25em; color: #e4c992; font-size: .64em; }
+  #boot-cover p { position: absolute; inset: 47% 10% auto; margin: 0; font-size: clamp(14px, 3.5vw, 22px); overflow-wrap: anywhere; }
+  #boot-cover button {
+    position: absolute; top: 63%; left: 50%; transform: translateX(-50%);
+    padding: .6em 1.7em; border: 1px solid #e4c992; border-radius: 12px; color: #fff1ce;
+    background: #24554b; font: inherit;
+  }
 </style>
 </head>
 <body>
 <canvas id="game" width="720" height="1280"></canvas>
+<div id="boot-cover">
+  <h1>言出法随<span>三生万物</span></h1>
+  <p id="boot-status" role="status">正在准备首页</p>
+  <button id="boot-retry" type="button" hidden>重新加载</button>
+</div>
 <script type="module" src="scripts/main.js"></script>
 </body>
 </html>

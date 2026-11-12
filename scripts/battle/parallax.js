@@ -8,6 +8,8 @@
 // 全局动效:受击 screenshake(4px/120ms);技能释放 zoom pulse(1.0→1.02→1.0)。
 // 相对路径: scripts/battle/parallax.js
 
+import { themeOf } from '../meta/levels.js';
+
 export const BATTLE_H = 448; // 战斗区高度(00 文档第 3 节)
 
 const TILE_W = 720;             // tile 宽=视口宽,循环滚动需两份拼接
@@ -63,7 +65,7 @@ export class Parallax {
 
   // M13:关卡切换(主题循环 meadow→swamp→mist→snow→volcano;重绑图,程序化 tile 保持)
   setLevel(level) {
-    const theme = ['meadow', 'swamp', 'mist', 'snow', 'volcano'][(Math.max(1, level) - 1) % 5];
+    const theme = themeOf(level);
     if (theme === this._theme) return; // 同主题免重绑
     this._theme = theme;
     this.imgs.far = null; this.imgs.near = null; // 待 main 重新 bindImages(按新主题 key)

@@ -115,7 +115,7 @@ export function bindImages(map) {
     if (img) { PLAYER_WALK_FRAMES[i] = img; n++; } // -07:开始界面原地跑步循环(walk 6 帧)
   }
   for (const [type, t] of Object.entries(ENEMY_TYPES)) {
-    ENEMY_FRAMES[type] = []; // M11-03 F1:先初始化行数组——ENEMY_FRAMES 初始 {},直接 [type][j]=img 抛 TypeError(黑屏根因)
+    ENEMY_FRAMES[type] ??= []; // 分批绑定时保留已加载关卡的帧。
     t.frames.forEach((fn, j) => {
       const img = map.get(`${type}:${fn}`);
       if (img) { ENEMY_FRAMES[type][j] = img; n++; }
@@ -1497,9 +1497,10 @@ function drawBtn(ctx, r, text, kind = 'primary', fontSize = 26) {
     ghost: [UI_STYLE.paper, UI_STYLE.ink],
     warn: ['#f5c31c', UI_STYLE.ink],
     disabled: ['#d8d2c4', UI_STYLE.dim],
+    loading: ['#e6ece3', '#375a50'],
   };
   const [bg, fg] = colors[kind] || colors.primary;
-  const pressed = kind !== 'disabled' && isPressed(r);
+  const pressed = kind !== 'disabled' && kind !== 'loading' && isPressed(r);
   ctx.fillStyle = pressed ? shade(bg, 0.88) : bg;
   roundRect(ctx, r.x, r.y, r.w, r.h, Math.min(24, r.h / 2)); ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 3;
@@ -1820,7 +1821,7 @@ function drawLoadoutScreen(ctx, hud) {
   ctx.fillStyle = '#fff';
   roundRect(ctx, 32, 140, 656, 300, 24); ctx.fill();
   ctx.strokeStyle = '#dcd8d1'; ctx.lineWidth = 3; roundRect(ctx, 32, 140, 656, 300, 24); ctx.stroke();
-  const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : null;
+  const pf = PLAYER_FRAMES.length ? seqFrame(PLAYER_FRAMES, worldT, 8) : PLAYER_WALK_FRAMES[0];
   ctx.fillStyle = '#efe9db';
   roundRect(ctx, 52, 160, 200, 260, 16); ctx.fill();
   if (pf && pf.complete && pf.naturalWidth > 0) {
@@ -1928,8 +1929,23 @@ function drawLoadoutScreen(ctx, hud) {
     }
   }
   ctx.textAlign = 'center';
-  // 出战按钮
-  drawBtn(ctx, UI.loadout.fightBtn, '出 战', 'primary', 38);
+  const fight = UI.loadout.fightBtn;
+  const pack = hud.battleAssets?.();
+  if (pack?.error) {
+    drawBtn(ctx, fight, '重新加载战场', 'primary', 31);
+    ctx.fillStyle = '#944535';
+    ctx.font = FONT(19);
+    ctx.fillText(pack.error, 360, fight.y + fight.h + 33, 640);
+  } else if (pack && !pack.ready) {
+    drawBtn(ctx, fight, `准备战场 ${pack.progress}%`, 'loading', 30);
+    const width = Math.round(fight.w * pack.progress / 100);
+    if (width > 0) {
+      ctx.fillStyle = '#16877a';
+      roundRect(ctx, fight.x, fight.y + fight.h + 9, width, 8, 4); ctx.fill();
+    }
+  } else {
+    drawBtn(ctx, fight, '出 战', 'primary', 38);
+  }
   // M11-06:换装面板/技能 tips 浮层(在主界面之上)
   // BEAUTIFY-01 F7:浮层入场淡入(键=面板类型;关闭后重开重新计时)
   if (lo.panel === 'skillPick') { ctx.save(); ctx.globalAlpha = _ovA = overlayIn('skillPick'); drawPickPanel(ctx, hud, prof, lo); ctx.restore(); }

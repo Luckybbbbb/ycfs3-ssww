@@ -2,7 +2,9 @@
 // 序列帧路径常量(帧号清单数组化,非等差序列禁止等差循环——04 文档第 6 节 FR-9)
 // 相对路径: scripts/assets/manifest.js
 
-import { ENEMY_TYPES } from '../battle/wave.js';
+import { ENEMY_TYPES, bossType, levelWeights } from '../battle/wave.js';
+import { LEVEL_THEMES, themeOf } from '../meta/levels.js';
+import { skillById } from '../skills/library.js';
 
 // 主角帧清单(04 文档第 6 节:idle 16 / walk 6 / walk_start 3;M3 用 idle,walk 留 M4+)
 export const PLAYER_FRAMES = {
@@ -61,7 +63,7 @@ export function skillCallList() {
       list.push({ key: `call:bg:${el}:${v}`, url: `assets/sprites/skillcall/bg_${el}_${v}.png`, entity: 'skillcall' });
     }
   }
-  for (const theme of ['meadow', 'swamp', 'mist', 'snow', 'volcano']) {
+  for (const theme of LEVEL_THEMES) {
     list.push({ key: `bg:${theme}:far`, url: `assets/backgrounds/battle/${theme}_far.png`, entity: 'battle-ui' });
     list.push({ key: `bg:${theme}:near`, url: `assets/backgrounds/battle/${theme}_near.png`, entity: 'battle-ui' });
   }
@@ -92,4 +94,30 @@ export function fullManifest() {
   list.push(...iconList());
   list.push(...skillCallList());
   return list;
+}
+
+const ASSETS = fullManifest();
+export const HOME_ASSETS = ASSETS.filter(({ key }) =>
+  ['ui:start_bg', 'ui:start_logo', 'ui:meadow_circle', 'player:walk:1'].includes(key));
+export const HOME_MOTION_ASSETS = ASSETS.filter(({ key }) => key.startsWith('player:walk:'));
+
+export function menuManifest(unlockedLevel) {
+  const portraits = LEVEL_THEMES.slice(0, unlockedLevel).map((_, index) => enemyFrameList(bossType(index + 1))[0]);
+  return [...ASSETS.filter(({ key }) => key.startsWith('icon:') || /^bg:.*:far$/.test(key)), ...portraits];
+}
+
+export function battleManifest(level, ownedSkills) {
+  const theme = themeOf(level);
+  const enemies = new Set([...Object.keys(levelWeights(level)), bossType(level)]);
+  const calls = new Set();
+  for (const id of ownedSkills) {
+    const skill = skillById(id);
+    if (skill && skill.kind !== 'bolt') calls.add(`call:bg:${skill.el}:${skill.unlockLevel >= 6 ? 2 : 1}`);
+  }
+  if (calls.size) calls.add('call:bubble');
+  return ASSETS.filter(({ key }) =>
+    key.startsWith('player:idle:') || key.startsWith('player:walk_start:') ||
+    key.startsWith('icon:') || key === 'call:hero' || key === 'ui:avatar_frame' || key === 'ui:skill_frame' ||
+    key.startsWith(`bg:${theme}:`) || calls.has(key) || enemies.has(key.split(':')[0])
+  );
 }

@@ -26,7 +26,8 @@ class StubImage {
 }
 const installStub = () => { const prev = globalThis.Image; globalThis.Image = StubImage; return () => { globalThis.Image = prev; }; };
 
-const { loadImage, preload } = await import('../scripts/assets/loader.js');
+const { createAssetLoader, loadImage, preload } = await import('../scripts/assets/loader.js');
+const { HOME_ASSETS, battleManifest, menuManifest } = await import('../scripts/assets/manifest.js');
 
 test('M11a loadImage 瞬时失败重试:失败 1~2 次后成功(重试 2 次口径),成功返回 [key, img]', async () => {
   const restore = installStub();
@@ -63,4 +64,42 @@ test('M11a preload 并发分批:125 项全部加载完成(错误信息只含真�
   failTimes = { 'missing.png': 999 };
   await assert.rejects(() => preload([{ key: 'x', url: 'missing.png', entity: 'boss' }]), /缺 missing\.png/);
   restore();
+});
+
+test('不同画面共用在途和已下载素材，失败后可重试缺失项', async () => {
+  const restore = installStub();
+  try {
+    const loader = createAssetLoader();
+    const shared = { key: 'shared', url: 'shared.png' };
+    const missing = { key: 'missing', url: 'late.png', entity: 'battle-ui' };
+    failTimes = { 'late.png': 3 };
+    requests.length = 0;
+    const first = loader.load([shared, missing]);
+    const progress = [];
+    const second = await loader.load([shared], (...args) => progress.push(args));
+    await assert.rejects(first, /缺 late\.png\(实体:battle-ui\)/);
+    const recovered = await loader.load([shared, missing]);
+    assert.deepEqual(progress, [[1, 1]]);
+    assert.equal(recovered.get(shared.key), second.get(shared.key));
+    assert.equal(requests.filter(url => url === 'shared.png').length, 1);
+    assert.equal(requests.filter(url => url === 'late.png').length, 4);
+  } finally {
+    restore();
+  }
+});
+
+test('首页和首关只请求相关素材，战斗清单包含本关首领及已拥有技能的喊话变体', () => {
+  assert.deepEqual(new Set(HOME_ASSETS.map(item => item.key)),
+    new Set(['ui:start_bg', 'ui:start_logo', 'ui:meadow_circle', 'player:walk:1']));
+  assert.ok(menuManifest(1).some(item => item.key.startsWith('fox:')));
+  assert.ok(!menuManifest(1).some(item => item.key.startsWith('boss:')));
+  const first = battleManifest(1, ['fire_bolt']).map(item => item.key);
+  assert.ok(first.includes('bg:meadow:near'));
+  assert.ok(first.some(key => key.startsWith('slime:')));
+  assert.ok(first.some(key => key.startsWith('fox:')));
+  assert.ok(!first.some(key => key.startsWith('boss:') || key.startsWith('call:bg:')));
+  const fifth = battleManifest(5, ['fire_dotzone', 'water_field']).map(item => item.key);
+  assert.ok(fifth.includes('bg:volcano:near'));
+  assert.ok(fifth.some(key => key.startsWith('boss:')));
+  assert.deepEqual(fifth.filter(key => key.startsWith('call:bg:')).sort(), ['call:bg:fire:1', 'call:bg:water:2']);
 });
