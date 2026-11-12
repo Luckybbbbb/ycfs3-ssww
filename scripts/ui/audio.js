@@ -221,6 +221,19 @@ export const sfx = {
     tone({ freq: 660, dur: 0.08, type: 'sine', vol: 0.14 });
     tone({ freq: 990, dur: 0.12, type: 'sine', vol: 0.12, delay: 0.07 });
   },
+  consume(kind) {
+    if (kind === 'heal') {
+      tone({ freq: 523, dur: 0.16, vol: 0.12 });
+      tone({ freq: 784, dur: 0.23, vol: 0.10, delay: 0.055 });
+    } else if (kind === 'invincible') {
+      tone({ freq: 196, slide: -32, dur: 0.20, type: 'triangle', vol: 0.14 });
+      tone({ freq: 1175, dur: 0.18, vol: 0.09, delay: 0.035 });
+    } else if (kind === 'cd') {
+      tone({ freq: 880, slide: 210, dur: 0.085, type: 'triangle', vol: 0.095 });
+      tone({ freq: 1320, dur: 0.11, vol: 0.095, delay: 0.055 });
+      tone({ freq: 1760, dur: 0.13, vol: 0.071, delay: 0.095 });
+    }
+  },
   bossArrival() {
     tone({ freq: 164, slide: -79, dur: 0.30, type: 'triangle', vol: 0.16 });
     tone({ freq: 123, slide: -55, dur: 0.32, type: 'triangle', vol: 0.14, delay: 0.17 });

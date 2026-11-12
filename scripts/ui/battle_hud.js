@@ -380,6 +380,17 @@ export class BattleHudView {
         ctx.restore();
       }
       if (s.cdBoostT > 0) {
+        if (cd > 0 && hud.fxEnabled?.() !== false) {
+          const head = x - 24 + (1 - (s.cdBoostT * 1.55 + i * 0.14) % 1) * 120;
+          ctx.save();
+          _rr(ctx, x + 2, y + 2, 68, 68, 16); ctx.clip();
+          const light = ctx.createLinearGradient(head - 22, y, head + 22, y + 14);
+          light.addColorStop(0, 'rgba(158,235,255,0)');
+          light.addColorStop(0.55, 'rgba(158,235,255,.42)');
+          light.addColorStop(1, 'rgba(158,235,255,0)');
+          ctx.fillStyle = light; ctx.fillRect(x, y, SLOT_SIZE, SLOT_SIZE);
+          ctx.restore();
+        }
         ctx.strokeStyle = '#9dd4ef';
         ctx.lineWidth = 2;
         _rr(ctx, x + 2, y + 2, 68, 68, 16);

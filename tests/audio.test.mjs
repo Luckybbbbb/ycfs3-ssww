@@ -81,3 +81,23 @@ test('连锁提高基音并增加延后的和音', async () => {
     audio.restore();
   }
 });
+
+test('治疗、无敌、冷却加速分别播放不同音效，静音时跳过', async () => {
+  const audio = instrumentAudio();
+  try {
+    const { sfx } = await import('../scripts/ui/audio.js?item-test');
+    sfx.consume('heal');
+    audio.setTime(1);
+    sfx.consume('invincible');
+    audio.setTime(2);
+    sfx.consume('cd');
+    const notes = audio.scheduled.frequencies;
+    assert.deepEqual(notes.map(note => note.value), [523, 784, 196, 1175, 880, 1320, 1760]);
+    assert.ok(notes.at(-1).time > 2.08);
+    sfx.enabled = false;
+    sfx.consume('cd');
+    assert.equal(notes.length, 7);
+  } finally {
+    audio.restore();
+  }
+});

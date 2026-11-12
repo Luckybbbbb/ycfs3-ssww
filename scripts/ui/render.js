@@ -590,12 +590,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.beginPath(); ctx.arc(PLAYER_X, 300, 110, 0, Math.PI * 2); ctx.stroke();
     }
     if (_fxOn) hud.fx?.impacts?.draw(ctx);
-    // M5 无敌道具:主角金圈
-    if (battle.invincibleT > 0) {
-      ctx.strokeStyle = `rgba(245,195,28,${Math.min(1, battle.invincibleT)})`;
-      ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.arc(PLAYER_X, 300, 96, 0, Math.PI * 2); ctx.stroke();
-    }
+    if (battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawShield(ctx, battle.invincibleT, _fxOn);
     // ===== 主角:战斗待机=idle 8fps 循环;释放技能时 walk_start 3 帧单次(攻击动画) =====
     let pf;
     if (battle.playerAttackT > 0) {
@@ -612,6 +607,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.fillStyle = '#3f6fb5';
       roundRect(ctx, PLAYER_X - 40, 448 - 220, 80, 220, 24); ctx.fill();
     }
+    if (_fxOn && battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawHeal(ctx);
     if (_fxOn && battle.hurtT > 0) {
       const fade = Math.min(1, battle.hurtT / 0.2);
       ctx.save();
@@ -879,7 +875,10 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
 
   // 特效层(REQ-M7-01 F5:关动效 fxEnabled=false 时**停止绘制**存量粒子/冒字——
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
-  if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx, combatHudBounds, UI_IMG);
+  if (hud.fx && engine.fxEnabled !== false) {
+    hud.fx.itemEffects?.drawBoard(ctx);
+    hud.fx.draw(ctx, combatHudBounds, UI_IMG);
+  }
   ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
   if (engine.fxEnabled !== false) hud.fx?.drawCastFlights?.(ctx);
   if (waveNotice) hud.battleHud.drawWaveNotice(ctx, waveNotice);

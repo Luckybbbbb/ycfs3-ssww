@@ -21,6 +21,8 @@ import { HOME_ASSETS, HOME_MOTION_ASSETS, menuManifest, battleManifest } from '.
 import { createAssetLoader } from './assets/loader.js';
 import { createApi } from './api/api.js';
 import { maxHpAt, atkAt } from './meta/exp.js';
+import { PLAYER_X } from './skills/registry.js';
+import { PLAYER_Y } from './battle/enemy.js';
 import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpCost, COIN_PER_GACHA, SKILL_LEVEL_CAP } from './meta/economy.js';
 import { canPlay, onVictory, mergeRunResult, WAVES_PER_LEVEL } from './meta/levels.js';
 import { applyItem } from './board/items.js';
@@ -208,6 +210,7 @@ function startLevel(L) {
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
   hud.fx.clearCastFlights();
   hud.fx.impacts.clear();
+  hud.fx.itemEffects.clear();
   parallax.setLevel(battle.level);
   window.__sswwParallaxImagesBound = parallax.bindImages(assets.images);
   hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
@@ -244,6 +247,7 @@ function retryLevel() {
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
   hud.fx.clearCastFlights();
   hud.fx.impacts.clear();
+  hud.fx.itemEffects.clear();
   hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
   battle.kills = 0;
   battle.expGained = 0;
@@ -296,6 +300,7 @@ function toggleFx() {
     hud.battleHud.waveCue = null;
     hud.fx.clearCastFlights();
     hud.fx.impacts.clear();
+    hud.fx.itemEffects.clear();
   }
   persistProfile();
   showToast(`动效 ${profile.settings.effects ? '开' : '关'}`);
@@ -539,19 +544,25 @@ function boot(images) {
         if (!item) return;
         // M5:道具效果接入战斗(02 文档第 6 节;数值由 items.applyItem 统一口径)
         const fx = applyItem(item, { maxHP: battle.maxHp });
+        let healed = 0;
         if (fx.kind === 'heal') {
           const before = battle.hp;
           battle.hp = Math.min(battle.maxHp, battle.hp + fx.amount);
-          const healed = battle.hp - before;
-          showToast(healed > 0 ? `回血 +${healed}` : '生命已满');
+          healed = battle.hp - before;
+          if (healed > 0 && engine.fxEnabled) {
+            hud.fx.combatFloat({ kind: 'itemHeal', x: PLAYER_X, y: PLAYER_Y + 42, n: healed, jitter: 0.2 });
+          } else {
+            showToast(healed > 0 ? `回血 +${healed}` : '生命已满');
+          }
         } else if (fx.kind === 'invincible') {
           battle.invincibleT = fx.seconds;
-          showToast(`无敌 ${fx.seconds}s`);
         } else if (fx.kind === 'cd') {
           caster.setCdBoost(fx.seconds, fx.rate);
-          showToast(`CD 加速 ×${fx.rate}(${fx.seconds}s)`);
         }
-        sfx.item();
+        if (engine.fxEnabled) {
+          hud.fx.itemEffects.trigger(fx.kind, (cell.c + 0.5) * CELL, BOARD_Y + (cell.r + 0.5) * CELL, item.premium, healed);
+        }
+        sfx.consume(fx.kind);
         return;
       }
       // 点选交换(02 文档 2.1 两种输入并存):点 A 再点相邻 B → 尝试交换;
@@ -762,6 +773,7 @@ function boot(images) {
         caster.resetForNewLevel();
         hud.fx.clearCall(); // M12:旧局喊话演出不残留
         hud.fx.clearCastFlights();
+        hud.fx.itemEffects.clear();
         caster.resetTempState();
         engine.drainEvents();
         let ffGuard = 0;

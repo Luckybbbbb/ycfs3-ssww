@@ -7,6 +7,7 @@ import { BOARD_W, BOARD_H, BOARD_Y } from '../board/grid.js';
 import { BATTLE_ASSET_BAR_H, GEM_COLORS as GEM_FLOAT } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { BATTLE_H } from '../battle/parallax.js'; // 战斗区高度单一来源(喊话演出以战斗区为舞台)
 import { ImpactEffects } from './combat_fx.js';
+import { ItemEffects } from './item_fx.js';
 
 // 伤害冒字样式表(03 文档 6.2a/6.2b;**全部五行语义色引用 draw_util GEM_COLORS 单一定义源**,
 // REQ-M7-02 F6:灼烧/吸血/光环/护盾/状态标记不再硬编码;非五行语义色[免伤/受击/击破]为独立字面值)
@@ -17,6 +18,7 @@ const FT_STYLE = {
   burn:       { color: () => GEM_FLOAT.fire, fmt: ev => String(ev.n), icon: 'burn', fallback: '灼烧', imp: 0, size: 28 },
   bindDot:    { color: ev => GEM_FLOAT[ev.el] || GEM_FLOAT.wood, fmt: ev => String(ev.n), icon: 'bind', fallback: '束缚', imp: 0, size: 28 },
   leech:      { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 1, size: 32 },
+  itemHeal:   { color: () => '#ffc5d6', fmt: ev => `+${ev.n}`, imp: 1, size: 32 },
   aura:       { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 0, size: 28 },
   shieldGain: { color: () => GEM_FLOAT.earth, fmt: ev => `+${ev.n}`, icon: 'shield', fallback: '护盾', imp: 1, size: 32 },
   absorb:     { color: () => GEM_FLOAT.earth, fmt: ev => String(ev.n), icon: 'shield', fallback: '吸收', imp: 1, size: 32 },
@@ -142,6 +144,7 @@ export class FxLayer {
     this.particles = []; // 棋盘内的合成光点与爆发碎片
     this.castFlights = [];
     this.impacts = new ImpactEffects();
+    this.itemEffects = new ItemEffects();
     this.floaters = [];  // {x,y,text,t,life,size,color}
     this.combatTexts = []; // v0.3 伤害冒字(上限 64 字符位;M8 A 整条一体运动/暴击,03 文档 6.1)
     this.announces = [];   // M9 连锁播报 [{chain,text,color,t,life}](engine chain_announce 事件驱动)
@@ -301,6 +304,7 @@ export class FxLayer {
 
   update(dt) {
     this.impacts.update(dt);
+    this.itemEffects.update(dt);
     for (const flight of this.castFlights) flight.t += dt;
     if (this.castFlights.length) this.castFlights = this.castFlights.filter(f => f.t < f.travel + CAST_ARRIVAL);
     if (this.call) { this.call.t += dt; if (this.call.t >= CALL_TOTAL) this.call = null; } // M12
