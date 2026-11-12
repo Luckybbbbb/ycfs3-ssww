@@ -14,8 +14,8 @@ export const BATTLE_H = 448; // 战斗区高度(与 parallax BATTLE_H 同口径;
 const SLOT_X = 392, SLOT_Y = 330, SLOT_SIZE = 72, SLOT_STEP = 78;
 const ITEM_STATUS_Y = 212, ITEM_STATUS_H = 36;
 const ITEM_STATUS = {
-  invincible: { x: 228, w: 116, bg: '#5c431e', edge: '#e7be72', mark: '✦' },
-  cd: { x: 352, w: 142, bg: '#214863', edge: '#9dd4ef', mark: '⏱' },
+  invincible: { x: 228, w: 116, bg: '#5c431e', edge: '#e7be72' },
+  cd: { x: 352, w: 142, bg: '#214863', edge: '#9dd4ef' },
 };
 const WAVE_CUE_DURATION = { opening: 0.84, normal: 0.56, boss: 1.24 };
 const WAVE_NOTICE_PALETTE = {
@@ -114,7 +114,7 @@ export function bindHudImages(map) {
 export { LEVEL_THEMES, themeOf } from '../meta/levels.js';
 
 function drawItemStatus(ctx, hud, kind, label, remaining) {
-  const { x, w, bg, edge, mark } = ITEM_STATUS[kind];
+  const { x, w, bg, edge } = ITEM_STATUS[kind];
   const y = ITEM_STATUS_Y;
   ctx.fillStyle = bg;
   _rr(ctx, x, y, w, ITEM_STATUS_H, 10);
@@ -123,17 +123,12 @@ function drawItemStatus(ctx, hud, kind, label, remaining) {
   ctx.lineWidth = 2;
   ctx.stroke();
   const img = hud.itemImg?.(kind);
-  if (img?.complete && img.naturalWidth > 0) {
-    ctx.drawImage(img, x + 5, y + 4, 28, 28);
-  } else {
-    ctx.font = "bold 20px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillStyle = edge;
-    ctx.fillText(mark, x + 8, y + 25);
-  }
+  const hasIcon = img?.complete && img.naturalWidth > 0;
+  if (hasIcon) ctx.drawImage(img, x + 5, y + 4, 28, 28);
   ctx.font = "bold 18px 'Nunito','Noto Sans SC',sans-serif";
   ctx.fillStyle = '#fff7e8';
   const time = (Math.ceil(remaining * 10) / 10).toFixed(1);
-  ctx.fillText(`${label} ${time}s`, x + 33, y + 24);
+  ctx.fillText(`${label} ${time}s`, x + (hasIcon ? 33 : 12), y + 24);
   return { left: x - 1, right: x + w + 1, top: y - 1, bottom: y + ITEM_STATUS_H + 1 };
 }
 

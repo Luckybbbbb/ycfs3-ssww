@@ -50,15 +50,14 @@ export function enemyHealthViewOf(e) { return e ? _enemyHv.get(e) || null : null
 import { LEVEL_META, WAVES_PER_LEVEL } from '../meta/levels.js'; // M11 UI 设计稿:关卡名/建议等级
 import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶栏经验条
 
-const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
+const ITEM_ICON = { heal: '愈', invincible: '盾', cd: '时' };
 const TOAST_BOUNDS = { left: 180, top: 160, right: 540, bottom: 204 };
 const ITEM_STYLE = {
   heal: { plate: '#f8e9e6', timer: '#a45055' },
   invincible: { plate: '#f6eedb', timer: '#8a6a2a' },
   cd: { plate: '#e7eef7', timer: '#416e9c' },
 };
-// M14 界面图标贴图(assets/icons/ui/*.png 替换 emoji;表初始空,生产唯一填充入口=bindImages;
-// miss 时回退原 emoji 文字,不阻塞渲染)
+// 界面图标由 bindImages 加载，缺图时显示文字。
 const UI_IMG = {}; // M14 界面图标表(见上)
 // M15 Task 51:开始界面生图产物表(初始空,生产唯一填充入口=bindImages)。
 // 渲染回退仅覆盖「未绑定/未加载(complete=false)/解码失败(naturalWidth=0)」三种显示态→程序化兜底;
@@ -70,8 +69,7 @@ const MEADOW_IMG = { img: null };
 // -07 Q4:草地圆几何常量提升模块级(原 drawStartScreen 每帧新建对象)+ 兜底渐变缓存
 const MEADOW_CIRCLE = { x: 360, y: 1340, r: 280, spin: 0.12 };
 let MEADOW_FALLBACK_GRAD = null; // 程序化兜底草面渐变(按目标 ctx 缓存,同 ctx 复用)
-// 道具图标贴图(assets/icons/items/<item>[_premium].png 144×144;缺图回退 emoji 原样式;
-// 预载校验见 assets/manifest.js iconList)
+// 道具图标使用普通版或高级版贴图，缺图时显示简称。
 // ===== M11-03 F1 残留整改:生产导入路径零顶层加载 =====
 // 历史(两轮裁决):本模块顶层循环创建 Image 并立即赋 src——在 main 调 preload **之前**就发生
 // 119 次独立加载,绕过 loader 的 24 并发上限与重试(M11-01 F1)。「bindImages 兜底」注释与
@@ -183,17 +181,59 @@ const PLAYER_WALK_FRAMES = []; // 主角跑步循环 walk 6 帧(-07:开始界面
 const ENEMY_FRAMES = {};       // 六类敌人序列帧(缺图椭圆兜底)
 const seqFrame = (frames, t, fps) => frames[Math.floor(t * fps) % frames.length];
 
-// M14:行内资产图标+数字(coin/pick 贴图;返回文字起点 x 供继续排布;miss 回退 emoji 文字)
+// 行内资产图标。图标未加载时显示资产简称。
 // BEAUTIFY-01 F1(P1):y 语义=**图标顶边**(原按文字基线但调用处混传基线/顶部,战斗与养成
 // 图标整体偏高 17~21px 出 chip);统一按 chip 中心对齐:顶边=chipY+(chipH-size)/2
-function drawAssetIcon(ctx, key, emoji, x, y, size = 20) {
-  const img = UI_IMG[key];
-  if (img && img.complete && img.naturalWidth) {
-    ctx.drawImage(img, x, y, size, size);
-    return x + size + 6;
+function drawAssetIcon(ctx, key, x, y, size = 20) {
+  if (drawUiIcon(ctx, key, x, y, size)) return;
+  ctx.save();
+  ctx.fillStyle = '#794f27';
+  ctx.font = FONT(Math.round(size * 0.8), 'bold');
+  ctx.fillText(key === 'coin' ? '币' : '材', x, y + size - 3);
+  ctx.restore();
+}
+
+const ENEMY_STATUS_ICONS = [
+  { active: e => e.burn, key: 'burn', label: '灼', color: GEM_SRC.fire },
+  { active: e => e.slowT > 0, key: 'slow', label: '缓', color: GEM_SRC.water },
+  { active: e => e.bindT > 0, key: 'bind', label: '缚', color: GEM_SRC.wood },
+  { active: e => e.stunT > 0, key: 'stun', label: '晕', color: GEM_SRC.earth },
+];
+
+function drawEnemyStatuses(ctx, enemy, barY, transform, bounds) {
+  if (!enemy.burn && !(enemy.slowT > 0 || enemy.bindT > 0 || enemy.stunT > 0)) return;
+  const { ox, oy, scale } = transform;
+  const screenX = 360 + ox + (enemy.x - 360) * scale;
+  if (screenX < -40 || screenX > BOARD_W + 40) return;
+  const icons = ENEMY_STATUS_ICONS.filter(status => status.active(enemy));
+  const size = 22, step = 25, width = (icons.length - 1) * step + size;
+  const left = Math.max(6, Math.min(BOARD_W - 6 - width * scale, screenX - width * scale / 2));
+  const x = 360 + (left - 360 - ox) / scale;
+  const right = left + width * scale;
+  const height = size * scale;
+  let y = barY - size - 4;
+  let top = 224 + oy + (y - 224) * scale;
+  // 敌人挤在一起时，把后绘制的一排向上错开。
+  while (bounds.some(row => left < row.right + 3 && right > row.left - 3 &&
+    top < row.bottom + 3 && top + height > row.top - 3)) {
+    y -= size + 5;
+    top -= (size + 5) * scale;
   }
-  ctx.fillText(`${emoji} `, x, y + size - 3); // emoji 回退:基线≈顶边+size-3
-  return x + ctx.measureText(`${emoji} `).width;
+  if (top < BATTLE_ASSET_BAR_H + 4) return;
+  bounds.push({ left, right, top, bottom: top + height });
+  for (const [i, { key, label, color }] of icons.entries()) {
+    const iconX = x + i * step;
+    if (drawUiIcon(ctx, key, iconX, y, size)) continue;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#221d17';
+    ctx.lineWidth = 3;
+    ctx.font = FONT(16, 'bold');
+    ctx.textAlign = 'center';
+    ctx.strokeText(label, iconX + size / 2, y + 17);
+    ctx.fillText(label, iconX + size / 2, y + 17);
+    ctx.restore();
+  }
 }
 
 
@@ -489,6 +529,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   _ctxTag = `${scr}:${(hud.panel ? hud.panel() : '') ?? ''}:${hud.growPanel ? (hud.growPanel() ? 1 : 0) : 0}:${hud.paused ? (hud.paused() ? 1 : 0) : 0}`; // 按压态界面身份(屏:浮层:养成页:暂停;与 main tag 同源)
 
   if (inBattle) {
+  const enemyStatusBounds = [];
   // ===== 战斗区(FR-1.5 视差三层;screenshake/zoom pulse 变换) =====
   const tf = px ? px.transform() : { ox: 0, oy: 0, scale: 1 };
   ctx.save();
@@ -524,20 +565,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
         _enemyHv.set(e, hv);
       }
       hv.draw(ctx, bx, by, bw, 6);
-      // 状态标记(03 文档 6.2b:4 种——灼烧🔥/减速❄/束缚🌿/眩晕💫;字段非零显示、清零消失;
-      // M8 配色整改:颜色引用 GEM_SRC 单一定义源,与元素语义一致)
-      // M14:状态标记改贴图(assets/icons/ui/;缺图回退 emoji 原样式)
-      const markY = e.y - t.srcH * t.scale / 2 - 24;
-      const drawMark = (cond, key, x, fallback, fill) => {
-        if (!cond) return;
-        const img = UI_IMG[key];
-        if (img && img.complete && img.naturalWidth) ctx.drawImage(img, x - 11, markY - 11, 22, 22);
-        else { ctx.fillStyle = fill; ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(fallback, x, markY); ctx.textAlign = 'left'; }
-      };
-      drawMark(e.burn, 'burn', e.x + 30, '🔥', GEM_SRC.fire);
-      drawMark(e.slowT > 0, 'slow', e.x - 38, '❄', GEM_SRC.water);
-      drawMark(e.bindT > 0, 'bind', e.x - 57, '🌿', GEM_SRC.wood);
-      drawMark(e.stunT > 0, 'stun', e.x - 19, '💫', GEM_SRC.earth);
+      drawEnemyStatuses(ctx, e, by, tf, enemyStatusBounds);
     }
     // ===== 敌方弹幕(暗红光点,FR-1.2) =====
     for (const b of battle.ebolts) {
@@ -615,7 +643,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     ctx.font = FONT(17); ctx.fillStyle = '#9f927d';
     ctx.fillText('战斗产出实时入账', 84, TB.y + 29);
     let cxr = 704; // 右缘
-    for (const [val, icon, emoji, dispKey, bumpKey] of [[prof.materials, 'pick', '⛏', 'matDisp', 'matBump'], [prof.coins, 'coin', '💰', 'coinDisp', 'coinBump']]) {
+    for (const [val, icon, dispKey, bumpKey] of [[prof.materials, 'pick', 'matDisp', 'matBump'], [prof.coins, 'coin', 'coinDisp', 'coinBump']]) {
       const bankV = dropBank[dispKey] === null ? val : dropBank[dispKey];
       const label = `${Math.round(bankV)}`;
       ctx.font = FONT(19, 'bold');
@@ -627,7 +655,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       // 图标 bump(掉落到达:spring 放大→回弹,0.35s;-07 S1:关动效直接原尺寸,dt=0 不残留放大)
       const bp = dropBank[bumpKey];
       const iconScale = (_fxOn && bp > 0) ? 1 + 0.35 * Math.sin((1 - bp / 0.35) * Math.PI) : 1;
-      drawAssetIcon(ctx, icon, emoji, x + 12 + (20 - 20 * iconScale) / 2, y + 8 + (20 - 20 * iconScale) / 2, 20 * iconScale);
+      drawAssetIcon(ctx, icon, x + 12 + (20 - 20 * iconScale) / 2, y + 8 + (20 - 20 * iconScale) / 2, 20 * iconScale);
       ctx.fillStyle = '#794f27';
       ctx.fillText(label, x + 40, y + 24);
       // 记录 chip 图标锚点(掉落飞行目标;每帧**原地更新**不新建,-07 Q4)
@@ -645,7 +673,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   // M13 战斗区 HUD(头像/二段血条/关卡名/BOSS 条/技能框/波次进度;draw 自带快照,只读;
   // 自 2026-10-19 起整体下移 44px,避让上方货币栏条带)
   const combatHudBounds = hud.battleHud ? hud.battleHud.draw(ctx, hud) : [];
-  combatHudBounds.push(...BATTLE_BUTTON_BOUNDS);
+  combatHudBounds.push(...BATTLE_BUTTON_BOUNDS, ...enemyStatusBounds);
   if (hud.toast?.t > 0) combatHudBounds.push(TOAST_BOUNDS);
   const waveNotice = hud.battleHud?.waveNotice?.(hud);
   if (waveNotice) combatHudBounds.push(waveNotice);
@@ -851,7 +879,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
 
   // 特效层(REQ-M7-01 F5:关动效 fxEnabled=false 时**停止绘制**存量粒子/冒字——
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
-  if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx, combatHudBounds);
+  if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx, combatHudBounds, UI_IMG);
   ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
   if (engine.fxEnabled !== false) hud.fx?.drawCastFlights?.(ctx);
   if (waveNotice) hud.battleHud.drawWaveNotice(ctx, waveNotice);
@@ -1015,7 +1043,7 @@ function drawGrowPanel(ctx, hud, dt = 1 / 60) {
     ctx.fillStyle = '#fff';
     roundRect(ctx, c.x + shake, chipY, c.w, chipH, 22); ctx.fill();
     ctx.strokeStyle = '#e8e2d6'; ctx.lineWidth = 2; roundRect(ctx, c.x + shake, chipY, c.w, chipH, 22); ctx.stroke();
-    drawAssetIcon(ctx, c.icon, c.kind === 'coin' ? '💰' : '⛏', c.x + shake + 14, chipY + 12, 24); // 顶边:图标中心=chip 中心(chipY+24)
+    drawAssetIcon(ctx, c.icon, c.x + shake + 14, chipY + 12, 24); // 图标中心与资产栏对齐
     ctx.fillStyle = '#794f27';
     ctx.fillText(c.label, c.x + shake + 48, chipY + 32);
   }
@@ -1744,9 +1772,10 @@ function drawMenuScreen(ctx, hud) {
     // 需求方 2026-10-19 第三批:缩略图=该关 Boss 类型帧首帧(LEVEL_BOSS:fox/zombie/snake/tiger/boss)
     const bossImg = ENEMY_FRAMES[bossType(i)] && ENEMY_FRAMES[bossType(i)][0]; // 循环变量 i=关卡号
     if (!unlocked) {
-      ctx.fillStyle = hasScene ? '#fff2d7' : '#816f57'; ctx.font = FONT(34);
-      ctx.fillText('🔒', tx + th / 2, tyy + th / 2 + 4);
-      ctx.font = FONT(18); ctx.fillText('未解锁', tx + th / 2, tyy + th / 2 + 40);
+      const lock = drawUiIcon(ctx, 'lock', tx + th / 2 - 27, tyy + th / 2 - 39, 54);
+      ctx.fillStyle = hasScene ? '#fff2d7' : '#816f57';
+      ctx.font = FONT(18, 'bold');
+      ctx.fillText('未解锁', tx + th / 2, tyy + th / 2 + (lock ? 40 : 6));
     } else if (bossImg && bossImg.complete && bossImg.naturalWidth > 0) {
       ctx.save();
       roundRect(ctx, tx, tyy, th, th, 16); ctx.clip();

@@ -6,7 +6,7 @@
 // 相对路径: sw.js(仓库根,scope=部署目录;本地 dev 与 Pages 子路径均成立)
 
 const CACHE_PREFIX = 'ssww-cache-';
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
 
 function fetchCurrent(req) {

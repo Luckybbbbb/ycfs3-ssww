@@ -240,7 +240,7 @@ test('M8 fx 寿命分级(6.1):imp2(免伤/击破)1.1s;暴击事件 1.25s', () =>
   assert.ok(Math.abs(crit.life - 1.25) < 1e-9, '暴击寿命 1.25s');
 });
 
-test('M7 fx 文案映射(6.2a):🔥2/🌿3/🛡+5/+2/免伤/击破/❄减速(整条一体,一事件一条)', () => {
+test('M7 飘字文案与状态贴图映射，每个事件保留一条', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'burn', x: 0, y: 0, n: 2 });
   fx.combatFloat({ kind: 'bindDot', x: 0, y: 40, n: 3, el: 'wood' });
@@ -249,9 +249,11 @@ test('M7 fx 文案映射(6.2a):🔥2/🌿3/🛡+5/+2/免伤/击破/❄减速(整
   fx.combatFloat({ kind: 'immune', x: 0, y: 160 });
   fx.combatFloat({ kind: 'kill', x: 0, y: 200 });
   fx.combatFloat({ kind: 'slowMark', x: 0, y: 240 });
-  const joined = fx.combatTexts.map(c => c.text).join('');
-  assert.equal(joined, '🔥2🌿3🛡+5+2免伤击破❄减速');
-  assert.equal(fx.combatTexts[3].color, GEM_COLORS.wood, '束缚跳伤木色(bindEl)');
+  assert.deepEqual(fx.combatTexts.map(c => [c.text, c.icon]), [
+    ['2', 'burn'], ['3', 'bind'], ['+5', 'shield'], ['+2', undefined],
+    ['免伤', undefined], ['击破', undefined], ['减速', 'slow'],
+  ]);
+  assert.equal(fx.combatTexts[1].color, GEM_COLORS.wood, '束缚跳伤木色(bindEl)');
   assert.equal(fx.combatTexts.find(c => c.text === '免伤').imp, 2, '免伤 importance 2');
 });
 
@@ -272,7 +274,7 @@ test('M7 fx 上限 64(6.1,M8 字符位口径):超出丢弃 importance 最低、�
   const fx = new FxLayer();
   const totalChars = () => fx.combatTexts.reduce((a, c) => a + c.charN, 0);
   for (let i = 0; i < 31; i++) fx.combatFloat({ kind: 'dmg', x: i * 30, y: 100, n: 1, el: 'fire', jitter: 0, importance: 1 }); // 31×2 字符=62
-  fx.combatFloat({ kind: 'burn', x: 2000, y: 100, n: 1 }); // 🔥1 2 字符 → 64 满
+  fx.combatFloat({ kind: 'burn', x: 2000, y: 100, n: 1 }); // 图标和数字各占一位。
   assert.equal(totalChars(), 64);
   assert.equal(fx.combatTexts.length, 32, '整条口径:32 条事件(每条一事件)');
   assert.ok(fx.combatTexts.some(c => c.imp === 0), 'imp0 在列');
@@ -331,7 +333,7 @@ test('M7 F3 淘汰含新事件(M8 字符位口径):64 字符 imp2 后进 imp0 �
   fx.combatFloat({ kind: 'burn', x: 2500, y: 100, n: 1 }); // imp0 最低
   assert.equal(fx.combatTexts.reduce((a, c) => a + c.charN, 0), 64);
   assert.ok(fx.combatTexts.every(c => c.imp === 2), '全部 imp2 保留(新 imp0 整条被弃)');
-  assert.ok(!fx.combatTexts.some(c => c.text === '🔥1'), '新事件未入队');
+  assert.ok(!fx.combatTexts.some(c => c.icon === 'burn'), '新事件未入队');
 });
 
 test('M7 F3 同帧同重要度淘汰先后(M8 字符位口径):连续超限 → 按整条弃最早(seq 最小)', () => {
@@ -453,15 +455,15 @@ test('M7 F6 全 kind 颜色联动:五行语义色全部引用 GEM_COLORS(共享�
   fx.combatFloat({ kind: 'bindMark', x: 0, y: 210 });
   fx.combatFloat({ kind: 'stunMark', x: 0, y: 240 });
   const byText = Object.fromEntries(fx.combatTexts.map(c => [c.text, c.color])); // 整条一体:一事件一条
-  assert.equal(byText['🔥1'], GEM_COLORS.fire, '灼烧=fire 色引用共享表');
-  assert.equal(byText['🌿2'], GEM_COLORS.wood, '束缚跳伤=wood(el 引用)');
+  assert.equal(byText['1'], GEM_COLORS.fire, '灼烧=fire 色引用共享表');
+  assert.equal(byText['2'], GEM_COLORS.wood, '束缚跳伤=wood(el 引用)');
   assert.equal(byText['+3'], GEM_COLORS.wood, '吸血=wood');
   assert.equal(byText['+4'], GEM_COLORS.wood, '光环=wood');
-  assert.equal(byText['🛡+5'], GEM_COLORS.earth, '土盾=earth');
-  assert.equal(byText['🛡6'], GEM_COLORS.earth, '盾吸收=earth');
-  assert.equal(byText['❄减速'], GEM_COLORS.water, '减速标记=water');
-  assert.equal(byText['🌿束缚'], GEM_COLORS.wood, '束缚标记=wood');
-  assert.equal(byText['💫眩晕'], GEM_COLORS.earth, '眩晕标记=earth');
+  assert.equal(byText['+5'], GEM_COLORS.earth, '土盾=earth');
+  assert.equal(byText['6'], GEM_COLORS.earth, '盾吸收=earth');
+  assert.equal(byText['减速'], GEM_COLORS.water, '减速标记=water');
+  assert.equal(byText['束缚'], GEM_COLORS.wood, '束缚标记=wood');
+  assert.equal(byText['眩晕'], GEM_COLORS.earth, '眩晕标记=earth');
   // 直击联动(el 引用共享表)
   const fx2 = new FxLayer();
   fx2.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 1, el: 'fire' });
@@ -663,6 +665,33 @@ test('战斗冒字在右上角聚集时避开同帧文本和道具状态栏', ()
     assert.ok(box.left >= 6 && box.right <= 714 && box.top >= 50 && box.bottom <= 406);
   }
   assert.equal(JSON.stringify(fx.combatTexts), state, '排版只调整绘制位置');
+});
+
+test('带图标的飘字整组避开 HUD，缺图时显示中文', () => {
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'shieldGain', x: 716, y: 270, n: 34, jitter: 0 });
+  fx.update(0.14);
+  const shield = { complete: true, naturalWidth: 128 };
+  const hud = { left: 638, right: 720, top: 210, bottom: 263 };
+  const images = [], labels = [];
+  const ctx = {
+    measureText: text => ({ width: text.length * 18 }),
+    strokeText() {},
+    fillText: (text, x, y) => labels.push({ text, x, y }),
+    drawImage: (img, x, y, w, h) => images.push({ img, x, y, w, h }),
+  };
+  fx.draw(ctx, [hud], { shield });
+  assert.equal(images.length, 1);
+  assert.equal(labels.length, 1);
+  const [icon] = images;
+  const [label] = labels;
+  assert.equal(icon.img, shield);
+  assert.equal(label.text, '+34');
+  assert.ok(icon.x + icon.w < label.x - 27 && label.x + 27 <= 714);
+  assert.ok(icon.x + icon.w <= hud.left || icon.y >= hud.bottom || icon.y + icon.h <= hud.top);
+  fx.draw(ctx, [hud]);
+  assert.equal(images.length, 1);
+  assert.equal(labels.at(-1).text, '护盾 +34');
 });
 
 // ---- M8 新增:暴击(6.2d)/整条一体(需求方 2026-10-17 口径)/受击反馈(6.7) ----

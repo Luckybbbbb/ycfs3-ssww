@@ -14,8 +14,8 @@ export const PLAYER_FRAMES = {
 };
 
 export const UI_ICON_NAMES = [
-  'pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun',
-  'victory_badge', 'defeat_badge', 'unlock_key',
+  'pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun', 'shield',
+  'victory_badge', 'defeat_badge', 'unlock_key', 'lock',
 ];
 
 // 敌人帧清单(来自 ENEMY_TYPES,路径格式 assets/sprites/<目录>/<前缀>_%03d_nobg.png)

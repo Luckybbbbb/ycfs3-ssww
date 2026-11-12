@@ -33,11 +33,11 @@ const { fullManifest, iconList } = await import('../scripts/assets/manifest.js')
 // ---- 清单与路径 ----
 test('manifest 图标清单含棋子、技能、道具与界面图标，文件均存在', () => {
   const icons = iconList();
-  assert.equal(icons.length, 37, '图标 37 张，含胜败徽记和解锁钥匙');
+  assert.equal(icons.length, 39, '图标 39 张，含胜败徽记、关卡锁和护盾');
   assert.equal(icons.filter(x => x.key.startsWith('icon:elements:')).length, 5, '五行棋子 5');
   assert.equal(icons.filter(x => x.key.startsWith('icon:skills:')).length, 15, '技能图标 15');
   assert.equal(icons.filter(x => x.key.startsWith('icon:items:')).length, 6, '道具图标 6(M11:heal/invincible/cd × 普通/premium)');
-  assert.equal(icons.filter(x => x.key.startsWith('icon:ui:')).length, 11, '界面图标 11 张');
+  assert.equal(icons.filter(x => x.key.startsWith('icon:ui:')).length, 13, '界面图标 13 张');
   assert.ok(fullManifest().some(x => x.key === 'icon:elements:metal'), '纳入全量清单');
   // 文件真实存在(FR-9:预载校验,缺图停载;M11 道具 6 张由生图批次落盘后入库)
   for (const it of icons) {

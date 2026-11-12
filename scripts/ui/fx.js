@@ -10,22 +10,22 @@ import { ImpactEffects } from './combat_fx.js';
 
 // 伤害冒字样式表(03 文档 6.2a/6.2b;**全部五行语义色引用 draw_util GEM_COLORS 单一定义源**,
 // REQ-M7-02 F6:灼烧/吸血/光环/护盾/状态标记不再硬编码;非五行语义色[免伤/受击/击破]为独立字面值)
-// kind → {color, fmt, imp, size};n=实际变化量(6.4),el=元素(直击/溅射/锁链/脉冲/灼烧区)
+// n 为实际变化量，el 为元素。状态贴图和文字共用一条飘字。
 const FT_STYLE = {
   dmg:        { color: ev => GEM_FLOAT[ev.el] || '#ffffff', fmt: ev => `-${ev.n}`, imp: 1, size: 32 },
   splash:     { color: ev => GEM_FLOAT[ev.el] || '#ffffff', fmt: ev => `-${ev.n}`, imp: 0, size: 20 },
-  burn:       { color: () => GEM_FLOAT.fire, fmt: ev => `🔥${ev.n}`, imp: 0, size: 28 },
-  bindDot:    { color: ev => GEM_FLOAT[ev.el] || GEM_FLOAT.wood, fmt: ev => `🌿${ev.n}`, imp: 0, size: 28 },
+  burn:       { color: () => GEM_FLOAT.fire, fmt: ev => String(ev.n), icon: 'burn', fallback: '灼烧', imp: 0, size: 28 },
+  bindDot:    { color: ev => GEM_FLOAT[ev.el] || GEM_FLOAT.wood, fmt: ev => String(ev.n), icon: 'bind', fallback: '束缚', imp: 0, size: 28 },
   leech:      { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 1, size: 32 },
   aura:       { color: () => GEM_FLOAT.wood, fmt: ev => `+${ev.n}`, imp: 0, size: 28 },
-  shieldGain: { color: () => GEM_FLOAT.earth, fmt: ev => `🛡+${ev.n}`, imp: 1, size: 32 },
-  absorb:     { color: () => GEM_FLOAT.earth, fmt: ev => `🛡${ev.n}`, imp: 1, size: 32 },
+  shieldGain: { color: () => GEM_FLOAT.earth, fmt: ev => `+${ev.n}`, icon: 'shield', fallback: '护盾', imp: 1, size: 32 },
+  absorb:     { color: () => GEM_FLOAT.earth, fmt: ev => String(ev.n), icon: 'shield', fallback: '吸收', imp: 1, size: 32 },
   hurt:       { color: () => '#ff8888', fmt: ev => `-${ev.n}`, imp: 1, size: 32 },
   immune:     { color: () => '#ffd700', fmt: () => `免伤`, imp: 2, size: 40 },
   kill:       { color: () => '#ffffff', fmt: () => `击破`, imp: 2, size: 40 },
-  slowMark:   { color: () => GEM_FLOAT.water, fmt: () => `❄减速`, imp: 0, size: 28 },
-  bindMark:   { color: () => GEM_FLOAT.wood, fmt: () => `🌿束缚`, imp: 1, size: 28 },
-  stunMark:   { color: () => GEM_FLOAT.earth, fmt: () => `💫眩晕`, imp: 1, size: 28 },
+  slowMark:   { color: () => GEM_FLOAT.water, fmt: () => '减速', icon: 'slow', imp: 0, size: 28 },
+  bindMark:   { color: () => GEM_FLOAT.wood, fmt: () => '束缚', icon: 'bind', imp: 1, size: 28 },
+  stunMark:   { color: () => GEM_FLOAT.earth, fmt: () => '眩晕', icon: 'stun', imp: 1, size: 28 },
 };
 
 // ===== M8 冒字运动参数(2026-10-17 需求方选定「方案 A 喷射衰减+暴击」;同日追加口径:整条一体)=====
@@ -252,7 +252,7 @@ export class FxLayer {
     const jitter = ev.jitter ?? (ev.fromAngle != null ? 0.7 : 0.8);
     const base = ev.fromAngle != null ? ev.fromAngle : -Math.PI / 2; // 缺省向上
     const text = st.fmt(ev);
-    const charN = [...text].length; // 字符数(上限 64 仍按"位"计数口径,6.1)
+    const charN = [...text].length + Number(!!st.icon); // 图标占一位，维持 64 位上限。
     // 防重叠(6.1):同位置(±24px)已有冒字则向上推 min(fy, ft.y - size×1.1)
     let y = ev.y;
     for (const t of this.combatTexts) {
@@ -274,7 +274,7 @@ export class FxLayer {
     const a = base + (Math.random() - 0.5) * 2 * jitter;
     const v0 = speed * FT_V0_MULT * (0.92 + Math.random() * 0.16); // 初速 ±8% 自然散布
     this.combatTexts.push({
-      x: ev.x, y, text, color, size, imp, crit, seq: this._seq, charN,
+      x: ev.x, y, text, icon: st.icon, fallback: st.fallback, color, size, imp, crit, seq: this._seq, charN,
       t: 0, life,
       vx: Math.cos(a) * v0, vy: Math.sin(a) * v0, peak,
     });
@@ -336,7 +336,7 @@ export class FxLayer {
     return 1;
   }
 
-  draw(ctx, combatHudBounds = []) {
+  draw(ctx, combatHudBounds = [], combatIcons) {
     if (this.particles.length) {
       ctx.save();
       ctx.beginPath();
@@ -391,10 +391,15 @@ export class FxLayer {
       ctx.font = `bold ${font}px 'Nunito','Noto Sans SC',sans-serif`;
       const outline = Math.max(3, Math.round(font / 8));
       const edge = c.color === GEM_FLOAT.earth ? outline + 3 : outline;
-      const metrics = ctx.measureText(c.text);
+      const img = c.icon && combatIcons?.[c.icon];
+      const hasIcon = img?.complete && img.naturalWidth > 0;
+      const iconSize = hasIcon ? Math.round(font * 0.9) : 0;
+      const lead = hasIcon ? iconSize + Math.max(3, Math.round(font * 0.12)) : 0;
+      const label = !hasIcon && c.fallback ? `${c.fallback} ${c.text}` : c.text;
+      const metrics = ctx.measureText(label);
       const half = metrics.width / 2;
-      const leftPad = Math.max(half, metrics.actualBoundingBoxLeft ?? 0) + edge / 2;
-      const rightPad = Math.max(half, metrics.actualBoundingBoxRight ?? 0) + edge / 2;
+      const leftPad = Math.max(half, metrics.actualBoundingBoxLeft ?? 0) + (edge + lead) / 2;
+      const rightPad = Math.max(half, metrics.actualBoundingBoxRight ?? 0) + (edge + lead) / 2;
       const ascent = Math.max(font, metrics.actualBoundingBoxAscent ?? 0) + edge / 2;
       const descent = Math.max(font * 0.18, metrics.actualBoundingBoxDescent ?? 0) + edge / 2;
       const minX = leftPad + 6, maxX = BOARD_W - rightPad - 6;
@@ -421,16 +426,18 @@ export class FxLayer {
       }
       occupied.push({ left: x - leftPad, right: x + rightPad, top: y - ascent, bottom: y + descent });
       ctx.globalAlpha = p < FT_FADE_FROM ? 1 : Math.max(0, 1 - (p - FT_FADE_FROM) / (1 - FT_FADE_FROM));
+      if (hasIcon) ctx.drawImage(img, x - leftPad + edge / 2, y - font * 0.82, iconSize, iconSize);
+      const textX = x + lead / 2;
       if (edge > outline) {
         ctx.strokeStyle = '#fff0d1';
         ctx.lineWidth = edge;
-        ctx.strokeText(c.text, x, y);
+        ctx.strokeText(label, textX, y);
       }
       ctx.strokeStyle = '#000';
       ctx.lineWidth = outline;
-      ctx.strokeText(c.text, x, y);
+      ctx.strokeText(label, textX, y);
       ctx.fillStyle = c.color;
-      ctx.fillText(c.text, x, y);
+      ctx.fillText(label, textX, y);
     }
     ctx.globalAlpha = 1;
     // M9 连锁播报绘制(王者定版:左滑入→overshoot 定版→停留→上浮淡出;M9-F5:滑入含水平位移、

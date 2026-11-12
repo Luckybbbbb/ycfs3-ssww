@@ -18,14 +18,17 @@ const { skillById } = await import('../scripts/skills/library.js');
 
 // ---- 录制型 2D context 桩:记录 fillText/scale/stroke/beginPath 调用 ----
 function mkCtx() {
-  const rec = { fillTexts: [], scales: [], arcs: [], strokes: 0, gradients: 0 };
+  const rec = { fillTexts: [], textPoints: [], scales: [], arcs: [], strokes: 0, gradients: 0 };
   const gradient = { addColorStop() {} };
   const ctx = new Proxy({}, {
     get(_t, prop) {
       if (prop === '__rec') return rec;
       if (prop === 'createLinearGradient') return () => { rec.gradients++; return gradient; };
       if (prop === 'measureText') return () => ({ width: 10 });
-      if (prop === 'fillText') return (text) => rec.fillTexts.push(String(text));
+      if (prop === 'fillText') return (text, x, y) => {
+        rec.fillTexts.push(String(text));
+        rec.textPoints.push({ text: String(text), x, y });
+      };
       if (prop === 'scale') return (x, y) => rec.scales.push([x, y]);
       if (prop === 'arc') return (x, y, radius) => rec.arcs.push({ x, y, radius });
       if (prop === 'stroke') return () => { rec.strokes++; };
@@ -178,7 +181,7 @@ test('F8 render 接线(REQ-08):同元素双块单候选——已认领块显技�
   assert.ok(rec.fillTexts.some(t => t.includes('蓄能')), 'b1 显示蓄能+池档(未被同预约误标)');
 });
 
-test('M7 状态图标(REQ-M7-01 F7):束缚🌿/眩晕💫头顶图标经 render 入口显示与消失;关动效不绘制冒字', () => {
+test('M7 头顶状态缺图时显示中文，状态结束后消失，关动效时隐藏飘字', () => {
   // battle 桩:render 敌循环所需最小字段
   const mkBattleStub = (e) => ({
     phase: 'FIGHTING', enemies: [e], ebolts: [], bolts: [], zones: [],
@@ -189,17 +192,24 @@ test('M7 状态图标(REQ-M7-01 F7):束缚🌿/眩晕💫头顶图标经 render 
     name: 'slime', x: 400, y: 280, hp: 50, maxHp: 50, alive: true, deathT: 0,
     scale: 1, srcW: 64, srcH: 64, burn: null, slowT: 0, bindT: 0, stunT: 0,
   });
-  const e = mkFoe();
-  e.bindT = 1.2; e.stunT = 0.4;
+  const e = { ...mkFoe(), x: 718, bindT: 1.2, stunT: 0.4 };
+  const next = { ...mkFoe(), x: 700, bindT: 1.2, stunT: 0.4 };
+  const battle = mkBattleStub(e);
+  battle.enemies.push(next);
   let { ctx, rec } = mkCtx();
-  render(ctx, mkStage(true), { ...mkHud(mkStage(true)), battle: mkBattleStub(e), fx: null });
-  assert.ok(rec.fillTexts.includes('🌿'), '束缚 🌿 图标显示(bindT>0)');
-  assert.ok(rec.fillTexts.includes('💫'), '眩晕 💫 图标显示(stunT>0)');
+  render(ctx, mkStage(true), { ...mkHud(mkStage(true)), battle, fx: null });
+  assert.ok(rec.fillTexts.includes('缚'), '束缚生效时显示简称');
+  assert.ok(rec.fillTexts.includes('晕'), '眩晕生效时显示简称');
+  const markers = rec.textPoints.filter(p => p.text === '晕');
+  assert.equal(markers.length, 2);
+  assert.ok(markers.every(p => p.x + 11 <= 714));
+  assert.ok(Math.abs(markers[0].y - markers[1].y) >= 22, '相邻敌人的两排状态标记错开');
   // 消失:字段清零
   e.bindT = 0; e.stunT = 0;
+  next.bindT = 0; next.stunT = 0;
   ({ ctx, rec } = mkCtx());
-  render(ctx, mkStage(true), { ...mkHud(mkStage(true)), battle: mkBattleStub(e), fx: null });
-  assert.ok(!rec.fillTexts.includes('🌿') && !rec.fillTexts.includes('💫'), '字段清零 → 图标消失');
+  render(ctx, mkStage(true), { ...mkHud(mkStage(true)), battle, fx: null });
+  assert.ok(!rec.fillTexts.includes('缚') && !rec.fillTexts.includes('晕'), '状态结束后标记消失');
   // 关动效:存量冒字不绘制(fxEnabled=false 门控,REQ-M7-01 F5)
   const engine = mkStage(true);
   const fx = new FxLayer();

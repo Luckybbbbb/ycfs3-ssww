@@ -103,22 +103,22 @@ test('M11 道具图标:ITEM_IMG 6 张(items/<item>[_premium].png);道具格实�
   for (const k of ['heal', 'heal_premium', 'invincible', 'invincible_premium', 'cd', 'cd_premium']) {
     assert.ok(itemRefs.some(u => u.includes(`/${k}.png`)), `图标 ${k}.png 已映射`);
   }
-  // 道具格实绘:贴图已加载 → drawImage;未加载 → emoji 回退
+  // 道具格在图片加载前显示中文简称。
   const itemImgs = instances.filter(i => String(i.src).includes('/assets/icons/items/')); // 先捕获(清空 instances 不影响闭包内对象)
   const e = mkEngineStub();
   e.cellsForRender = () => [{ r: 0, c: 0, item: 'invincible', premium: true, expire: 7, alpha: 1, offsetX: 0, offsetY: 0 }];
   const r1 = mkCtx();
   instances.length = 0; // 屏蔽后续模块级新建
   render(r1.ctx, e, mkHud());
-  assert.ok(r1.rec.fillTexts.includes('✦'), '缺图回退 emoji(✦=无敌占位)');
+  assert.ok(r1.rec.fillTexts.includes('盾'), '缺图显示无敌简称');
   assert.ok(!r1.rec.draws.some(d => d.img.includes('/assets/icons/items/')), '缺图不 drawImage');
-  // 标记已加载后再绘:drawImage 命中 items 路径且无 emoji
+  // 标记图片已加载后再次绘制，检查高级道具贴图。
   for (const img of itemImgs) img.setLoaded();
   e.cellsForRender = () => [{ r: 0, c: 0, item: 'invincible', premium: true, expire: 7, alpha: 1, offsetX: 0, offsetY: 0 }];
   const r2 = mkCtx();
   render(r2.ctx, e, mkHud());
   assert.ok(r2.rec.draws.some(d => d.img.includes('/assets/icons/items/invincible_premium.png')), '高级无敌贴图实绘(premium 后缀)');
-  assert.ok(!r2.rec.fillTexts.includes('✦'), '贴图就绪后不再回退 emoji');
+  assert.ok(!r2.rec.fillTexts.includes('盾'), '贴图就绪后隐藏简称');
   assert.ok(r2.rec.fillTexts.includes('7s'));
   assert.ok(r2.rec.strokeStyles.includes('#8a6a2a'), '无敌道具显示自己的倒计时色');
   assert.ok(r2.rec.arcs.some(([x, y, radius, start, end]) =>
