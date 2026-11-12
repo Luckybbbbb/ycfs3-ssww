@@ -391,32 +391,19 @@ test('FR-1.2 减速作用于弹速:boltSpeed ×(1−pct/100)(fireFan 出口)', (
 });
 
 // ---- FR-1.5 视差参数(逻辑纯函数部分;tile 生成需 DOM,CIP 证据覆盖) ----
-test('FR-1.5 screenshake:4px/120ms 衰减;pulse 1.0→1.02→1.0;关闭动效后全部归零', () => {
+test('FR-1.5 震动只输出平移偏移，4px/120ms 衰减，关闭动效后归零', () => {
   const p = new Parallax({ effects: true });
   p.triggerShake();
-  p.triggerPulse();
-  p.update(0.05); // pulse 进入上升段(sin>0),shake 剩 0.07s
-  let tf = p.transform();
-  assert.ok(tf.scale > 1 && tf.scale <= 1.02, 'pulse 上升段抬升');
-  p.update(0.06);
-  tf = p.transform();
-  assert.ok(tf.shakeT === undefined); // transform 只回偏移/缩放
-  assert.ok(Math.abs(tf.ox) <= 4 && Math.abs(tf.oy) <= 4, '震幅 ≤4px');
-  p.update(0.07); // 累计 0.13s > 0.12s
-  tf = p.transform();
-  assert.equal(tf.ox, 0, 'screenshake 到期归零');
-  assert.equal(tf.oy, 0, 'screenshake 到期归零');
-  p.update(0.25); // pulse 结束(0.3s)
-  tf = p.transform();
-  assert.equal(tf.scale, 1, 'pulse 复位');
-  // 关闭动效:触发无效,transform 恒等
+  p.update(0.05);
+  const tf = p.transform();
+  assert.deepEqual(Object.keys(tf), ['ox', 'oy']);
+  assert.ok(Math.abs(tf.ox) <= 4 && Math.abs(tf.oy) <= 4 && Math.hypot(tf.ox, tf.oy) > 0);
+  p.update(0.08);
+  assert.deepEqual(p.transform(), { ox: 0, oy: 0 });
   const off = new Parallax({ effects: false });
-  off.triggerShake(); off.triggerPulse();
+  off.triggerShake();
   off.update(0.016);
-  const tfo = off.transform();
-  assert.equal(tfo.ox, 0);
-  assert.equal(tfo.oy, 0);
-  assert.equal(tfo.scale, 1);
+  assert.deepEqual(off.transform(), { ox: 0, oy: 0 });
 });
 
 test('FR-1.5 分关环境粒子有各自动向和上限，切关清空，关动效冻结', () => {

@@ -97,7 +97,6 @@ export function applyMulti(ctx, skill, tier) {
     const b = ctx.makeBolt(skill.el, tier, raw, e);
     b.skillId = skill.id;
     b.visualLane = i;
-    b.visualCenterY = picked[0].y;
     ctx.bolts.push(b);
     fired.push(b);
   }

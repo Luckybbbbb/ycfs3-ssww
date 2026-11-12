@@ -755,7 +755,6 @@ function boot(images) {
         // 存续预约回写 blockFx——含「预约建立后同帧即执行移除」的场景(0.80s CD 就绪,
         // 渲染层查不到 pending,必须按 tick 的执行记录认领);同一 resKey 重复回写不扩散。
         for (const used of usedList) {
-          parallax.triggerPulse();
           const slot = hud.battleHud.noteCast(used.skill.id, caster.loadout);
           if (used.from === 'elim') hud.battleHud.noteElimCast(used, battle.clock);
           if (boardGuide?.mode === 'charge' && used.from === 'elim') {

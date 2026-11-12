@@ -6,7 +6,7 @@ import { Battle } from '../scripts/battle/battle.js';
 import { dispatch } from '../scripts/skills/behaviors.js';
 import { skillById } from '../scripts/skills/library.js';
 import { ImpactEffects } from '../scripts/ui/combat_fx.js';
-import { drawShieldContact, drawSkillAura, drawSkillBolt, drawSkillImpact, drawSkillRoots, drawSkillZone, enemyEffectFoot } from '../scripts/ui/skill_effects.js';
+import { drawCastRelease, drawShieldContact, drawSkillAura, drawSkillBolt, drawSkillImpact, drawSkillRoots, drawSkillZone, enemyEffectFoot } from '../scripts/ui/skill_effects.js';
 
 function recorder() {
   const layers = [], arcs = [], sprites = [], fills = [];
@@ -38,9 +38,50 @@ test('关闭动效后仍使用六种生图弹头，保留弹头大小并跳过�
   for (const [i, el] of ['fire','water','wood','metal','earth','metal'].entries()) {
     const bolt = { el, x: 350, y: 238, vx: 600, vy: 0, t: 0.30, skillId: i === 5 ? 'metal_multi' : `${el}_bolt` };
     const frame = recorder();
-    drawSkillBolt(frame.ctx,image,bolt,undefined,false);
+    drawSkillBolt(frame.ctx,image,bolt,false);
     assert.deepEqual(frame.sprites,[{ frame:[i%3*160,Math.floor(i/3)*128,160,128], position:[350,238], alpha:1 }]);
     assert.equal(frame.fills.length,0);
+  }
+});
+
+test('五行弹头和三发连珠从各自的固定高度水平飞行，拖尾沿速度反向延伸', () => {
+  const image = page();
+  for (const [el, lanes] of [['fire', [0]], ['water', [0]], ['wood', [0]], ['metal', [0]], ['earth', [0]], ['metal', [0, -64, 64]]]) {
+    for (const [visualLane, offset] of lanes.entries()) {
+      for (const t of [0, 0.04, 0.24, 0.67]) {
+        const frame = recorder();
+        const gradients = [];
+        frame.ctx.createLinearGradient = (...points) => { gradients.push(points); return { addColorStop() {} }; };
+        const bolt = { el, skillId: lanes.length === 3 ? 'metal_multi' : `${el}_bolt`,
+          x: 110 + 600 * t, y: 238, vx: 600, vy: 0, t, visualLane };
+        drawSkillBolt(frame.ctx, image, bolt);
+        const y = bolt.y + offset;
+        assert.deepEqual(frame.sprites[0].position, [bolt.x, y]);
+        if (t === 0) assert.equal(gradients.length, 0);
+        else {
+          const [startX, startY, endX, endY] = gradients[0];
+          assert.deepEqual([startX, startY, endY], [bolt.x, y, y]);
+          assert.ok(endX < startX && endX >= 110 - 1e-9);
+        }
+      }
+    }
+  }
+});
+
+test('燎原弹从落点高度平飞，符尖的发光仍在出手位置', () => {
+  const cast = { at: 0, skillId: 'fire_dotzone', element: 'fire', tier: 3, action: { origin: { x: 201, y: 280 } },
+    target: { x: 540, y: 244, name: 'fox' } };
+  for (const t of [0, 0.04, 0.08, 0.12, 0.159]) {
+    const frame = recorder();
+    const lines = [];
+    frame.ctx.createLinearGradient = () => ({ addColorStop() {} });
+    frame.ctx.lineTo = (...point) => lines.push(point);
+    drawCastRelease(frame.ctx, page(), cast, t);
+    const [x, y] = frame.sprites[0].position;
+    assert.ok(Math.abs(x - (201 + 339 * t / 0.16)) < 1e-9);
+    assert.equal(y, 302);
+    assert.equal(lines[0][1], 302);
+    assert.equal(frame.arcs.length, 1);
   }
 });
 

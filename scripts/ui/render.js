@@ -16,7 +16,7 @@ import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
 import { drawCastRelease, drawShieldContact, drawSkillAura, drawSkillBolt, drawSkillRoots, drawSkillShield, drawSkillZone } from './skill_effects.js';
-import { drawHeroMotion, heroBoltView, heroMotionFrame, heroMotionMix, heroWindup, HERO_ATLAS_HEIGHT } from './hero_motion.js';
+import { drawHeroMotion, heroMotionFrame, heroMotionMix, heroWindup, HERO_ATLAS_HEIGHT } from './hero_motion.js';
 import { drawBoardGuide, drawBoardHint } from './board_guide.js';
 import { UI_ICON_NAMES } from '../assets/manifest.js';
 
@@ -203,25 +203,24 @@ const ENEMY_STATUS_ICONS = [
 
 function drawEnemyStatuses(ctx, enemy, barY, transform, bounds) {
   if (!enemy.burn && !(enemy.slowT > 0 || enemy.bindT > 0 || enemy.stunT > 0)) return;
-  const { ox, oy, scale } = transform;
-  const screenX = 360 + ox + (enemy.x - 360) * scale;
+  const { ox, oy } = transform;
+  const screenX = enemy.x + ox;
   if (screenX < -40 || screenX > BOARD_W + 40) return;
   const icons = ENEMY_STATUS_ICONS.filter(status => status.active(enemy));
   const size = 22, step = 25, width = (icons.length - 1) * step + size;
-  const left = Math.max(6, Math.min(BOARD_W - 6 - width * scale, screenX - width * scale / 2));
-  const x = 360 + (left - 360 - ox) / scale;
-  const right = left + width * scale;
-  const height = size * scale;
+  const left = Math.max(6, Math.min(BOARD_W - 6 - width, screenX - width / 2));
+  const x = left - ox;
+  const right = left + width;
   let y = barY - size - 4;
-  let top = 224 + oy + (y - 224) * scale;
+  let top = y + oy;
   // 敌人挤在一起时，把后绘制的一排向上错开。
   while (bounds.some(row => left < row.right + 3 && right > row.left - 3 &&
-    top < row.bottom + 3 && top + height > row.top - 3)) {
+    top < row.bottom + 3 && top + size > row.top - 3)) {
     y -= size + 5;
-    top -= (size + 5) * scale;
+    top -= size + 5;
   }
   if (top < BATTLE_ASSET_BAR_H + 4) return;
-  bounds.push({ left, right, top, bottom: top + height });
+  bounds.push({ left, right, top, bottom: top + size });
   for (const [i, { key, label, color }] of icons.entries()) {
     const iconX = x + i * step;
     if (drawUiIcon(ctx, key, iconX, y, size)) continue;
@@ -545,12 +544,6 @@ function drawBoardItem(ctx, cell, x, y) {
   ctx.restore();
 }
 
-function applyBattleCamera(ctx, { ox, oy, scale }) {
-  ctx.translate(360 + ox, 224 + oy);
-  ctx.scale(scale, scale);
-  ctx.translate(-360, -224);
-}
-
 export function render(ctx, engine, hud, dt = 1 / 60) {
   worldT += dt; // 需求方 2026-10-19:主角动画异常快——worldT 原按帧数固定 +1/60,高刷屏(120Hz+)下 2 倍速;改按渲染回调实际 dt 推进(帧率无关)
   ctx.clearRect(0, 0, 720, 1280);
@@ -567,24 +560,24 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
 
   if (inBattle) {
   const enemyStatusBounds = [];
-  // ===== 战斗区(FR-1.5 视差三层;screenshake/zoom pulse 变换) =====
-  const scene = px ? px.transform() : { ox: 0, oy: 0, scale: 1 };
+  // ===== 战斗区（FR-1.5 三层视差和震动平移） =====
+  const scene = px ? px.transform() : { ox: 0, oy: 0 };
   const kick = _fxOn && hud.fx?.impacts?.cameraOffset();
-  const tf = { ox: scene.ox + (kick?.ox ?? 0), oy: scene.oy + (kick?.oy ?? 0), scale: scene.scale };
+  const tf = { ox: scene.ox + (kick?.ox ?? 0), oy: scene.oy + (kick?.oy ?? 0) };
   ctx.save();
   ctx.beginPath(); ctx.rect(0, BATTLE_ASSET_BAR_H, BOARD_W, BATTLE_H - BATTLE_ASSET_BAR_H); ctx.clip();
   ctx.save();
-  applyBattleCamera(ctx, tf);
+  ctx.translate(tf.ox, tf.oy);
   if (px) px.draw(ctx);
   else drawFlatBackdrop(ctx);
-  // M12 技能喊话背景层(z 序:场景 < 技能背景 < 敌人;战场变换内绘制,随 screenshake/pulse 联动)
+  // M12 技能喊话背景层（场景上方、敌人下方），跟随战场震动。
   if (hud.fx && engine.fxEnabled !== false) {
     hud.fx.drawCallBg(ctx);
     hud.fx.drawCallImpact?.(ctx);
   }
   ctx.restore();
   if (_fxOn) hud.fx?.drawCallBubble?.(ctx);
-  applyBattleCamera(ctx, tf);
+  ctx.translate(tf.ox, tf.oy);
 
   if (battle) {
     const waveCue = hud.battleHud?.activeWaveCue?.(hud);
@@ -635,7 +628,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     const hasMotion = heroAtlas?.complete && heroAtlas.naturalWidth >= 1024 && heroAtlas.naturalHeight >= 768;
     const hasNewMotion = hasMotion && heroAtlas.naturalHeight >= HERO_ATLAS_HEIGHT;
     for (const b of battle.bolts) {
-      drawSkillBolt(ctx, projectileHeads, b, _fxOn && hasNewMotion ? heroBoltView : undefined, _fxOn);
+      drawSkillBolt(ctx, projectileHeads, b, _fxOn);
     }
     if (_fxOn) hud.fx?.impacts?.draw(ctx, page);
     if (battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawShield(ctx, battle.invincibleT, _fxOn);

@@ -5,7 +5,7 @@
 //   近景 1.0 :草地+草丛簇正弦摆动(±3°,2~3s 周期)+花石点缀
 // 约束:三层各为预渲染离屏 canvas tile,每帧每层 drawImage ≤2 次;粒子总数 ≤40;
 //      程序化绘制,不新增贴图依赖;动效可整体关闭(关闭后功能不受影响)。
-// 全局动效:受击 screenshake(4px/120ms);技能释放 zoom pulse(1.0→1.02→1.0)。
+// 战斗区受击震动：默认 4px，持续 120ms。
 // 相对路径: scripts/battle/parallax.js
 
 import { themeOf } from '../meta/levels.js';
@@ -46,7 +46,6 @@ export class Parallax {
     this.shakeT = 0;          // 受击 screenshake 剩余
     this.shakeDur = SHAKE_TIME; // 当前震屏总时长(M12 可变:喊话砸入 0.35s)
     this.shakeAmp = SHAKE_AMP;  // 当前震屏幅度(M12 可变:喊话砸入 5px)
-    this.pulseT = -1;         // 技能 zoom pulse 计时(−1=未激活)
     this.ambientParticles = [];
     this.haze = null;
     this.far = null; this.mid = null; this.near = null;
@@ -89,7 +88,6 @@ export class Parallax {
     this.shakeT = time;
     this.shakeDur = time;
   }
-  triggerPulse() { if (this.effects) this.pulseT = 0; }
 
   // ---- tile 生成(程序化,启动/换波各一次) ----
   buildTiles() {
@@ -180,10 +178,6 @@ export class Parallax {
   update(dt) {
     this.t += dt;
     if (this.shakeT > 0) this.shakeT -= dt;
-    if (this.pulseT >= 0) {
-      this.pulseT += dt;
-      if (this.pulseT > 0.3) this.pulseT = -1; // pulse 0.3s:1.0→1.02→1.0
-    }
     if (!this.effects) return;
     const style = AMBIENCE[this._themeKey()];
     while (this.ambientParticles.length < style.count) {
@@ -205,22 +199,18 @@ export class Parallax {
     }
   }
 
-  // 变换参数供 render 使用:偏移(含 screenshake)与缩放(zoom pulse)
+  // 震动仅平移战场。
   transform() {
-    let ox = 0, oy = 0, scale = 1;
+    let ox = 0, oy = 0;
     if (this.effects && this.shakeT > 0) {
       const p = this.shakeT / this.shakeDur; // M12:随可变时长衰减(受击/喊话各自口径)
       ox = Math.sin(this.t * 91) * this.shakeAmp * p;
       oy = Math.cos(this.t * 103) * this.shakeAmp * p;
     }
-    if (this.effects && this.pulseT >= 0) {
-      const q = this.pulseT / 0.3;
-      scale = 1 + 0.02 * Math.sin(Math.PI * q); // 1.0→1.02→1.0
-    }
-    return { ox, oy, scale };
+    return { ox, oy };
   }
 
-  // ---- 绘制(每层 drawImage ≤2 次;ctx 已平移/缩放到战斗区坐标) ----
+  // ---- 绘制(每层 drawImage ≤2 次;ctx 已平移到战斗区坐标) ----
   draw(ctx) {
     const style = AMBIENCE[this._themeKey()];
     const hasFar = this.imgs.far?.complete && this.imgs.far.naturalWidth;

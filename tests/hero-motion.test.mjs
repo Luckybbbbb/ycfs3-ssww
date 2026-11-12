@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BOLT_SPEED, PLAYER_X } from '../scripts/skills/registry.js';
 import { SKILL_LIBRARY, skillById } from '../scripts/skills/library.js';
-import { beginHeroCast, heroBoltView, heroMotionFrame, heroMotionMix, heroWindup, HERO_CAST_TIME } from '../scripts/ui/hero_motion.js';
+import { beginHeroCast, heroMotionFrame, heroMotionMix, heroWindup, HERO_CAST_TIME } from '../scripts/ui/hero_motion.js';
 
 const used = (id, tier=1, from='main') => {
   const skill = skillById(id);
@@ -32,26 +31,9 @@ test('十五个技能都从实际释放帧开始，动作组可区分', () => {
   assert.deepEqual(['metal_bolt','fire_bolt','earth_pulse','earth_shield'].map(id => poses.get(id)), [6,13,17,21]);
 });
 
-test('同帧释放共用可见姿势的出手点，投射物平滑汇入原碰撞路径', () => {
-  const a = { x: PLAYER_X, y: 220, t: 0, vx: BOLT_SPEED, vy: 0 };
-  const b = { x: PLAYER_X, y: 290, t: 0, vx: BOLT_SPEED, vy: 0 };
-  const before = structuredClone([a,b]);
-  const cast = beginHeroCast([used('fire_bolt'), used('metal_multi',3,'elim')], { clock: 1, bolts: [a,b] });
+test('同帧释放优先显示消除技能姿势，受击动作可以在命中后接续', () => {
+  const cast = beginHeroCast([used('fire_bolt'), used('metal_multi',3,'elim')], { clock: 1 });
   assert.equal(cast.element, 'metal');
-  for (const bolt of [a,b]) {
-    let lastX = -Infinity;
-    for (let i=0; i<=24; i++) {
-      bolt.t = i / 100;
-      bolt.x = PLAYER_X + BOLT_SPEED * bolt.t;
-      const view = heroBoltView(bolt);
-      if (i===0) assert.deepEqual([view.x,view.y],[cast.action.origin.x,cast.action.origin.y]);
-      assert.ok(view.x > lastX && view.vx > 0);
-      lastX = view.x;
-      if (i===24) assert.equal(view,bolt);
-    }
-    bolt.t=0; bolt.x=PLAYER_X;
-  }
-  assert.deepEqual([a,b],before);
   assert.equal(heroMotionFrame(1, HERO_CAST_TIME, 0.01, cast), 6, '同帧出手显示释放动作');
   assert.ok(heroMotionFrame(1.1, 0.18, 0.01, cast) >= 8 && heroMotionFrame(1.1, 0.18, 0.01, cast) < 12);
 });
@@ -66,18 +48,4 @@ test('已预约释放可播短抬手帧，等待时点不参与实际结算', ()
   assert.equal(heroWindup(pending,2),null);
   assert.equal(heroWindup(pending,1.95,2.30),null);
   assert.equal(heroWindup(pending,2.25,2.30)?.frame,20);
-});
-
-test('飞行拖尾采样过去的出手曲线，连珠错开后汇到原弹道', () => {
-  const bolt = { x: PLAYER_X, y: 246, t: 0, vx: BOLT_SPEED, vy: 0, visualLane: 2, target: { x: 560 } };
-  const cast = beginHeroCast([used('metal_multi')], { clock: 2, bolts: [bolt] });
-  bolt.t = 0.24;
-  bolt.x = PLAYER_X + BOLT_SPEED * bolt.t;
-  const head = heroBoltView(bolt);
-  const tail = heroBoltView(bolt, 0);
-  assert.deepEqual([tail.x,tail.y], [cast.action.origin.x,cast.action.origin.y]);
-  assert.ok(head.x < bolt.x && head.y > bolt.y);
-  bolt.t = 0.70;
-  bolt.x = PLAYER_X + BOLT_SPEED * bolt.t;
-  assert.deepEqual([heroBoltView(bolt).x,heroBoltView(bolt).y],[bolt.x,bolt.y]);
 });

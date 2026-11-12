@@ -1,7 +1,7 @@
 // scripts/ui/hero_motion.js
 // 主角战斗图集每行四帧，出手锚点使用图集绘制后的战场坐标。
 
-import { BOLT_SPEED, PLAYER_X } from '../skills/registry.js';
+import { PLAYER_X } from '../skills/registry.js';
 import { reservationReadyAt } from '../skills/cast.js';
 
 export const HERO_CAST_TIME = 0.28;
@@ -24,7 +24,7 @@ const ACTIONS = {
   metal_bolt: SWORD, metal_multi: SWORD, metal_pulse: SWORD,
   earth_bolt: SEAL, earth_shield: GUARD, earth_pulse: GROUND,
 };
-const boltOrigins = new WeakMap();
+const swordPalettes = new WeakMap();
 let blendCanvas;
 const idleFrame = clock => IDLE[Math.floor(Math.max(0, clock) * 8) % IDLE.length];
 const smooth = t => t * t * (3 - 2 * t);
@@ -37,9 +37,6 @@ export function beginHeroCast(usedList, battle, previousFrame) {
   }
   if (!lead) return null;
   const action = ACTIONS[lead.skill.id] || SWORD;
-  for (const bolt of battle.bolts) {
-    if (bolt.t === 0 && !boltOrigins.has(bolt)) boltOrigins.set(bolt, action.origin);
-  }
   const result = lead.result;
   const target = Number.isFinite(result?.x) && Number.isFinite(result?.y) ?
     { x: result.x, y: result.y, name: result.targetName ?? result.name } : null;
@@ -90,27 +87,36 @@ export function heroMotionMix(clock, cast, frame, windup) {
   return { frame, alpha: 1 };
 }
 
-export function heroBoltView(bolt, age = bolt.t) {
-  const origin = boltOrigins.get(bolt);
-  const duration = 0.24;
-  const lane = Number.isInteger(bolt.visualLane) ? 1 - bolt.visualLane : 0;
-  if ((!origin || age >= duration) && age === bolt.t && lane === 0 && bolt.visualCenterY == null) return bolt;
-  const p = origin ? Math.max(0, Math.min(1, age / duration)) : 1;
-  const remaining = 1 - smooth(p);
-  const speed = 6 * p * (1 - p) / duration;
-  const dx = origin ? origin.x - PLAYER_X : 0, dy = origin ? origin.y - bolt.y : 0;
-  const x = bolt.x - (bolt.t - age) * BOLT_SPEED;
-  const end = bolt.target ? Math.max(0, Math.min(1, (bolt.target.x - x - 46) / 85)) : 1;
-  const spread = smooth(Math.max(0, Math.min(1, (age - 0.11) / 0.27))) * smooth(end);
-  const row = (bolt.visualCenterY ?? bolt.y) - bolt.y - 82 * lane;
-  return { ...bolt, x: x + dx * remaining + 54 * lane * spread,
-    y: bolt.y + dy * remaining + row * spread,
-    vx: BOLT_SPEED - dx * speed, vy: -dy * speed };
+function swordPalette(atlas) {
+  if (swordPalettes.has(atlas)) return swordPalettes.get(atlas);
+  const strip = document.createElement('canvas');
+  strip.width = 4 * CELL;
+  strip.height = CELL;
+  const layer = strip.getContext('2d', { willReadFrequently: true });
+  layer.drawImage(atlas, 0, CELL, strip.width, CELL, 0, 0, strip.width, CELL);
+  const pixels = layer.getImageData(0, 0, strip.width, CELL);
+  const rgba = pixels.data;
+  // 剑诀来自较冷的旧图集。暖化中间调，保留阴影、高光和原始透明度。
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (rgba[i + 3] === 0) continue;
+    const g = rgba[i + 1];
+    const midtone = Math.min(1, g / 105, (255 - g) / 80);
+    const chroma = Math.max(0, Math.min(1, (rgba[i] - rgba[i + 2]) / 48));
+    const warmth = midtone * (0.45 + 0.55 * chroma);
+    rgba[i] += 15 * warmth;
+    rgba[i + 1] += 2 * warmth;
+    rgba[i + 2] -= 9 * warmth;
+  }
+  layer.putImageData(pixels, 0, 0);
+  swordPalettes.set(atlas, strip);
+  return strip;
 }
 
 function paintCel(ctx, atlas, frame, x, y, size) {
-  ctx.drawImage(atlas, frame % 4 * CELL, Math.floor(frame / 4) * CELL, CELL, CELL,
-    x, y, size, size);
+  const row = Math.floor(frame / 4);
+  const calibrate = row === 1 && atlas.naturalHeight >= HERO_ATLAS_HEIGHT && typeof document !== 'undefined';
+  const source = calibrate ? swordPalette(atlas) : atlas;
+  ctx.drawImage(source, frame % 4 * CELL, calibrate ? 0 : row * CELL, CELL, CELL, x, y, size, size);
 }
 
 export function drawHeroMotion(ctx, atlas, frame, mix) {

@@ -14,6 +14,7 @@ const BOLTS = {
   earth: { cel: 4, wake: 0.22, width: 22, wave: 5, rim: '#73462d', body: '#c08a50', light: '#ffd7a0' },
 };
 const MULTI_SHOT = { ...BOLTS.metal, cel: 5, wake: 0.14, width: 13 };
+const MULTI_LANES = [0, -64, 64];
 const PROJECTILE_CELL_W = 160, PROJECTILE_CELL_H = 128;
 const HITS = { fire: 'fireHit', water: 'waterHit', wood: 'woodHit', metal: 'metalHit', earth: 'earthHit' };
 const PULSES = { fire_pulse: 'fireRing', metal_pulse: 'bladeStorm', earth_pulse: 'earthQuake' };
@@ -80,26 +81,29 @@ export function drawCastRelease(ctx, projectileHeads, cast, clock) {
   if (cast.target && (cast.skillId === 'fire_dotzone' || cast.skillId === 'wood_bind')) {
     const tx = cast.target.x, ty = enemyEffectFoot(cast.target.name, cast.target.y);
     const fire = cast.skillId === 'fire_dotzone';
-    const cx = (x + tx) / 2, cy = fire ? Math.min(y, ty) - 75 : ty - 16;
-    const beam = ctx.createLinearGradient(x, y, tx, ty);
+    const launchY = fire ? ty : y;
+    const beam = ctx.createLinearGradient(x, launchY, tx, ty);
     beam.addColorStop(0, 'transparent');
     beam.addColorStop(0.55, color);
     beam.addColorStop(1, fire ? '#ffe39c' : '#daff9c');
     const from = Math.max(0, p - (fire ? 0.30 : 0.52));
-    const xAt = t => (1 - t) ** 2 * x + 2 * (1 - t) * t * cx + t * t * tx;
-    const yAt = t => (1 - t) ** 2 * y + 2 * (1 - t) * t * cy + t * t * ty;
+    const xAt = t => x + (tx - x) * t;
+    const yAt = t => fire ? ty : (1 - t) ** 2 * y + 2 * (1 - t) * t * (ty - 16) + t * t * ty;
     ctx.strokeStyle = beam;
     ctx.lineWidth = fire ? 16 : 4;
     ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(xAt(from), yAt(from));
-    for (let i = 1; i <= 5; i++) {
-      const t = from + (p - from) * i / 5;
-      ctx.lineTo(xAt(t), yAt(t));
+    if (fire) {
+      ctx.lineTo(xAt(p), ty);
+    } else {
+      for (let i = 1; i <= 5; i++) {
+        const t = from + (p - from) * i / 5;
+        ctx.lineTo(xAt(t), yAt(t));
+      }
     }
     ctx.stroke();
     if (fire) {
-      const angle = Math.atan2(yAt(p) - yAt(from), xAt(p) - xAt(from));
-      drawBoltHead(ctx, projectileHeads, BOLTS.fire.cel, xAt(p), yAt(p), angle, 1);
+      drawBoltHead(ctx, projectileHeads, BOLTS.fire.cel, xAt(p), ty, tx < x ? Math.PI : 0, 1);
     }
     ctx.restore();
     ctx.save();
@@ -132,11 +136,6 @@ function sprite(ctx, page, key, x, y, time, scaleX, scaleY = scaleX, angle = 0, 
   ctx.drawImage(image, sx, sy, w, h, -ox * scaleX, -oy * scaleY, w * scaleX, h * scaleY);
   ctx.restore();
   return true;
-}
-
-function straightBoltView(bolt, age) {
-  const back = bolt.t - age;
-  return { x: bolt.x - (bolt.vx ?? 0) * back, y: bolt.y - (bolt.vy ?? 0) * back };
 }
 
 function drawBoltHead(ctx, image, cel, x, y, angle, size) {
@@ -200,18 +199,23 @@ function drawBoltTrail(ctx, bolt, art, points, angle, width) {
   ctx.restore();
 }
 
-export function drawSkillBolt(ctx, projectileHeads, bolt, positionAt = straightBoltView, effects = true) {
+export function drawSkillBolt(ctx, projectileHeads, bolt, effects = true) {
   const art = bolt.skillId === 'metal_multi' ? MULTI_SHOT : BOLTS[bolt.el];
   if (!art) return;
   const size = 1 + 0.07 * ((bolt.tier || 1) - 1);
   const age = bolt.t;
   const duration = Math.min(age, art.wake);
-  const head = positionAt(bolt, age);
-  const recent = positionAt(bolt, Math.max(0, age - 0.016));
-  const angle = age > 0 ? Math.atan2(head.y - recent.y, head.x - recent.x) : Math.atan2(bolt.vy || 0, bolt.vx || 1);
+  const vx = bolt.vx ?? 0, vy = bolt.vy ?? 0;
+  // 连珠的三条绘制轨道从发射起就分开。碰撞继续使用弹丸原有坐标。
+  const laneOffset = art === MULTI_SHOT ? (MULTI_LANES[bolt.visualLane] ?? 0) : 0;
+  const head = { x: bolt.x, y: bolt.y + laneOffset };
+  const angle = Math.atan2(vy, vx);
   if (effects && duration > 0.022) {
     const points = [head];
-    for (let i = 1; i <= 5; i++) points.push(positionAt(bolt, age - duration * i / 5));
+    for (let i = 1; i <= 5; i++) {
+      const back = duration * i / 5;
+      points.push({ x: head.x - vx * back, y: head.y - vy * back });
+    }
     drawBoltTrail(ctx, bolt, art, points, angle, art.width * size);
   }
   const spin = effects ? age * (art === MULTI_SHOT ? 10 : bolt.el === 'earth' ? 5 : 0) : 0;
