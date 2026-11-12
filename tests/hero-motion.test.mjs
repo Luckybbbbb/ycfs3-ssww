@@ -65,3 +65,17 @@ test('已预约释放可播短抬手帧，等待时点不参与实际结算', ()
   assert.ok(heroWindup(pending,1.98).alpha > windup.alpha);
   assert.equal(heroWindup(pending,2),null);
 });
+
+test('飞行拖尾采样过去的出手曲线，连珠错开后汇到原弹道', () => {
+  const bolt = { x: PLAYER_X, y: 246, t: 0, vx: BOLT_SPEED, vy: 0, visualLane: 2, target: { x: 560 } };
+  const cast = beginHeroCast([used('metal_multi')], { clock: 2, bolts: [bolt] });
+  bolt.t = 0.24;
+  bolt.x = PLAYER_X + BOLT_SPEED * bolt.t;
+  const head = heroBoltView(bolt);
+  const tail = heroBoltView(bolt, 0);
+  assert.deepEqual([tail.x,tail.y], [cast.action.origin.x,cast.action.origin.y]);
+  assert.ok(head.x < bolt.x && head.y > bolt.y);
+  bolt.t = 0.70;
+  bolt.x = PLAYER_X + BOLT_SPEED * bolt.t;
+  assert.deepEqual([heroBoltView(bolt).x,heroBoltView(bolt).y],[bolt.x,bolt.y]);
+});

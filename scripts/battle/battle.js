@@ -321,10 +321,16 @@ export class Battle {
     // 受击冒字拆分(6.4;REQ-M7-01 F2 修正):**部分吸收**→`🛡N`+`-N` 并显;
     // **完全吸收/实扣 0→仅 `免伤`**(不产 absorb);实扣>0 无盾→仅 `-N`
     if (realDmg > 0) {
-      if (toShield > 0) this.floatEvent({ kind: 'absorb', x: PLAYER_X, y: 280, n: toShield, importance: 1 });
+      if (toShield > 0) this.floatEvent({
+        kind: 'absorb', x: PLAYER_X, y: 280, n: toShield, importance: 1,
+        shieldContact: { left: this.shield, angle: fromAngle },
+      });
       this.floatEvent({ kind: 'hurt', x: PLAYER_X, y: 280, n: realDmg, fromAngle, importance: 1 });
     } else if (toShield > 0) {
-      this.floatEvent({ kind: 'immune', x: PLAYER_X, y: 280, importance: 2 });
+      this.floatEvent({
+        kind: 'immune', x: PLAYER_X, y: 280, importance: 2,
+        shieldContact: { left: this.shield, angle: fromAngle },
+      });
     }
     if (this.hp <= 0 && this.phase === PHASE.FIGHTING) {
       this.phase = PHASE.DEFEAT; // FR-1.4:失败不扣等级不扣解锁(D14,存档 M4 接)

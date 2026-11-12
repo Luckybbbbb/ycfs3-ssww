@@ -40,8 +40,9 @@ export function beginHeroCast(usedList, battle, previousFrame) {
     if (bolt.t === 0 && !boltOrigins.has(bolt)) boltOrigins.set(bolt, action.origin);
   }
   const result = lead.result;
-  const target = Number.isFinite(result?.x) && Number.isFinite(result?.y) ? { x: result.x, y: result.y } : null;
-  return { at: battle.clock, action, element: lead.skill.el, tier: lead.tier, target,
+  const target = Number.isFinite(result?.x) && Number.isFinite(result?.y) ?
+    { x: result.x, y: result.y, name: result.targetName ?? result.name } : null;
+  return { at: battle.clock, action, element: lead.skill.el, skillId: lead.skill.id, tier: lead.tier, target,
     from: previousFrame ?? idleFrame(battle.clock) };
 }
 
@@ -87,15 +88,21 @@ export function heroMotionMix(clock, cast, frame, windup) {
   return { frame, alpha: 1 };
 }
 
-export function heroBoltView(bolt) {
+export function heroBoltView(bolt, age = bolt.t) {
   const origin = boltOrigins.get(bolt);
   const duration = 0.24;
-  if (!origin || bolt.t >= duration) return bolt;
-  const p = Math.max(0, bolt.t / duration);
-  const remaining = 1 - p * p * (3 - 2 * p);
+  const lane = Number.isInteger(bolt.visualLane) ? 1 - bolt.visualLane : 0;
+  if ((!origin || age >= duration) && age === bolt.t && lane === 0 && bolt.visualCenterY == null) return bolt;
+  const p = origin ? Math.max(0, Math.min(1, age / duration)) : 1;
+  const remaining = 1 - smooth(p);
   const speed = 6 * p * (1 - p) / duration;
-  const dx = origin.x - PLAYER_X, dy = origin.y - bolt.y;
-  return { ...bolt, x: bolt.x + dx * remaining, y: bolt.y + dy * remaining,
+  const dx = origin ? origin.x - PLAYER_X : 0, dy = origin ? origin.y - bolt.y : 0;
+  const x = bolt.x - (bolt.t - age) * BOLT_SPEED;
+  const end = bolt.target ? Math.max(0, Math.min(1, (bolt.target.x - x - 46) / 85)) : 1;
+  const spread = smooth(Math.max(0, Math.min(1, (age - 0.11) / 0.27))) * smooth(end);
+  const row = (bolt.visualCenterY ?? bolt.y) - bolt.y - 82 * lane;
+  return { ...bolt, x: x + dx * remaining + 54 * lane * spread,
+    y: bolt.y + dy * remaining + row * spread,
     vx: BOLT_SPEED - dx * speed, vy: -dy * speed };
 }
 

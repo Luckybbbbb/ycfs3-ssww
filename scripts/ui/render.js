@@ -15,8 +15,7 @@ import { ENEMY_NAME, ENEMY_TYPES, levelWeights, bossType } from '../battle/wave.
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
-import { drawElementBolt } from './combat_fx.js';
-import { drawCastRelease, drawSkillAura, drawSkillBolt, drawSkillRoots, drawSkillShield, drawSkillZone } from './skill_effects.js';
+import { drawCastRelease, drawShieldContact, drawSkillAura, drawSkillBolt, drawSkillRoots, drawSkillShield, drawSkillZone } from './skill_effects.js';
 import { drawHeroMotion, heroBoltView, heroMotionFrame, heroMotionMix, heroWindup, HERO_ATLAS_HEIGHT } from './hero_motion.js';
 import { drawBoardGuide, drawBoardHint } from './board_guide.js';
 import { UI_ICON_NAMES } from '../assets/manifest.js';
@@ -582,18 +581,13 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   if (battle) {
     const waveCue = hud.battleHud?.activeWaveCue?.(hud);
     const page = hud.skillFxPage;
+    const projectileHeads = page?.('projectile-heads');
+    const clock = battle.clock ?? worldT;
     for (const z of battle.zones || []) {
-      const animated = _fxOn && drawSkillZone(ctx, page, z, battle.clock);
-      ctx.fillStyle = z.kind === 'dot' ? 'rgba(255,120,50,.18)' : 'rgba(120,190,255,.18)';
-      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
-      if (!animated) ctx.fill();
-      ctx.strokeStyle = z.kind === 'dot' ? 'rgba(255,120,50,.5)' : 'rgba(120,190,255,.5)';
-      ctx.lineWidth = 2; ctx.stroke();
+      drawSkillZone(ctx, page, z, clock, _fxOn);
     }
-    if (battle.aura && !(_fxOn && drawSkillAura(ctx, page, PLAYER_X, 402, battle.clock))) {
-      ctx.strokeStyle = 'rgba(90,220,130,.5)';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(PLAYER_X, 300, 110, 0, Math.PI * 2); ctx.stroke();
+    if (battle.aura) {
+      drawSkillAura(ctx, page, PLAYER_X, 395, battle.aura, clock, _fxOn);
     }
     // ===== 敌人(六类序列帧,尺寸=贴图×scale;死亡淡出放大) =====
     for (const e of battle.enemies) {
@@ -606,8 +600,8 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
         continue;
       }
       if (e.isBoss) drawBossGroundMark(ctx, e, t, battle.clock, _fxOn, waveCue?.kind === 'boss' ? waveCue.t : undefined);
-      if (_fxOn && e.bindT > 0) drawSkillRoots(ctx, page, e, e.y + t.srcH * t.scale * 0.39, battle.clock);
       drawEnemy(ctx, e, t, 1);
+      if (_fxOn && e.bindT > 0) drawSkillRoots(ctx, page, e, clock);
       // 血条(Boss 另有 HUD 大血条,此处保留小血条)——M13 双血条:主条立即扣+淡红残影
       // 二段扣除(punch 0.4s→恒速 30%/s→1.2s 兜底,与 battle_hud 同一状态机;关动效直接同步)。
       // M12M13-ACCEPT 03轮 F9:推进在 updateEnemyHealthViews(main 按实际 dt),此处只绘制
@@ -633,18 +627,16 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     const hasMotion = heroAtlas?.complete && heroAtlas.naturalWidth >= 1024 && heroAtlas.naturalHeight >= 768;
     const hasNewMotion = hasMotion && heroAtlas.naturalHeight >= HERO_ATLAS_HEIGHT;
     for (const b of battle.bolts) {
-      const view = _fxOn && hasNewMotion ? heroBoltView(b) : b;
-      if (!(_fxOn && drawSkillBolt(ctx, page, view))) drawElementBolt(ctx, view, _fxOn);
+      drawSkillBolt(ctx, projectileHeads, b, _fxOn && hasNewMotion ? heroBoltView : undefined, _fxOn);
     }
     if (_fxOn) hud.fx?.impacts?.draw(ctx, page);
     if (battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawShield(ctx, battle.invincibleT, _fxOn);
     if (_fxOn && battle.phase === 'FIGHTING' && battle.shield > 0 && !(battle.invincibleT > 0)) {
-      drawSkillShield(ctx, page, PLAYER_X, 306, battle.clock);
+      drawSkillShield(ctx, page, PLAYER_X, 306, battle.shield, battle.maxHp, clock, hud.fx?.impacts?.shieldRaised);
     }
     // 主角战斗图集包含待机、施法和受击，旧素材供演示入口回退。
     const hurt = _fxOn && hud.fx?.impacts?.heroHit;
     const attack = battle.playerAttackT > 0;
-    const clock = battle.clock ?? worldT;
     const cast = hasNewMotion && hud.heroCast;
     const pending = !attack && hasNewMotion && battle.phase === 'FIGHTING' &&
       hud.caster?.pending?.length && battle.enemies.some(e => e.alive);
@@ -688,9 +680,11 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       roundRect(ctx, PLAYER_X - 40, 448 - 220, 80, 220, 24); ctx.fill();
     }
     ctx.restore();
-    if (_fxOn && cast && battle.phase === 'FIGHTING') drawCastRelease(ctx, cast, clock);
+    if (_fxOn && cast && battle.phase === 'FIGHTING') drawCastRelease(ctx, projectileHeads, cast, clock);
+    const shieldContact = hud.fx?.impacts?.shieldContact;
+    if (_fxOn && !(battle.invincibleT > 0)) drawShieldContact(ctx, PLAYER_X, 306, shieldContact);
     if (_fxOn && battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawHeal(ctx);
-    if (_fxOn && battle.hurtT > 0) {
+    if (_fxOn && battle.hurtT > 0 && (!shieldContact || hurt)) {
       const fade = Math.min(1, battle.hurtT / 0.2);
       ctx.save();
       ctx.globalAlpha = fade * 0.82;
@@ -756,7 +750,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   const waveNotice = hud.battleHud?.waveNotice?.(hud);
   if (waveNotice) combatHudBounds.push(waveNotice);
   const skillCallBounds = _fxOn && hud.fx?.callBounds?.();
-  if (skillCallBounds) combatHudBounds.push(skillCallBounds);
+  if (skillCallBounds) combatHudBounds.push(...skillCallBounds);
 
   // ===== 三消棋盘 =====
   ctx.save();

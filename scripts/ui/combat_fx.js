@@ -6,11 +6,11 @@ import { BATTLE_H } from '../battle/parallax.js';
 import { drawSkillImpact } from './skill_effects.js';
 
 const ELEMENT_ART = {
-  metal: { light: '#fff2ae', dark: '#865720', aspect: 1.64, trail: 46 },
-  wood: { light: '#dff5a1', dark: '#2d6e45', aspect: 1.34, trail: 31 },
-  water: { light: '#d7faff', dark: '#235c8c', aspect: 1.43, trail: 40 },
-  fire: { light: '#ffe0a0', dark: '#9f3540', aspect: 1.56, trail: 50 },
-  earth: { light: '#f3ca91', dark: '#533b35', aspect: 1.07, trail: 26 },
+  metal: { light: '#fff2ae', dark: '#865720', aspect: 1.64 },
+  wood: { light: '#dff5a1', dark: '#2d6e45', aspect: 1.34 },
+  water: { light: '#d7faff', dark: '#235c8c', aspect: 1.43 },
+  fire: { light: '#ffe0a0', dark: '#9f3540', aspect: 1.56 },
+  earth: { light: '#f3ca91', dark: '#533b35', aspect: 1.07 },
 };
 const MAX_IMPACTS = 12;
 const BOSS_FALL_TIME = 0.58;
@@ -47,41 +47,6 @@ function elementPath(ctx, el) {
       break;
   }
   ctx.closePath();
-}
-
-export function drawElementBolt(ctx, bolt, effects) {
-  const el = bolt.el;
-  const art = ELEMENT_ART[el];
-  if (!art) return;
-  const tier = Math.max(1, Math.min(5, bolt.tier || 1));
-  const radius = 8.6 + tier * 0.85;
-  const trail = art.trail + (tier - 1) * 4;
-  ctx.save();
-  ctx.translate(bolt.x, bolt.y);
-  ctx.rotate(Math.atan2(bolt.vy || 0, bolt.vx || 1));
-  ctx.lineJoin = 'round';
-  if (effects) {
-    ctx.globalAlpha = 0.36;
-    ctx.fillStyle = art.dark;
-    ctx.beginPath();
-    ctx.moveTo(-trail, 0); ctx.quadraticCurveTo(-radius, -radius, 4, -5);
-    ctx.lineTo(4, 5); ctx.quadraticCurveTo(-radius, radius, -trail, 0);
-    ctx.fill();
-    ctx.globalAlpha = 0.82;
-    ctx.fillStyle = GEM_COLORS[el];
-    ctx.beginPath();
-    ctx.moveTo(-trail + 4, 0); ctx.lineTo(1, -3.4); ctx.lineTo(1, 3.4); ctx.closePath();
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.scale(radius * art.aspect, radius);
-  elementPath(ctx, el);
-  ctx.fillStyle = GEM_COLORS[el]; ctx.fill();
-  ctx.strokeStyle = art.dark; ctx.lineWidth = 0.16; ctx.stroke();
-  ctx.translate(-0.02, -0.06); ctx.scale(0.65, 0.56);
-  elementPath(ctx, el);
-  ctx.fillStyle = art.light; ctx.fill();
-  ctx.restore();
 }
 
 function impactMark(ctx, el, radius, angle) {
@@ -122,9 +87,20 @@ export class ImpactEffects {
     this.bossFall = null;
     this.heroHit = null;
     this.cameraHit = null;
+    this.shieldRaised = null;
+    this.shieldContact = null;
   }
 
   note(ev) {
+    if (ev.kind === 'shieldGain') this.shieldRaised = { t: 0 };
+    if (ev.shieldContact) {
+      const { left, angle } = ev.shieldContact;
+      if (left === 0) this.shieldRaised = null;
+      // 同帧多次挡击时优先保留碎盾反馈。
+      if (this.shieldContact?.t !== 0 || !this.shieldContact.broken || left === 0) {
+        this.shieldContact = { t: 0, broken: left === 0, angle: angle ?? Math.PI };
+      }
+    }
     if (ev.kind === 'kill' && ev.boss) {
       this.bossFall = { x: ev.x, y: ev.y, t: 0 };
       this.kickCamera(8.4, 0);
@@ -180,12 +156,16 @@ export class ImpactEffects {
     this.bossFall = null;
     this.heroHit = null;
     this.cameraHit = null;
+    this.shieldRaised = null;
+    this.shieldContact = null;
   }
 
   update(dt) {
     if (this.bossFall && (this.bossFall.t += dt) >= BOSS_FALL_TIME) this.bossFall = null;
     if (this.heroHit && (this.heroHit.t += dt) >= 0.22) this.heroHit = null;
     if (this.cameraHit && (this.cameraHit.t += dt) >= 0.22) this.cameraHit = null;
+    if (this.shieldRaised) this.shieldRaised.t += dt;
+    if (this.shieldContact && (this.shieldContact.t += dt) >= (this.shieldContact.broken ? 0.38 : 0.22)) this.shieldContact = null;
     if (!this.active.length) return;
     for (const hit of this.active) hit.t += dt;
     this.active = this.active.filter(hit => hit.t < hit.life);

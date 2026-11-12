@@ -56,7 +56,7 @@ export function iconList() {
   return list;
 }
 
-// 技能名牌使用主角头像，五行背景按技能解锁档位选择变体。
+// 技能喊话使用主角立绘，五行背景按技能解锁档位选择变体。
 // 战斗区 UI 图素(M13):分关卡远近背景 5 主题×2 + 头像框/技能框(battle_hud.js/parallax.js 消费)
 export function skillCallList() {
   const list = [
@@ -78,6 +78,7 @@ export function skillCallList() {
   for (const page of SKILL_FX_PAGES) {
     list.push({ key: `skill-fx:${page}`, url: `assets/effects/pixelfx/${page}.webp`, entity: 'skill-fx' });
   }
+  list.push({ key: 'skill-fx:projectile-heads', url: 'assets/effects/projectile_heads.webp', entity: 'skill-fx' });
   // M15 开始界面生图产物(Task 51,codex image_gen):全屏背景+定名 LOGO(render.js START_IMG 消费,缺图走程序化兜底)
   list.push({ key: 'ui:start_bg', url: 'assets/backgrounds/start/start_bg.png', entity: 'battle-ui' });
   list.push({ key: 'ui:start_logo', url: 'assets/ui/start/logo.png', entity: 'battle-ui' });
@@ -128,7 +129,7 @@ export function battleManifest(level, ownedSkills) {
   return ASSETS.filter(({ key }) =>
     key === 'player:battle_motion' ||
     key.startsWith('icon:') || key === 'call:hero' || key === 'ui:avatar_frame' || key === 'ui:skill_frame' || key === 'ui:board_surface' ||
-    key === 'skill-fx:shots' || key === 'skill-fx:hits' || (key === 'skill-fx:fields' && calls.size > 0) ||
+    key === 'skill-fx:projectile-heads' || key === 'skill-fx:hits' || (key === 'skill-fx:fields' && calls.size > 0) ||
     key.startsWith(`bg:${theme}:`) || calls.has(key) || enemies.has(key.split(':')[0])
   );
 }

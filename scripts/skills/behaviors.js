@@ -96,6 +96,8 @@ export function applyMulti(ctx, skill, tier) {
     if (!picked.includes(e)) picked.push(e);
     const b = ctx.makeBolt(skill.el, tier, raw, e);
     b.skillId = skill.id;
+    b.visualLane = i;
+    b.visualCenterY = picked[0].y;
     ctx.bolts.push(b);
     fired.push(b);
   }
@@ -161,6 +163,7 @@ export function pushZone(ctx, skill, tier, center) {
     ? { kind: 'dot', x: center.x, y: center.y, r: p.r, dpsFloat: ctx.atk * p.dpsCoef * TM(tier), until: ctx.clock + p.duration, skillId: skill.id }
     : { kind: 'slow', x: center.x, y: center.y, r: p.r, slowPct: p.slowPct, until: ctx.clock + p.duration, skillId: skill.id };
   zone.gen = ++ZONE_GEN; // 每次释放(新建或重放)都是新代数
+  zone.targetName = center.name; // 用施法目标的贴图尺寸定位地面特效。
   if (old) ctx.zones[ctx.zones.indexOf(old)] = zone; // 刷新:时长/效果按新档位,不叠加
   else ctx.zones.push(zone);
   return zone;

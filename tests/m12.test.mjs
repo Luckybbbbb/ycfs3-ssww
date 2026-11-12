@@ -12,7 +12,7 @@ import { Parallax } from '../scripts/battle/parallax.js';
 
 // ---- 录制型 2D context 桩(同 m11 口径;document 未定义 → 离屏画布工厂返回 null,走守卫) ----
 function mkCtx() {
-  const rec = { fillTexts: [], draws: [], strokes: 0, rects: [], gradStops: [] };
+  const rec = { fillTexts: [], draws: [], strokes: 0, rects: [], gradStops: [], translations: [] };
   const ctx = new Proxy({}, {
     get(_t, prop) {
       if (prop === '__rec') return rec;
@@ -20,6 +20,7 @@ function mkCtx() {
       if (prop === 'fillText') return (text) => rec.fillTexts.push(String(text));
       if (prop === 'strokeText') return (text) => rec.strokeTexts ?? rec.fillTexts.push(`[stroke]${text}`);
       if (prop === 'drawImage') return (img, ...a) => rec.draws.push({ img: String(img?._src ?? img), a });
+      if (prop === 'translate') return (...args) => rec.translations.push(args);
       if (prop === 'stroke') return () => { rec.strokes++; };
       if (prop === 'createLinearGradient') return () => ({ addColorStop() {} });
       if (prop === 'createRadialGradient') return () => ({ addColorStop() {} });
@@ -120,7 +121,10 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   }
   // Node 环境跳过离屏背景，仍绘制立绘和喊话气泡。
   const imgs = new Map();
-  for (const it of fullManifest().filter(i => i.entity === 'skillcall')) imgs.set(it.key, { _src: it.url, naturalWidth: 640 });
+  for (const it of fullManifest().filter(i => i.entity === 'skillcall')) {
+    const isBubble = it.key === 'call:bubble';
+    imgs.set(it.key, { _src: it.url, naturalWidth: isBubble ? 768 : 640, naturalHeight: isBubble ? 512 : 853 });
+  }
   bindCallImages(imgs);
   const rec2 = mkCtx();
   fx.call.t = 0.4; // 定格段:各元素可见
@@ -128,9 +132,33 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   fx.draw(rec2.ctx);
   assert.equal(rec2.rec.draws.length, 2);
   assert.ok(rec2.rec.draws.some(draw => draw.img.endsWith('/bubble.png')));
-  const box = fx.callBounds();
-  assert.ok(box.left >= 0 && box.right <= 720 && box.top >= 44 && box.bottom <= 448);
-  assert.ok(box.left >= 207 && box.right <= 530 && box.top >= 150 && box.bottom <= 336);
+  const [portrait, bubble] = fx.callBounds();
+  for (const box of [portrait, bubble]) {
+    assert.ok(box.left >= 0 && box.right <= 720 && box.top >= 44 && box.bottom <= 448);
+  }
+  assert.equal(portrait.left, 0);
+  assert.ok(bubble.left >= 285 && bubble.right > 680);
+
+  function sample(t) {
+    fx.call.t = t;
+    const { ctx, rec } = mkCtx();
+    fx.draw(ctx);
+    return rec;
+  }
+  assert.equal(sample(0.10).draws.length, 0);
+  const arrival = sample(0.12);
+  assert.equal(arrival.draws.length, 1);
+  assert.ok(arrival.draws[0].img.endsWith('/hero.png'));
+  assert.ok(arrival.draws[0].a[3] > 448, '立绘高于战斗区，底边贴战斗区');
+  assert.ok(arrival.translations[0][0] < -200, '立绘从左侧大幅滑入');
+  const preName = sample(0.30);
+  assert.equal(preName.draws.length, 2, '立绘之后弹出气泡');
+  assert.equal(preName.fillTexts.length, 0, '气泡先于技能名');
+  const hold = sample(0.49);
+  assert.equal(hold.translations[0][0], 0, '立绘停在画面左缘');
+  assert.ok(hold.fillTexts.includes('烈焰焚天'));
+  assert.ok(sample(0.78).translations[0][0] < -200, '立绘向左滑出');
+  assert.equal(sample(0.81).draws.length, 0);
 });
 
 test('M12 演出不阻塞逻辑:fx.update/draw 不写任何战斗状态(纯表现,技能名/元素/变体只读)', () => {

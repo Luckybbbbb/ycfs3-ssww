@@ -98,7 +98,8 @@ test('首页和首关只请求相关素材，战斗清单包含本关首领及�
   assert.ok(first.includes('player:battle_motion'));
   assert.ok(!first.some(key => key.startsWith('player:idle:') || key.startsWith('player:walk_start:')));
   assert.ok(first.includes('ui:board_surface'));
-  assert.ok(first.includes('skill-fx:shots') && first.includes('skill-fx:hits'));
+  assert.ok(first.includes('skill-fx:projectile-heads') && first.includes('skill-fx:hits'));
+  assert.ok(!first.includes('skill-fx:shots'));
   assert.ok(!first.includes('skill-fx:fields'));
   assert.ok(!first.includes('call:bubble'));
   assert.ok(!HOME_ASSETS.some(item => item.key === 'ui:board_surface'));

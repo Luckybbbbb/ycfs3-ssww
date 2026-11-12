@@ -82,8 +82,7 @@ const ANNOUNCE_TABLE = [
 const AN_LIFE = 0.9, AN_IN = 0.12, AN_HOLD = 0.62, AN_BAND = 0.25;
 
 // easeOutBack 弹跳缓动(段 pop 过冲回落;REQ-M7-01 F3 沿用)
-function easeOutBack(x) {
-  const c1 = 1.70158;
+function easeOutBack(x, c1 = 1.70158) {
   const c3 = c1 + 1;
   return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
 }
@@ -96,7 +95,7 @@ function _mkCanvas(w, h) {
   return cv;
 }
 
-// 喊话立绘与气泡位于战场中段，冲击线和闪光从角色后方展开。
+// 大立绘从屏幕左侧滑入，气泡和技能名随后弹出。
 const CALL_CUT_T = 0.30, CALL_CUT_D = 0.03;
 const CALL_BG_T = 0.50, CALL_BG_D = 0.05;
 const CALL_HOLD = 0.50, CALL_EXIT_T = 0.35;        // 定格结束点/退场时长
@@ -105,9 +104,36 @@ const CAST_ARRIVAL = 0.16;
 const CAST_FLIGHT_LIMIT = 8;
 const CALL_CD = 2.0;                               // 喊话冷却:2s 内最多 1 次(需求方 2026-10-18;演出中再触发直接忽略)
 const CALL_W = 720, CALL_H = BATTLE_H;             // 战斗区逻辑尺寸(高度取 parallax 单一定义源)
-const CALL_ART = { left: 207, top: 150, right: 530, bottom: 336 };
-const CALL_BUBBLE_AT = 0.12;
+const CALL_PORTRAIT_H = Math.round(CALL_H * 1.08);
+const CALL_PORTRAIT_DELAY = 0.10, CALL_PORTRAIT_ENTRY = 0.28, CALL_PORTRAIT_EXIT = 0.30;
+const CALL_BUBBLE = { x: 296, y: 54, w: 440 };
+const CALL_BUBBLE_DELAY = 0.26, CALL_BUBBLE_ENTRY = 0.26, CALL_BUBBLE_EXIT = 0.25;
+const CALL_NAME_DELAY = 0.34, CALL_NAME_ENTRY = 0.16;
 const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
+
+function callPortraitPose(t, hero) {
+  if (!(hero?.naturalWidth > 0) || t <= CALL_PORTRAIT_DELAY || t >= CALL_HOLD + CALL_PORTRAIT_EXIT) return null;
+  const width = CALL_PORTRAIT_H * hero.naturalWidth / hero.naturalHeight;
+  const entry = Math.min(1, (t - CALL_PORTRAIT_DELAY) / CALL_PORTRAIT_ENTRY);
+  const out = Math.max(0, (t - CALL_HOLD) / CALL_PORTRAIT_EXIT);
+  const x = out > 0 ? -width * out ** 3 : width * (easeOutBack(entry, 0.9) - 1);
+  const tilt = entry < 0.6 ? -6 + 8 * entry / 0.6 : 2 - 5 * (entry - 0.6) / 0.4;
+  return { x, width, angle: tilt * Math.PI / 180 };
+}
+
+function callBubblePose(t, bubble) {
+  if (t <= CALL_BUBBLE_DELAY || t >= CALL_HOLD + CALL_BUBBLE_EXIT) return null;
+  const entry = Math.min(1, (t - CALL_BUBBLE_DELAY) / CALL_BUBBLE_ENTRY);
+  const out = Math.max(0, (t - CALL_HOLD) / CALL_BUBBLE_EXIT);
+  const height = bubble?.naturalWidth > 0 ? CALL_BUBBLE.w * bubble.naturalHeight / bubble.naturalWidth : CALL_BUBBLE.w * 2 / 3;
+  return {
+    height,
+    scale: (0.3 + 0.7 * easeOutBack(entry, 1.2)) * (1 - 0.15 * out),
+    alpha: Math.min(1, entry * 3) * (1 - out),
+    ox: CALL_BUBBLE.x + 0.08 * CALL_BUBBLE.w,
+    oy: CALL_BUBBLE.y + 0.70 * height,
+  };
+}
 
 // M12 贴图表(初始全空;生产唯一填充入口=bindCallImages(main 预载成功后调用)——
 // M11-03 F1 同口径:顶层零加载,启动期图片加载只发生在 preload 内)
@@ -588,55 +614,82 @@ export class FxLayer {
   }
 
   callBounds() {
-    return this.call?.t >= 0.055 ? CALL_ART : null;
+    if (!this.call) return null;
+    const bounds = [];
+    const portrait = callPortraitPose(this.call.t, CALL_IMG.hero);
+    if (portrait) {
+      const right = Math.min(CALL_W, portrait.x + portrait.width + Math.max(0, Math.sin(portrait.angle) * CALL_PORTRAIT_H));
+      if (right > 0) bounds.push({ left: 0, top: BATTLE_ASSET_BAR_H, right, bottom: CALL_H });
+    }
+    const bubble = callBubblePose(this.call.t, CALL_IMG.bubble);
+    if (bubble) {
+      const { x, y, w } = CALL_BUBBLE;
+      const { scale, ox, oy, height } = bubble;
+      bounds.push({
+        left: ox + (x - ox) * scale,
+        top: Math.max(BATTLE_ASSET_BAR_H, oy + (y - oy) * scale),
+        right: Math.min(CALL_W, ox + (x + w - ox) * scale),
+        bottom: Math.min(CALL_H, oy + (y + height - oy) * scale),
+      });
+    }
+    return bounds;
   }
 
   _drawCallTop(ctx) {
     const c = this.call;
-    if (!c || c.t < 0.055) return;
-    const { left, top, right, bottom } = CALL_ART;
-    const out = Math.min(1, Math.max(0, (c.t - CALL_HOLD) / CALL_EXIT_T));
-    const entry = Math.min(1, (c.t - 0.055) / 0.21);
+    if (!c) return;
     const hero = CALL_IMG.hero;
+    const bubble = CALL_IMG.bubble;
+    const portraitPose = callPortraitPose(c.t, hero);
+    const bubblePose = callBubblePose(c.t, bubble);
+    if (!portraitPose && !bubblePose) return;
     ctx.save();
-    ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip();
-    ctx.globalAlpha *= 1 - out * out;
-    if (hero?.naturalWidth > 0) {
+    ctx.beginPath(); ctx.rect(0, BATTLE_ASSET_BAR_H, CALL_W, CALL_H - BATTLE_ASSET_BAR_H); ctx.clip();
+    if (portraitPose) {
       ctx.save();
-      ctx.translate(273 - 68 * (1 - easeOutBack(entry)) - 64 * out, 322);
-      ctx.rotate(-0.12 * (1 - entry) + 0.04 * out);
-      ctx.shadowColor = 'rgba(33,18,20,.58)';
-      ctx.shadowBlur = 9;
-      ctx.drawImage(hero, -65, -168, 130, 168);
+      ctx.translate(portraitPose.x, CALL_H);
+      ctx.rotate(portraitPose.angle);
+      ctx.shadowColor = 'rgba(0,0,0,.55)';
+      ctx.shadowBlur = 18;
+      ctx.drawImage(hero, 0, -CALL_PORTRAIT_H, portraitPose.width, CALL_PORTRAIT_H);
       ctx.restore();
     }
 
-    if (c.t >= CALL_BUBBLE_AT) {
-      const p = Math.min(1, (c.t - CALL_BUBBLE_AT) / 0.17);
-      const scale = (0.65 + 0.35 * easeOutBack(p)) * (1 - 0.18 * out);
-      const bubble = CALL_IMG.bubble;
+    if (bubblePose) {
+      const { x, y, w } = CALL_BUBBLE;
+      const { height, scale, alpha, ox, oy } = bubblePose;
       ctx.save();
-      ctx.globalAlpha *= Math.min(1, p * 3.4);
-      ctx.translate(405, 226);
+      ctx.globalAlpha *= alpha;
+      ctx.translate(ox, oy);
       ctx.scale(scale, scale);
-      ctx.shadowColor = 'rgba(37,15,18,.48)';
-      ctx.shadowBlur = 10;
+      ctx.translate(-ox, -oy);
+      ctx.shadowColor = 'rgba(0,0,0,.6)';
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 6;
       if (bubble?.naturalWidth > 0) {
-        ctx.drawImage(bubble, -115, -75, 230, 150);
+        ctx.drawImage(bubble, x, y, w, height);
       } else {
         ctx.fillStyle = '#fff2d2';
-        roundRect(ctx, -102, -32, 204, 64, 13); ctx.fill();
+        roundRect(ctx, x + 22, y + height * 0.23, w - 65, height * 0.38, 22); ctx.fill();
       }
-      ctx.shadowBlur = 0;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = "900 38px 'Nunito','Noto Sans SC',sans-serif";
-      ctx.strokeStyle = '#fff8d9';
-      ctx.lineWidth = 4;
-      ctx.lineJoin = 'round';
-      ctx.strokeText(c.name, 0, -2, 177);
-      ctx.fillStyle = '#412416';
-      ctx.fillText(c.name, 0, -2, 177);
+      ctx.shadowOffsetY = 0;
+      if (c.name && c.t >= CALL_NAME_DELAY) {
+        const p = Math.min(1, (c.t - CALL_NAME_DELAY) / CALL_NAME_ENTRY);
+        const nameScale = 1.35 - 0.35 * easeOutCubic(p);
+        ctx.translate(x + w * 0.48, y + height * 0.42);
+        ctx.scale(nameScale, nameScale);
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = "900 42px 'Nunito','Noto Sans SC',sans-serif";
+        ctx.strokeStyle = '#1b1a2e';
+        ctx.lineWidth = 8;
+        ctx.lineJoin = 'round';
+        ctx.strokeText(c.name, 0, 0);
+        ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 6;
+        ctx.fillStyle = '#fff';
+        ctx.fillText(c.name, 0, 0);
+      }
       ctx.restore();
     }
     ctx.restore();
