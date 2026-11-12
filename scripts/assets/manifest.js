@@ -13,6 +13,11 @@ export const PLAYER_FRAMES = {
   walk_start: Array.from({ length: 3 }, (_, i) => i + 1), // walk_start_01~03
 };
 
+export const UI_ICON_NAMES = [
+  'pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun',
+  'victory_badge', 'defeat_badge', 'unlock_key',
+];
+
 // 敌人帧清单(来自 ENEMY_TYPES,路径格式 assets/sprites/<目录>/<前缀>_%03d_nobg.png)
 export function enemyFrameList(type) {
   const t = ENEMY_TYPES[type];
@@ -39,7 +44,7 @@ export function iconList() {
     list.push({ key: `icon:skills:${id}`, url: `assets/icons/skills/${id}.png`, entity: id });
   }
   // M14:界面图标(替换 emoji——底栏按钮/资产/状态标记,render.js UI_IMG 消费)
-  for (const n of ['pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun']) {
+  for (const n of UI_ICON_NAMES) {
     list.push({ key: `icon:ui:${n}`, url: `assets/icons/ui/${n}.png`, entity: 'ui-icon' });
   }
   // M11 消耗品道具图标(普通 + 高级 premium 各一套)

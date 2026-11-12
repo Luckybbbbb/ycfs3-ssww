@@ -44,7 +44,7 @@ test('M14 toast:移除「元素×N→档位」与「交换」提示;迁战斗区
   assert.ok(!mainSrc.includes("showToast('交换')"), '「交换」提示已移除(音效保留 sfx.swap)');
   assert.ok(!mainSrc.includes("'连锁中交换'"), '「连锁中交换」提示已移除');
   assert.ok(mainSrc.includes('sfx.swap()'), '交换音效保留');
-  assert.ok(mainSrc.includes('sfx.match(e.chain)'), '消除音效保留');
+  assert.ok(mainSrc.includes('sfx.match(matchSound.chain, matchSound.element, matchSound.count)'), '消除音效跟随本帧实际消除');
   assert.ok(mainSrc.includes("showToast('棋盘瘫痪')"), '战斗信息 toast 保留(瘫痪)');
   const { render } = await import('../scripts/ui/render.js');
   const labels = [];
@@ -62,8 +62,8 @@ test('M14 toast:移除「元素×N→档位」与「交换」提示;迁战斗区
     fx: { drawCallBg() {}, draw(_, bounds) { obstacles = bounds; } },
   });
   assert.deepEqual(obstacles, [
-    { left: 96, top: 134, right: 152, bottom: 178 },
-    { left: 158, top: 134, right: 214, bottom: 178 },
+    { left: 88, top: 132, right: 150, bottom: 182 },
+    { left: 154, top: 132, right: 216, bottom: 182 },
     { left: 180, top: 160, right: 540, bottom: 204 },
   ], '提示和操作按钮与冒字共用避让边界');
   assert.deepEqual(labels.at(-1), { text: '无敌 3s', x: 360, y: 189, align: 'center' });

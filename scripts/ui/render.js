@@ -17,6 +17,7 @@ import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
 import { drawElementBolt } from './combat_fx.js';
 import { drawBoardGuide } from './board_guide.js';
+import { UI_ICON_NAMES } from '../assets/manifest.js';
 
 // M13 敌人双血条(需求方 2026-10-18:二段扣除动效实装到敌人血条——主条立即扣,
 // 淡红残影 punch→恒速追赶,与主角/BOSS HUD 条同一 HealthView 状态机)。
@@ -123,7 +124,7 @@ export function bindImages(map) {
       if (img) { ENEMY_FRAMES[type][j] = img; n++; }
     });
   }
-  for (const name of ['pause', 'settings', 'coin', 'pick', 'burn', 'slow', 'bind', 'stun']) {
+  for (const name of UI_ICON_NAMES) {
     const img = map.get(`icon:ui:${name}`);
     if (img) { UI_IMG[name] = img; n++; } // M14:界面图标(替换 emoji)
   }
@@ -844,10 +845,9 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(0, 1168); ctx.lineTo(720, 1168); ctx.stroke();
   // 需求方 2026-10-19:底栏的「第几关/击杀/消除」统计行与货币显示移除——关卡信息由战斗区
-  // 顶部关卡名承载,资产由战斗区上方货币栏承载,底栏只保留 ⏸/⚙ 操作按钮
-  // M11 底栏操作按钮(UI 设计稿 04:⏸ 暂停 / ⚙ 设置)
-  drawIconBtn(ctx, UI.battle.pauseBtn, '⏸', 'pause');
-  drawIconBtn(ctx, UI.battle.settingsBtn, '⚙', 'settings');
+  // 操作按钮位于战斗区主角血条下方。
+  drawIconBtn(ctx, UI.battle.pauseBtn, '暂停', 'pause');
+  drawIconBtn(ctx, UI.battle.settingsBtn, '设置', 'settings');
 
   // 特效层(REQ-M7-01 F5:关动效 fxEnabled=false 时**停止绘制**存量粒子/冒字——
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
@@ -1402,8 +1402,8 @@ export const UI = {
     pickTop: 560, pickRowH: 84, pickCloseBtn: { x: 528, y: 584, w: 120, h: 64 },
   },
   battle: {
-    pauseBtn: { x: 96, y: 134, w: 56, h: 44 },     // 需求方 2026-10-19:移到主角血条正下方(战斗区内;血条因货币栏条带下移 44px)
-    settingsBtn: { x: 158, y: 134, w: 56, h: 44 }, // 同上(与 ⏸ 并排;原底栏位废弃)
+    pauseBtn: { x: 88, y: 132, w: 62, h: 50 },     // 主角血条下方。
+    settingsBtn: { x: 154, y: 132, w: 62, h: 50 },
   },
   result: {
     victory: {
@@ -1476,24 +1476,26 @@ const uiPickRowRect = (row) => {
   const col = Math.floor(row / 6), rr = row % 6;
   return { x: 60 + col * 310, y: UI.loadout.pickTop + 104 + rr * UI.loadout.pickRowH, w: 290, h: UI.loadout.pickRowH - 8 };
 };
-// 通用小按钮(底栏 ⏸/⚙ 等 ghost 风格;BEAUTIFY-01 F4/F6:材质走 UI_STYLE 令牌+按压态)
-function drawIconBtn(ctx, r, glyph, iconKey) {
+function drawUiIcon(ctx, key, x, y, size) {
+  const icon = UI_IMG[key];
+  if (!icon?.complete || !icon.naturalWidth) return false;
+  ctx.drawImage(icon, x, y, size, size);
+  return true;
+}
+
+function drawIconBtn(ctx, r, label, iconKey) {
   const pressed = isPressed(r);
-  ctx.fillStyle = pressed ? '#f3ece0' : '#fff';
-  roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.fill();
-  ctx.strokeStyle = UI_STYLE.cardLine; ctx.lineWidth = 2;
-  roundRect(ctx, r.x, r.y, r.w, r.h, 10); ctx.stroke();
-  if (pressed) { ctx.strokeStyle = 'rgba(14,122,112,.45)'; ctx.lineWidth = 3; roundRect(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4, 8); ctx.stroke(); }
-  // M14:优先贴图(UI_IMG,替换 emoji);miss 回退原文字
-  const icon = iconKey ? UI_IMG[iconKey] : null;
-  if (icon && icon.complete && icon.naturalWidth) {
-    ctx.drawImage(icon, r.x + r.w / 2 - 16, r.y + r.h / 2 - 16, 32, 32);
-    return;
-  }
+  ctx.fillStyle = pressed ? '#e0e6ce' : '#fcf5de';
+  roundRect(ctx, r.x, r.y, r.w, r.h, 11); ctx.fill();
+  ctx.strokeStyle = pressed ? '#487c63' : '#c0a16a';
+  ctx.lineWidth = 2;
+  roundRect(ctx, r.x, r.y, r.w, r.h, 11); ctx.stroke();
+  const size = 42;
+  if (drawUiIcon(ctx, iconKey, r.x + (r.w - size) / 2, r.y + (r.h - size) / 2, size)) return;
   ctx.fillStyle = UI_STYLE.ink;
-  ctx.font = FONT(22, 'bold');
+  ctx.font = FONT(20, 'bold');
   ctx.textAlign = 'center';
-  ctx.fillText(glyph, r.x + r.w / 2, r.y + r.h / 2 + 8);
+  ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 7);
   ctx.textAlign = 'left';
 }
 
@@ -2118,6 +2120,22 @@ function drawPickPanel(ctx, hud, prof, lo) {
 function maxHpText(level) { return 100 + 15 * (level - 1); }
 function atkText(level) { return 10 + (level - 1); }
 
+function drawUnlockChip(ctx, label) {
+  const hasIcon = !!UI_IMG.unlock_key?.naturalWidth;
+  ctx.font = FONT(21, 'bold');
+  const w = Math.ceil(ctx.measureText(label).width) + (hasIcon ? 76 : 38);
+  const x = (720 - w) / 2, y = 941;
+  ctx.fillStyle = '#f7f5dd';
+  roundRect(ctx, x, y, w, 48, 18); ctx.fill();
+  ctx.strokeStyle = '#c7ad71';
+  ctx.lineWidth = 2;
+  roundRect(ctx, x, y, w, 48, 18); ctx.stroke();
+  if (hasIcon) drawUiIcon(ctx, 'unlock_key', x + 13, y + 6, 36);
+  ctx.fillStyle = '#245f50';
+  ctx.textAlign = 'left';
+  ctx.fillText(label, x + (hasIcon ? 56 : 19), y + 31);
+}
+
 // ===== 05 结算(胜利/失败;UI 设计稿 05) =====
 function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
   // ===== 结算 v2(M15;05-result.html 样板实装)=====
@@ -2172,26 +2190,29 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
       ctx.globalAlpha = 0.92 * bIn;
       ctx.translate(0, (1 - bIn) * -24);
     }
-    if (victory) {
-      const jade = ctx.createLinearGradient(90, 130, 630, 280);
-      jade.addColorStop(0, '#244f42');
-      jade.addColorStop(0.52, '#38745c');
-      jade.addColorStop(1, '#20493d');
-      ctx.fillStyle = jade;
-    } else {
-      ctx.fillStyle = '#e05a5a';
-    }
+    const banner = ctx.createLinearGradient(90, 130, 630, 280);
+    banner.addColorStop(0, victory ? '#244f42' : '#543138');
+    banner.addColorStop(0.52, victory ? '#38745c' : '#784047');
+    banner.addColorStop(1, victory ? '#20493d' : '#492a31');
+    ctx.fillStyle = banner;
     roundRect(ctx, 90, 130, 540, 150, 24); ctx.fill();
-    ctx.strokeStyle = victory ? '#e9c988' : 'rgba(255,255,255,.6)'; ctx.lineWidth = 4;
+    ctx.strokeStyle = victory ? '#e9c988' : '#caa18a'; ctx.lineWidth = 4;
     roundRect(ctx, 90, 130, 540, 150, 24); ctx.stroke();
+    const hasBadge = drawUiIcon(ctx, victory ? 'victory_badge' : 'defeat_badge', 108, 139, 132);
+    const titleX = hasBadge ? 421 : 360;
+    if (hasBadge) {
+      ctx.strokeStyle = victory ? 'rgba(238,213,160,.4)' : 'rgba(221,183,166,.42)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(252, 154); ctx.lineTo(252, 256); ctx.stroke();
+    }
     ctx.fillStyle = '#fff';
     ctx.font = FONT(64, 'bold');
-    ctx.fillText(victory ? '通 关 !' : '战 败', 360, victory ? 208 : 228);
+    ctx.fillText(victory ? '通 关 !' : '战 败', titleX, victory ? 208 : 228);
     const bossName = ENEMY_NAME[bossType(battle.level)];
     if (victory && bossName) {
       ctx.fillStyle = '#f1dcab';
       ctx.font = FONT(24, 'bold');
-      ctx.fillText(`${bossName}已击破`, 360, 248);
+      ctx.fillText(`${bossName}已击破`, titleX, 248);
     }
     ctx.restore();
   }
@@ -2309,9 +2330,7 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
         ctx.fillText('养成面板可用材料升级/技能升级/抽卡', 92, ry + 56);
         if (battle.level < 5) {
           const meta = LEVEL_META[battle.level] || { name: `第 ${battle.level + 1} 关` };
-          ctx.textAlign = 'center';
-          chip(ctx, 210, 946, `🎉 解锁第 ${battle.level + 1} 关 · ${meta.name}`, '#fff', '#0e7a70');
-          ctx.textAlign = 'left';
+          drawUnlockChip(ctx, `解锁第 ${battle.level + 1} 关 · ${meta.name}`);
         }
       } else {
         const meta = LEVEL_META[battle.level - 1] || { suggest: battle.level };
@@ -2341,7 +2360,7 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
   // F8 整改:最后一关(第 5 关)主按钮文案=「完 成」(点击返回选关,与 main 路由一致)
   const btnIn = stage(1.55, 1.85);
   if (btnIn > 0) {
-    const mainLabel = victory ? (battle.level >= 5 ? '完 成' : '下一关 ▶') : '再战一次';
+    const mainLabel = victory ? (battle.level >= 5 ? '完 成' : '下一关') : '再战一次';
     const list = victory
       ? [[R.mainBtn, mainLabel, 'primary', 36], [R.retryBtn, '重打本关', 'ghost', 28], [R.backBtn, '返回选关', 'ghost', 28]]
       : [[R.mainBtn, '再战一次', 'primary', 36], [R.loadoutBtn, '去备战', 'ghost', 28], [R.backBtn, '返回选关', 'ghost', 28]];

@@ -314,8 +314,8 @@ test('M13 布局迁移:BOARD_Y=448;底栏 1168~1280 全高;底栏按钮 y=1176;�
   assert.ok(!rSrc.includes('ctx.fillRect(0, 1168, 720, 56)'), '半截底栏(56px)已废弃');
   // 需求方 2026-10-19:⏸/⚙ 迁至战斗区主角血条正下方(原底栏位废弃);战斗区 HUD 因顶部
   // 货币栏条带整体下移 44px,按钮随之落到 y=134
-  assert.ok(rSrc.includes('pauseBtn: { x: 96, y: 134, w: 56, h: 44 }'), '⏸ 按钮移至血条下方 y=134');
-  assert.ok(rSrc.includes('settingsBtn: { x: 158, y: 134, w: 56, h: 44 }'), '⚙ 按钮移至血条下方 y=134');
+  assert.ok(rSrc.includes('pauseBtn: { x: 88, y: 132, w: 62, h: 50 }'), '暂停按钮在主角血条下方');
+  assert.ok(rSrc.includes('settingsBtn: { x: 154, y: 132, w: 62, h: 50 }'), '设置按钮并排，避开首领血条');
   // 需求方 2026-10-19:底栏「第几关/击杀/货币」行移除;货币移至战斗区上方货币栏条带
   assert.ok(!rSrc.includes('· 击杀 ${battle ? battle.kills : 0} · 消除'), '底栏击杀/消除统计行已移除');
   assert.ok(!rSrc.includes('prof0.coins'), '底栏货币显示已移除');

@@ -41,14 +41,14 @@ canvas.addEventListener('pointerleave', () => setPressPoint(null));
 window.addEventListener('blur', () => setPressPoint(null));
 
 // M14 手机端音频解锁:Web Audio 的 AudioContext 需在真实手势事件内同步 resume,
-// 否则 iOS 上点击/消除音效全静(BGM 走 Audio 元素不受影响)。首次触摸一次性解锁。
+// 首次触摸解锁，音频被系统打断后可由下一次手势恢复。
 {
   const unlockAudio = () => {
     sfx.unlock();
-    if (bgm.enabled) bgm.sync(screen === 'playing'); // 解锁同时补播 BGM(首进战斗早于交互的场景)
+    bgm.sync(screen === 'playing' && !paused && battle.phase === 'FIGHTING', true);
   };
-  canvas.addEventListener('pointerdown', unlockAudio, { once: true });
-  canvas.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+  canvas.addEventListener('pointerdown', unlockAudio);
+  canvas.addEventListener('touchstart', unlockAudio, { passive: true });
 }
 
 // M14 需求方 2026-10-18:Service Worker 离线缓存(二次进站资源本地秒开)。
@@ -223,6 +223,7 @@ function startLevel(L) {
   hud.toast = null;
   victoryHandled = false;
   screen = 'playing';
+  bgm.sync(true, true);
   lastWave = 0;
   parallax.setWave(1, false);
 }
@@ -254,6 +255,7 @@ function retryLevel() {
   paused = false; panel = null;
   hud.toast = null;
   victoryHandled = false;
+  bgm.sync(true, true);
   lastWave = 0;
   parallax.setWave(1, false);
 }
@@ -271,6 +273,7 @@ function openLoadout(L) {
 // M11:设置开关(音效/动效;开始界面与暂停面板共用,写档)
 function toggleSfx() {
   sfx.enabled = !sfx.enabled;
+  if (sfx.enabled) sfx.unlock();
   profile.settings.sfx = sfx.enabled; // M11-02 F5:音效开关入档(修复前只改内存,刷新后重开)
   persistProfile();
   showToast(`音效 ${sfx.enabled ? '开' : '关'}`);
@@ -476,7 +479,7 @@ function boot(images) {
       }
       // ---- 战斗中:暂停面板 ----
       if (paused) {
-        if (hit(p, UI.pause.resumeBtn)) { paused = false; sfx.item(); return; }
+        if (hit(p, UI.pause.resumeBtn)) { paused = false; bgm.sync(battle.phase === 'FIGHTING', true); sfx.item(); return; }
         if (hit(p, UI.pause.bgmBtn)) { toggleBgm(); return; }
         if (hit(p, UI.pause.sfxBtn)) { toggleSfx(); return; }
         if (hit(p, UI.pause.fxBtn)) { toggleFx(); return; }
@@ -649,11 +652,17 @@ function boot(images) {
       if (hud.toast) { hud.toast.t -= dt; if (hud.toast.t <= 0) hud.toast = null; }
       // M11:暂停门控(底栏 ⏸)——冻结模拟推进,仅保留输入(继续/设置按钮)与渲染
       if (screen === 'playing' && paused) {
+        bgm.sync(false);
         input.update(dt);
         return;
       }
       // M11-06:非战斗屏也推输入层(备战技能槽长按计时;手势作废观察无害)
-      if (screen !== 'playing') { input.update(dt); parallax.update(dt); return; } // 非战斗屏只推背景动效
+      if (screen !== 'playing') {
+        bgm.sync(false);
+        input.update(dt);
+        parallax.update(dt);
+        return;
+      }
       // FR-3.3 局界契约(REQ-M6-05 F3):引擎推进/事件入池/技能释放以 FIGHTING 为门控;
       // **帧内终局**(battle.update 本帧转 DEFEAT/VICTORY)后不再消费事件/建预约/释放——
       // 以 battle.update 之后的实时相位为准;终局即时清空与棋盘收口见下方结算分支
@@ -662,6 +671,7 @@ function boot(images) {
       if (boardGuide?.mode === 'complete' && (boardGuide.time -= dt) <= 0) boardGuide = null;
       if (battle.phase === 'FIGHTING') {
         engine.update(dt);
+        let matchSound = null;
         // 事件消费(REQ-M6-04 F2):**逐事件**充能+选技建预约(reserveFor),
         // 同轮多事件绝不合并;全部事件处理完后下方统一 caster.tick 仲裁执行
         for (const e of engine.drainEvents()) {
@@ -680,11 +690,14 @@ function boot(images) {
               engine.setBlockFx(e.bk, { el: e.element, reserved: true, skillId: p.skillId, tier: p.tier, resKey: p.id });
             }
             // 需求方 2026-10-18:「元素 ×N → 档位」消除方块提示不再显示(档位信息由技能框/播报承载)
-            sfx.match(e.chain);
+            if (!matchSound || e.chain > matchSound.chain || (e.chain === matchSound.chain && e.count > matchSound.count)) {
+              matchSound = e;
+            }
           }
           if (e.type === 'board_paralyzed') showToast('棋盘瘫痪');
           if (e.type === 'chain_announce' && engine.fxEnabled) hud.fx.chainAnnounce(e.chain); // M9 连锁播报(与 6.1 同步关闭口径:fx 关不播报)
         }
+        if (matchSound) sfx.match(matchSound.chain, matchSound.element, matchSound.count);
         // 同刻顺序④(M6 双链路,03 文档 4.0):caster.tick 仲裁(主角链合并/并发→消除链到期执行)
         // 子弹类已在 caster 内经 ctx.launch 同一提交发射(F6);无存活敌人执行挂起(预约保留)
         const usedList = caster.tick(battle, battle.aliveEnemies().length > 0, elimRng);
@@ -731,7 +744,9 @@ function boot(images) {
       if (battle.matsGained > matsSeen) { profile.materials += battle.matsGained - matsSeen; matsSeen = battle.matsGained; }
       // v0.3 伤害冒字(03 文档 6.5):**相位无关**转发(终局帧击杀/受击的冒字照常)——
       // battle 事件队列→fx 层;fxEnabled=false 时事件照样排空仅不绘制(6.1 同步关闭口径)
-      for (const ev of battle.drainFloatTexts()) {
+      const combatEvents = battle.drainFloatTexts();
+      sfx.impact(combatEvents);
+      for (const ev of combatEvents) {
         if (engine.fxEnabled) hud.fx.combatFloat(ev);
         // -06 掉落表现:击杀→掉落货币/材料物(数值已入账,此为表现层;fx 关不生成)
         if (ev.kind === 'kill' && engine.fxEnabled !== false) {

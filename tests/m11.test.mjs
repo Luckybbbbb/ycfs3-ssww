@@ -13,7 +13,7 @@ globalThis.Image = class {
   get complete() { return this._complete && !!this.naturalWidth; }
   setLoaded(w = 144, h = 144) { this.naturalWidth = w; this.naturalHeight = h; this._complete = true; }
 };
-const { render, UI, resultSkip } = await import('../scripts/ui/render.js');
+const { render, UI, resultSkip, bindImages } = await import('../scripts/ui/render.js');
 const { FxLayer } = await import('../scripts/ui/fx.js');
 const { attachInput } = await import('../scripts/core/input.js');
 
@@ -194,6 +194,8 @@ test('M11 备战界面:主角面板/出战信息/4 装配槽/技能库(解锁灰
 });
 
 test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与失败(战败横幅/鼓励文案/按钮组)', () => {
+  bindImages(new Map(['victory_badge', 'defeat_badge', 'unlock_key'].map(name =>
+    [`icon:ui:${name}`, { _src: name, complete: true, naturalWidth: 128 }])));
   const battle = { phase: 'VICTORY', level: 3, kills: 129, expGained: 4226, coinsGained: 240, matsGained: 20, victoryCoins: 150, victoryMats: 30, wave: 10, enemies: [], ebolts: [], bolts: [], zones: [] };
   resultSkip(); // M15 结算 v2:跳过=直达完整呈现(时间轴末态,数字显示终值)
   const r = mkCtx();
@@ -204,13 +206,17 @@ test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与�
   assert.ok(r.rec.fillTexts.some(t => t.includes('129 只')), '击杀统计');
   assert.ok(r.rec.fillTexts.some(t => t.includes('×4')), '最高连锁(hud.maxChain)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('4226 exp')), '经验累计');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('🎉 解锁第 4 关')), '解锁 chip(FR-6)');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('下一关 ▶')), '下一关按钮');
+  assert.ok(r.rec.fillTexts.some(t => t.startsWith('解锁第 4 关')), '解锁 chip(FR-6)');
+  assert.ok(r.rec.fillTexts.includes('下一关'), '下一关按钮');
+  assert.ok(r.rec.draws.some(draw => draw.img === 'victory_badge'));
+  assert.ok(r.rec.draws.some(draw => draw.img === 'unlock_key'));
   assert.ok(r.rec.fillTexts.some(t => t.includes('重打本关')), '重打按钮');
   const battle2 = { phase: 'DEFEAT', level: 4, kills: 53, expGained: 1884, coinsGained: 90, matsGained: 6, wave: 6, victoryCoins: 0, victoryMats: 0, enemies: [], ebolts: [], bolts: [], zones: [] };
   const r2 = mkCtx();
   render(r2.ctx, mkEngineStub(), mkHud({ battle: battle2 }));
   assert.ok(r2.rec.fillTexts.includes('战 败'), '失败横幅');
+  assert.ok(r2.rec.draws.some(draw => draw.img === 'defeat_badge'));
+  assert.ok(!r2.rec.draws.some(draw => draw.img === 'unlock_key'));
   assert.ok(r2.rec.fillTexts.some(t => t.includes('第 4 关 · 第 6 波')), '败因定位(波次)');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('练到 Lv.12 再来挑战!')), '鼓励文案(距建议差距)');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('失败不扣任何进度')), '宽松取向说明(M15 v2 文案);');
@@ -218,11 +224,12 @@ test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与�
   assert.ok(r2.rec.fillTexts.some(t => t.includes('去备战')), '去备战按钮');
 });
 
-test('M11 暂停与设置:⏸/⚙ 底栏按钮;暂停浮层(继续/音效/动效/放弃);设置面板开关文案', () => {
+test('M11 暂停与设置:战斗按钮贴图及文字回退，暂停浮层和设置面板开关', () => {
   const r = mkCtx();
-  render(r.ctx, mkEngineStub(), mkHud({ paused: () => true, battle: { phase: 'FIGHTING', level: 2, kills: 0, wave: 1, enemies: [], ebolts: [], bolts: [], zones: [] } }));
-  assert.ok(r.rec.fillTexts.some(t => t.includes('⏸')), '底栏暂停按钮');
-  assert.ok(r.rec.fillTexts.some(t => t.includes('⚙')), '底栏设置按钮');
+  const battle = { phase: 'FIGHTING', level: 2, kills: 0, wave: 1, enemies: [], ebolts: [], bolts: [], zones: [] };
+  render(r.ctx, mkEngineStub(), mkHud({ paused: () => true, battle }));
+  assert.ok(r.rec.fillTexts.includes('暂停'), '暂停按钮文字回退');
+  assert.ok(r.rec.fillTexts.includes('设置'), '设置按钮文字回退');
   assert.ok(r.rec.fillTexts.includes('已暂停'), '暂停标题');
   assert.ok(r.rec.fillTexts.some(t => t.includes('继 续')), '继续按钮');
   assert.ok(r.rec.fillTexts.some(t => t.includes('音效:开')), '音效开关');
@@ -233,6 +240,13 @@ test('M11 暂停与设置:⏸/⚙ 底栏按钮;暂停浮层(继续/音效/动效
   assert.ok(r2.rec.fillTexts.includes('设 置'), '设置面板标题');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('动效:开')), '动效开关(设置面板)'); // BEAUTIFY-01 F4:暂停/设置同一开关统一名称
   assert.ok(r2.rec.fillTexts.some(t => t.includes('关 闭')), '关闭按钮');
+  bindImages(new Map(['pause', 'settings'].map(name =>
+    [`icon:ui:${name}`, { _src: name, complete: true, naturalWidth: 128 }])));
+  const r3 = mkCtx();
+  render(r3.ctx, mkEngineStub(), mkHud({ battle }));
+  assert.ok(r3.rec.draws.some(draw => draw.img === 'pause'));
+  assert.ok(r3.rec.draws.some(draw => draw.img === 'settings'));
+  assert.ok(!r3.rec.fillTexts.some(t => /⏸|⚙/.test(t)));
 });
 
 test('M11 UI 布局常量:五屏命中区齐备且不越 720×1280 界面(main 命中与 render 单一来源)', () => {
