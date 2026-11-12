@@ -95,6 +95,9 @@ test('首页和首关只请求相关素材，战斗清单包含本关首领及�
   assert.ok(!menuManifest(1).some(item => item.key.startsWith('boss:')));
   const first = battleManifest(1, ['fire_bolt']).map(item => item.key);
   assert.ok(first.includes('bg:meadow:near'));
+  assert.ok(first.includes('ui:board_surface'));
+  assert.ok(!HOME_ASSETS.some(item => item.key === 'ui:board_surface'));
+  assert.ok(!menuManifest(1).some(item => item.key === 'ui:board_surface'));
   assert.ok(first.some(key => key.startsWith('slime:')));
   assert.ok(first.some(key => key.startsWith('fox:')));
   assert.ok(!first.some(key => key.startsWith('boss:') || key.startsWith('call:bg:')));

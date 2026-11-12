@@ -67,6 +67,12 @@ function drawMove(ctx, move, pulse) {
   ctx.restore();
 }
 
+export function drawBoardHint(ctx, move, time, effects) {
+  ctx.save();
+  drawMove(ctx, move, effects ? 0.5 + 0.5 * Math.sin(time * 5.5) : 0.5);
+  ctx.restore();
+}
+
 function drawSlot(ctx, slot, element, pulse) {
   const r = 39 + pulse * 3;
   ctx.globalAlpha = 0.8;

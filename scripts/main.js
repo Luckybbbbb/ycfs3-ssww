@@ -78,6 +78,7 @@ let coinsSeen = 0;            // 已入账的货币水位(M6 v0.2,每帧增量)
 let matsSeen = 0;             // 已入账的材料水位
 let clearedTotal = 0;         // 本局累计消除格数(FR-7 底栏"消除"计数,startLevel 归零)
 let boardGuide = null;
+let boardHint = null;
 let lastWave = 0;             // 上一帧波次(换波同步视差用)
 let firstSel = null;          // M11-03 F9:点选交换的第一个选中格(02 文档 2.1;提升到模块级——
                               // 局界清理可见:startLevel/retryLevel 需清除,避免旧局点选状态带入新局)
@@ -113,6 +114,7 @@ function persistProfile() {
 
 function beginBoardGuide(level) {
   boardGuide = null;
+  boardHint = null;
   if (level !== 1 || profile.tutorialSeen || profile.level > 1 || progress.unlockedLevel > 1 || progress.lastLevelCleared > 0) return;
   const equipped = caster.loadout.map(id => skillById(id)?.el);
   const move = firstMatchMove(engine.grid, equipped);
@@ -122,6 +124,14 @@ function beginBoardGuide(level) {
 function rememberBoardGuide() {
   profile.tutorialSeen = true;
   persistProfile();
+}
+
+function hintAvailable() {
+  return !boardGuide && engine.state === 'IDLE' && !engine.paralyzed && !engine.nudgeFx;
+}
+
+function currentBoardHint() {
+  return hintAvailable() && boardHint?.until > battle.clock ? boardHint.move : null;
 }
 
 const battlePacks = new Map();
@@ -317,6 +327,9 @@ function boot(images) {
   hud.skillMeta = (id) => skillById(id);
   hud.battleAssets = () => battlePacks.get(packKey(selLevel));
   hud.boardGuide = () => boardGuide;
+  hud.boardSurface = () => assets.images.get('ui:board_surface');
+  hud.hintAvailable = hintAvailable;
+  hud.boardHint = currentBoardHint;
   // M11-02 F5:音效开关启动恢复(档内 settings.sfx;与 effects 同一套写档)
   sfx.enabled = profile.settings.sfx !== false;
   bgm.enabled = profile.settings.bgm !== false; // M14:BGM 默认开(档案缺省 true)
@@ -356,6 +369,7 @@ function boot(images) {
       const itemInvolved = isItem(engine.grid[a.r][a.c]) || isItem(engine.grid[b.r][b.c]);
       if (st === 'IDLE' && !itemInvolved && !swapCreatesMatch(engine.grid, a.r, a.c, b.r, b.c)) return false;
       if (!engine.trySwap(a, b)) return false;
+      boardHint = null;
       sfx.swap(); // 需求方 2026-10-18:「交换」提示移除(含连锁中交换)
       return true;
     },
@@ -521,12 +535,23 @@ function boot(images) {
       // ⚙ 设置=暂停+设置面板(render 路由:playing 屏设置面板随 paused 绘制;关闭→暂停浮层→继续)
       if (hit(p, UI.battle.pauseBtn)) { paused = true; sfx.item(); return; }
       if (hit(p, UI.battle.settingsBtn)) { paused = true; panel = 'settings'; sfx.item(); return; }
+      if (hit(p, UI.battle.hintBtn) && hintAvailable()) {
+        const move = firstMatchMove(engine.grid, caster.loadout.map(id => skillById(id)?.el));
+        if (move) {
+          firstSel = null;
+          boardHint = { move, until: battle.clock + 2.8 };
+          sfx.item();
+        } else {
+          showToast('暂时没有可提示的走法');
+        }
+        return;
+      }
       // M13:联动栏(448~504)已移除——装配槽迁至战斗区右下技能框(纯展示,CD 自动释放);
       // 换装唯一入口=备战界面换装列表面板(M11-06)
     },
     onSwipe: (a, b) => {
       if (screen !== 'playing' || battle.phase !== 'FIGHTING' || paused) return; // 非战斗/暂停期间棋盘输入冻结
-      if (engine.trySwap(a, b)) { sfx.swap(); } // 需求方 2026-10-18:「交换」提示移除
+      if (engine.trySwap(a, b)) { boardHint = null; sfx.swap(); } // 需求方 2026-10-18:「交换」提示移除
       else sfx.invalid();
     },
     onCellDown: () => {},
@@ -542,6 +567,7 @@ function boot(images) {
       if (it && it.item !== undefined) {
         const item = engine.tapItem(cell);
         if (!item) return;
+        boardHint = null;
         // M5:道具效果接入战斗(02 文档第 6 节;数值由 items.applyItem 统一口径)
         const fx = applyItem(item, { maxHP: battle.maxHp });
         let healed = 0;
@@ -572,6 +598,7 @@ function boot(images) {
         firstSel = null;
         if (Math.abs(a.r - cell.r) + Math.abs(a.c - cell.c) === 1) {
           if (engine.trySwap(a, cell)) {
+            boardHint = null;
             sfx.swap(); // 需求方 2026-10-18:「交换」提示移除
           } else {
             engine.nudge(a, cell); // 表现层往返回弹(逻辑状态保持 IDLE,F7 续审)
@@ -682,6 +709,7 @@ function boot(images) {
       if (boardGuide?.mode === 'complete' && (boardGuide.time -= dt) <= 0) boardGuide = null;
       if (battle.phase === 'FIGHTING') {
         engine.update(dt);
+        if (boardHint && (engine.state !== 'IDLE' || boardHint.until <= battle.clock)) boardHint = null;
         let matchSound = null;
         // 事件消费(REQ-M6-04 F2):**逐事件**充能+选技建预约(reserveFor),
         // 同轮多事件绝不合并;全部事件处理完后下方统一 caster.tick 仲裁执行
@@ -768,6 +796,7 @@ function boot(images) {
       // M4 FR-6:通关结算(解锁 L+1/写进度档/submitRun);失败不扣任何档内字段(D14)
       if ((battle.phase === 'VICTORY' || battle.phase === 'DEFEAT') && !victoryHandled) {
         boardGuide = null;
+        boardHint = null;
         // 终局即时清空(REQ-M6-05 F3,03 文档 4.0):池/预约/CD/临时状态立即归零,
         // 未消费事件丢弃(终局后不再充能),棋盘未完成轮次快进收口到 IDLE(重试不留旧局残轮)
         caster.resetForNewLevel();
@@ -858,6 +887,7 @@ window.__ssww = {
   imagesBound: () => homeReady ? assets.images.size : 0,
   battleAssets: level => battlePacks.get(packKey(level)),
   boardGuide: () => boardGuide,
+  boardHint: currentBoardHint,
   sfxEnabled: () => sfx.enabled, // M11-02 F5:音效开关实时态(CDP 验证刷新恢复)
   toggleSfx, toggleFx, setPaused: (v) => { paused = !!v; },
   // UIV2-01 F1:养成技能列表滚动状态(只读转发;CDP 验证滚动与末位技能可点)

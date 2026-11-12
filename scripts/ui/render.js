@@ -5,7 +5,7 @@
 // M6 v0.2:养成面板(FR-10)+ 货币/材料 HUD;布局须与 main.handleGrowClick 命中区一致
 // 素材: player/slime/fox/zombie/snake/tiger/boss 序列帧复用 godot-roguelike(04 文档第 6 节);宝石见 gems/LICENSE.md
 
-import { BOARD_W, BOARD_H, BOARD_Y, CELL, ELEMENTS, isItem } from '../board/grid.js';
+import { BOARD_W, BOARD_H, BOARD_Y, CELL, COLS, ELEMENTS, ROWS, isItem } from '../board/grid.js';
 import { ITEM_LIFETIME } from '../board/items.js';
 import { BATTLE_ASSET_BAR_H, roundRect, GEM_COLORS as GEM_SRC } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
@@ -16,7 +16,7 @@ import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
 import { drawElementBolt } from './combat_fx.js';
-import { drawBoardGuide } from './board_guide.js';
+import { drawBoardGuide, drawBoardHint } from './board_guide.js';
 import { UI_ICON_NAMES } from '../assets/manifest.js';
 
 // M13 敌人双血条(需求方 2026-10-18:二段扣除动效实装到敌人血条——主条立即扣,
@@ -458,6 +458,36 @@ function drawClearPulse(ctx, x, y, color, progress, spread) {
   ctx.restore();
 }
 
+function drawBoardSurface(ctx, texture) {
+  ctx.fillStyle = '#e1e6d5';
+  ctx.fillRect(0, BOARD_Y, BOARD_W, BOARD_H);
+  if (texture?.complete && texture.naturalWidth > 0) {
+    ctx.drawImage(texture, 0, BOARD_Y, BOARD_W, BOARD_H);
+  }
+  ctx.fillStyle = 'rgba(47,87,68,.09)';
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = r % 2; c < COLS; c += 2) {
+      ctx.fillRect(c * CELL, BOARD_Y + r * CELL, CELL, CELL);
+    }
+  }
+  const bottom = BOARD_Y + BOARD_H;
+  ctx.beginPath();
+  for (let c = 1; c < COLS; c++) {
+    ctx.moveTo(c * CELL, BOARD_Y); ctx.lineTo(c * CELL, bottom);
+  }
+  for (let r = 1; r < ROWS; r++) {
+    ctx.moveTo(0, BOARD_Y + r * CELL); ctx.lineTo(BOARD_W, BOARD_Y + r * CELL);
+  }
+  ctx.strokeStyle = 'rgba(66,87,68,.25)';
+  ctx.lineWidth = 1.4; ctx.stroke();
+  ctx.strokeStyle = '#687c5f';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(1.5, BOARD_Y + 1.5, BOARD_W - 3, BOARD_H - 3);
+  ctx.strokeStyle = '#e9d8a7';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(3.5, BOARD_Y + 3.5, BOARD_W - 7, BOARD_H - 7);
+}
+
 function drawBoardItem(ctx, cell, x, y) {
   const { plate, timer } = ITEM_STYLE[cell.item] ?? ITEM_STYLE.invincible;
   const timeLeft = Math.max(0, cell.expire);
@@ -679,14 +709,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   const bShake = hud.fx && hud.fx.boardShake ? hud.fx.boardShake() : { dx: 0, dy: 0 };
   ctx.save();
   ctx.translate(bShake.dx, bShake.dy);
-  ctx.fillStyle = '#f8f8f0';
-  ctx.fillRect(0, BOARD_Y, BOARD_W, BOARD_H);
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      ctx.fillStyle = (r + c) % 2 === 0 ? '#f4f3ea' : '#fbfaf4';
-      ctx.fillRect(c * CELL, BOARD_Y + r * CELL, CELL, CELL);
-    }
-  }
+  drawBoardSurface(ctx, hud.boardSurface?.());
   if (engine.fxEnabled !== false && engine.clearing?.length) drawClearCellHighlights(ctx, engine);
   // 果冻拖拽/回弹状态(M6:v0.2 02 文档 2.2;hud.drag = input.dragState() 快照 {drag,bounces})
   // REQ-M6-06 F7:回弹与新拖动**分别保存**——A 回弹期间拖 B,B 正常跟手,A 继续回弹互不影响
@@ -861,13 +884,6 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   // M11:连锁常显提示已移除(需求方 2026-10-17——中间右侧「连锁 ×N」旧提示与新播报重复;
   // 连锁信息唯一来源=fx.chainAnnounce 王者式定版播报)
 
-  // ===== 底栏 =====
-  // M12M13-ACCEPT F5:底栏范围=1168~1280(112px)全高铺底;此前只画 56px 致下半黑底
-  ctx.fillStyle = '#f0e8d8';
-  ctx.fillRect(0, 1168, 720, 112);
-  ctx.strokeStyle = '#dcd8d1';
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(0, 1168); ctx.lineTo(720, 1168); ctx.stroke();
   // 需求方 2026-10-19:底栏的「第几关/击杀/消除」统计行与货币显示移除——关卡信息由战斗区
   // 操作按钮位于战斗区主角血条下方。
   drawIconBtn(ctx, UI.battle.pauseBtn, '暂停', 'pause');
@@ -880,6 +896,10 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     hud.fx.draw(ctx, combatHudBounds, UI_IMG);
   }
   ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
+  ctx.fillStyle = '#e1e8dc';
+  ctx.fillRect(0, 1168, 720, 112);
+  ctx.fillStyle = '#b09b6c';
+  ctx.fillRect(0, 1168, BOARD_W, 2);
   if (engine.fxEnabled !== false) hud.fx?.drawCastFlights?.(ctx);
   if (waveNotice) hud.battleHud.drawWaveNotice(ctx, waveNotice);
 
@@ -912,7 +932,16 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   }
 
   const boardGuide = hud.boardGuide?.();
-  if (boardGuide && battle?.phase === 'FIGHTING' && !hud.paused?.()) drawBoardGuide(ctx, boardGuide, worldT, _fxOn);
+  if (battle?.phase === 'FIGHTING' && !hud.paused?.()) {
+    if (boardGuide) {
+      drawBoardGuide(ctx, boardGuide, worldT, _fxOn);
+    } else if (hud.hintAvailable) {
+      drawBtn(ctx, UI.battle.hintBtn, '提示', hud.hintAvailable() ? 'primary' : 'disabled');
+      ctx.textAlign = 'left';
+      const hint = hud.boardHint?.();
+      if (hint) drawBoardHint(ctx, hint, worldT, _fxOn);
+    }
+  }
   // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====
   if (battle && battle.phase === 'VICTORY') {
     drawResult(ctx, hud, battle, true, dt);
@@ -1431,6 +1460,7 @@ export const UI = {
   battle: {
     pauseBtn: { x: 88, y: 132, w: 62, h: 50 },     // 主角血条下方。
     settingsBtn: { x: 154, y: 132, w: 62, h: 50 },
+    hintBtn: { x: 260, y: 1180, w: 200, h: 88 },
   },
   result: {
     victory: {

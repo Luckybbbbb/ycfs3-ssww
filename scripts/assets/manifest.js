@@ -74,6 +74,7 @@ export function skillCallList() {
   }
   list.push({ key: 'ui:avatar_frame', url: 'assets/ui/battle/avatar_frame.png', entity: 'battle-ui' });
   list.push({ key: 'ui:skill_frame', url: 'assets/ui/battle/skill_frame.png', entity: 'battle-ui' });
+  list.push({ key: 'ui:board_surface', url: 'assets/backgrounds/board/celadon.png', entity: 'board-surface' });
   // M15 开始界面生图产物(Task 51,codex image_gen):全屏背景+定名 LOGO(render.js START_IMG 消费,缺图走程序化兜底)
   list.push({ key: 'ui:start_bg', url: 'assets/backgrounds/start/start_bg.png', entity: 'battle-ui' });
   list.push({ key: 'ui:start_logo', url: 'assets/ui/start/logo.png', entity: 'battle-ui' });
@@ -122,7 +123,7 @@ export function battleManifest(level, ownedSkills) {
   if (calls.size) calls.add('call:bubble');
   return ASSETS.filter(({ key }) =>
     key.startsWith('player:idle:') || key.startsWith('player:walk_start:') ||
-    key.startsWith('icon:') || key === 'call:hero' || key === 'ui:avatar_frame' || key === 'ui:skill_frame' ||
+    key.startsWith('icon:') || key === 'call:hero' || key === 'ui:avatar_frame' || key === 'ui:skill_frame' || key === 'ui:board_surface' ||
     key.startsWith(`bg:${theme}:`) || calls.has(key) || enemies.has(key.split(':')[0])
   );
 }
