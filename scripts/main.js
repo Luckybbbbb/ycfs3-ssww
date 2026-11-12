@@ -326,7 +326,7 @@ function boot(images) {
   hud.skillImg = (id) => assets.images.get(`icon:skills:${id}`) || null;
   hud.itemImg = (id) => assets.images.get(`icon:items:${id}`) || null;
   hud.skillMeta = (id) => skillById(id);
-  hud.battleAssets = () => battlePacks.get(packKey(selLevel));
+  hud.battleAssets = (level = selLevel) => battlePacks.get(packKey(level));
   hud.boardGuide = () => boardGuide;
   hud.boardSurface = () => assets.images.get('ui:board_surface');
   hud.skillFxPage = page => assets.images.get(`skill-fx:${page}`);
@@ -514,7 +514,7 @@ function boot(images) {
         if (battle.phase === 'VICTORY') {
           const R = UI.result.victory;
           if (hit(p, R.mainBtn)) {
-            if (battle.level >= 5) { screen = 'menu'; } // 第 5 关通关:完成返回
+            if (battle.level >= LEVEL_META.length) { screen = 'menu'; }
             else startLevel(battle.level + 1); // 下一关(通关已解锁 L+1)
             sfx.item(); return;
           }
@@ -815,7 +815,9 @@ function boot(images) {
       }
       if (battle.phase === 'VICTORY' && !victoryHandled) {
         victoryHandled = true;
-        resultRestart(); sfx.resultWin(); // M15 结算 v2:时间轴归零+胜利号角(05 样板口径)
+        const unlockedNext = battle.level < LEVEL_META.length && !canPlay(progress, battle.level + 1);
+        resultRestart(unlockedNext);
+        sfx.resultWin();
         const vr = victoryReward(battle.level); // M6 v0.2 通关产出(货币 50×L/材料 10×L,03 文档 2.2)
         // REQ-M6-04 F4:通关奖励**先入档再持久化**——persistProfile(下帧触发)须含 vr,
         // 刷新后不丢 50×L/10×L;弹层展示含通关奖励(见 render)

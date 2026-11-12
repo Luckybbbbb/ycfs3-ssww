@@ -2237,20 +2237,66 @@ function drawPickPanel(ctx, hud, prof, lo) {
 function maxHpText(level) { return 100 + 15 * (level - 1); }
 function atkText(level) { return 10 + (level - 1); }
 
-function drawUnlockChip(ctx, label) {
-  const hasIcon = !!UI_IMG.unlock_key?.naturalWidth;
-  ctx.font = FONT(21, 'bold');
-  const w = Math.ceil(ctx.measureText(label).width) + (hasIcon ? 76 : 38);
-  const x = (720 - w) / 2, y = 941;
-  ctx.fillStyle = '#f7f5dd';
-  roundRect(ctx, x, y, w, 48, 18); ctx.fill();
-  ctx.strokeStyle = '#c7ad71';
+function drawResultScene(ctx, scene, x, y, w, h, radius, shade) {
+  if (!scene?.complete || !scene.naturalWidth || !scene.naturalHeight) return;
+  const scale = Math.max(w / scene.naturalWidth, h / scene.naturalHeight);
+  const sw = w / scale, sh = h / scale;
+  ctx.save();
+  roundRect(ctx, x, y, w, h, radius);
+  ctx.clip();
+  ctx.drawImage(scene, (scene.naturalWidth - sw) / 2, (scene.naturalHeight - sh) * 0.48,
+    sw, sh, x, y, w, h);
+  ctx.fillStyle = shade;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
+function drawVictoryDestination(ctx, hud, level, unlockedNext) {
+  const next = LEVEL_META[level];
+  const x = 92, y = 757, w = 536, h = 132;
+  ctx.fillStyle = '#204d40';
+  roundRect(ctx, x, y, w, h, 18); ctx.fill();
+  const shade = ctx.createLinearGradient(x, 0, x + w, 0);
+  shade.addColorStop(0, 'rgba(12,37,33,.96)');
+  shade.addColorStop(0.57, 'rgba(12,37,33,.78)');
+  shade.addColorStop(1, 'rgba(12,37,33,.10)');
+  drawResultScene(ctx, hud.levelArt?.(next ? level + 1 : level), x, y, w, h, 18, shade);
+  ctx.strokeStyle = '#d0b77f';
   ctx.lineWidth = 2;
-  roundRect(ctx, x, y, w, 48, 18); ctx.stroke();
-  if (hasIcon) drawUiIcon(ctx, 'unlock_key', x + 13, y + 6, 36);
-  ctx.fillStyle = '#245f50';
+  roundRect(ctx, x, y, w, h, 18); ctx.stroke();
   ctx.textAlign = 'left';
-  ctx.fillText(label, x + (hasIcon ? 56 : 19), y + 31);
+  ctx.fillStyle = '#f0d9a1';
+  ctx.font = FONT(19, 'bold');
+  const hasKey = unlockedNext && drawUiIcon(ctx, 'unlock_key', x + 18, y + 13, 31);
+  ctx.fillText(next ? (unlockedNext ? `解锁第 ${level + 1} 关` : `下一站 · 第 ${level + 1} 关`) : '五关已通关',
+    x + (hasKey ? 55 : 21), y + 36);
+  ctx.fillStyle = '#fff8e4';
+  ctx.font = FONT(34, 'bold');
+  ctx.fillText(next ? next.name : '旅程完成', x + 21, y + 77);
+  if (next) {
+    ctx.fillStyle = '#eadbb8';
+    ctx.font = FONT(19);
+    ctx.fillText(`建议 Lv.${next.suggest}+ · ${WAVES_PER_LEVEL} 波`, x + 22, y + 108);
+  }
+}
+
+function drawDefeatProgress(ctx, battle, playerLevel) {
+  const passed = battle.wave - 1;
+  const recommend = LEVEL_META[battle.level - 1]?.suggest ?? 1;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#795240';
+  ctx.font = FONT(23, 'bold');
+  ctx.fillText(`已通过 ${passed} / ${WAVES_PER_LEVEL} 波`, 92, 630);
+  for (let i = 1; i <= WAVES_PER_LEVEL; i++) {
+    ctx.fillStyle = i <= passed ? '#39826a' : i === battle.wave ? '#bd7360' : '#e5ddd1';
+    roundRect(ctx, 92 + (i - 1) * 54, 644, 48, 12, 5); ctx.fill();
+  }
+  ctx.fillStyle = '#f1e8dd';
+  roundRect(ctx, 92, 682, 536, 61, 14); ctx.fill();
+  ctx.fillStyle = '#754c3e';
+  ctx.font = FONT(22);
+  ctx.fillText(playerLevel < recommend ? `当前 Lv.${playerLevel}，建议 Lv.${recommend}+ 再挑战`
+    : '去备战调整技能组合，再挑战这一关', 109, 720);
 }
 
 // ===== 05 结算(胜利/失败;UI 设计稿 05) =====
@@ -2258,10 +2304,11 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
   // ===== 结算 v2(M15;05-result.html 样板实装)=====
   // 时间轴:0~0.25s 遮罩淡入 → 0.35s 横幅(胜利 spring 弹入/失败下沉淡入)→ 0.7s 起统计行
   // stagger(每行 +130ms)+数字滚动 → 1.55s 起按钮组逐个弹入;任意点按=跳过(main resultSkip)
-  // 胜利专属:五行色彩带 ~120 粒顶部落下;失败:无彩带+横幅下沉不弹跳(不庆祝)
+  // 胜利时彩带从顶部落下；关闭动效时直接显示完整结算。
   // F4 整改:t 按真实经过时间推进(帧率无关,30/60/120fps 同一时长;与音效拍点对齐)
   const T = resultAnim;
-  T.t += dt;
+  if (_fxOn) T.t += dt;
+  else resultSkip();
   const t = T.t;
   const ease = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
   const stage = (d0, d1) => ease((t - d0) / (d1 - d0)); // 0→1 入场进度
@@ -2270,25 +2317,25 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
   const mA = Math.min(1, t / 0.25);
   ctx.fillStyle = victory ? `rgba(232,246,224,${0.88 * mA})` : `rgba(243,226,224,${0.9 * mA})`;
   ctx.fillRect(0, 0, 720, 1280);
-  // 彩带(胜利;0.8s 起生成,持续下落,落底循环;位移按真实 dt)
-  // BEAUTIFY-01 F11:发射节奏按经过秒数(45 片/s,上限 120)——同壁钟时刻片数与帧率无关(原每帧 ≤6 片,120fps 密度翻倍)
-  if (victory && t > 0.8) {
+  // 彩带按真实时间发射，落出画面后退场。
+  if (victory && _fxOn && t > 0.8) {
     const target = Math.min(120, Math.floor((t - 0.8) * 45));
-    while (T.confetti.length < target) {
-      T.confetti.push({ x: Math.random() * 720, y: -24, vy: 220 + Math.random() * 140, rot: Math.random() * 360, vr: 200 + Math.random() * 240, w: 9 + Math.random() * 6, h: 13 + Math.random() * 8, color: CONFETTI_COLORS[Math.floor(Math.random() * 6)] }); // 池上限 120,满后不再新建
+    while (T.issued < target) {
+      T.confetti.push({ x: Math.random() * 720, y: -24, vy: 220 + Math.random() * 140, rot: Math.random() * 360, vr: 200 + Math.random() * 240, w: 9 + Math.random() * 6, h: 13 + Math.random() * 8, color: CONFETTI_COLORS[Math.floor(Math.random() * 6)] });
+      T.issued++;
     }
+    if (T.confetti.length) T.confetti = T.confetti.filter(c => {
+      c.y += c.vy * dt;
+      c.rot += c.vr * dt;
+      if (c.y > 1310) return false;
+      ctx.save();
+      ctx.translate(c.x, c.y); ctx.rotate((c.rot * Math.PI) / 180);
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = c.color; ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+      ctx.restore();
+      return true;
+    });
   }
-  ctx.save();
-  for (const c of T.confetti) {
-    c.y += c.vy * dt; c.rot += c.vr * dt;
-    if (c.y > 1310) { c.y = -24; c.x = Math.random() * 720; }
-    ctx.save();
-    ctx.translate(c.x, c.y); ctx.rotate((c.rot * Math.PI) / 180);
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = c.color; ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
-    ctx.restore();
-  }
-  ctx.restore();
   // 横幅(0.35s 起;胜利 spring 0.6→1.1→1 / 失败缓慢下沉淡入,不弹跳)
   const R = victory ? UI.result.victory : UI.result.defeat;
   const bIn = stage(0.35, 0.9);
@@ -2313,6 +2360,8 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
     banner.addColorStop(1, victory ? '#20493d' : '#492a31');
     ctx.fillStyle = banner;
     roundRect(ctx, 90, 130, 540, 150, 24); ctx.fill();
+    drawResultScene(ctx, hud.levelArt?.(battle.level), 90, 130, 540, 150, 24,
+      victory ? 'rgba(19,53,42,.78)' : 'rgba(75,40,46,.82)');
     ctx.strokeStyle = victory ? '#e9c988' : '#caa18a'; ctx.lineWidth = 4;
     roundRect(ctx, 90, 130, 540, 150, 24); ctx.stroke();
     const hasBadge = drawUiIcon(ctx, victory ? 'victory_badge' : 'defeat_badge', 108, 139, 132);
@@ -2358,7 +2407,6 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
       rows.push({ key: 'coin', label: '本局产出', target: battle.coinsGained, fmt: (v) => `${v}`, mats: battle.matsGained, color: '#b06f1f' });
     } else {
       rows.push({ key: 'gain', label: '本局获得', target: battle.coinsGained, mats: battle.matsGained, color: '#b06f1f' }); // BEAUTIFY-01 F5:与胜利奖励行同构(图标+两数字,不再 emoji)
-      rows.push({ key: 'hp', label: '剩余主角 HP', target: 0, fmt: () => '0', color: '#e05a5a' });
     }
     // 数字滚动逼近系数(时间常数型,帧率无关;60fps 时 ≈0.18 与原手感一致)
     const rollK = 1 - Math.exp(-dt * 12);
@@ -2445,21 +2493,9 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
         ctx.fillStyle = '#9f927d';
         ctx.font = FONT(19);
         ctx.fillText('养成面板可用材料升级/技能升级/抽卡', 92, ry + 56);
-        if (battle.level < 5) {
-          const meta = LEVEL_META[battle.level] || { name: `第 ${battle.level + 1} 关` };
-          drawUnlockChip(ctx, `解锁第 ${battle.level + 1} 关 · ${meta.name}`);
-        }
+        drawVictoryDestination(ctx, hud, battle.level, T.unlockedNext);
       } else {
-        const meta = LEVEL_META[battle.level - 1] || { suggest: battle.level };
-        ctx.fillStyle = '#efe9db';
-        roundRect(ctx, 92, ry - 10, 536, 96, 14); ctx.fill();
-        ctx.fillStyle = '#794f27';
-        ctx.font = FONT(22);
-        ctx.textAlign = 'center';
-        ctx.fillText(`练到 Lv.${meta.suggest} 再来挑战!失败不扣任何进度`, 360, ry + 30);
-        ctx.font = FONT(19); ctx.fillStyle = '#9f927d';
-        ctx.fillText('等级/经验/解锁全部保留', 360, ry + 60);
-        ctx.textAlign = 'left';
+        drawDefeatProgress(ctx, battle, hud.profile?.()?.level ?? 1);
       }
       ctx.restore();
     }
@@ -2474,10 +2510,11 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
     ctx.textAlign = 'left';
   }
   // 按钮组(1.55s 起弹入;动效期内点按=跳过由 main 处理,按钮在 resultReady 前不接点击)
-  // F8 整改:最后一关(第 5 关)主按钮文案=「完 成」(点击返回选关,与 main 路由一致)
   const btnIn = stage(1.55, 1.85);
   if (btnIn > 0) {
-    const mainLabel = victory ? (battle.level >= 5 ? '完 成' : '下一关') : '再战一次';
+    const next = LEVEL_META[battle.level];
+    const pack = victory && next && hud.battleAssets?.(battle.level + 1);
+    const mainLabel = next ? (pack && !pack.ready ? '备战下一关' : '下一关') : '完 成';
     const list = victory
       ? [[R.mainBtn, mainLabel, 'primary', 36], [R.retryBtn, '重打本关', 'ghost', 28], [R.backBtn, '返回选关', 'ghost', 28]]
       : [[R.mainBtn, '再战一次', 'primary', 36], [R.loadoutBtn, '去备战', 'ghost', 28], [R.backBtn, '返回选关', 'ghost', 28]];
@@ -2496,12 +2533,14 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
 }
 
 // 结算动效状态(模块级;main 在终局帧调 resultRestart 归零并触发音效;结算屏点按调 resultSkip)
-const resultAnim = { t: 0, confetti: [], rolls: {} };
+const resultAnim = { t: 0, confetti: [], issued: 0, rolls: {}, unlockedNext: false };
 // 按钮可点时刻=时间轴完整终态(F4 整改:末按钮 1.55+2×0.08+0.30=2.01s 全部入场完成;
 // 跳过直达此刻,与「完整终态」同帧,不再有 1.85s 半程态)
 const RESULT_READY_T = 2.01;
 const CONFETTI_COLORS = [GEM_SRC.fire, GEM_SRC.water, GEM_SRC.wood, GEM_SRC.metal, GEM_SRC.earth, '#f5c31c']; // BEAUTIFY -03 B6:静态色表(不再每帧建数组)
-export function resultRestart() { resultAnim.t = 0; resultAnim.confetti = []; resultAnim.rolls = {}; }
+export function resultRestart(unlockedNext = false) {
+  Object.assign(resultAnim, { t: 0, confetti: [], issued: 0, rolls: {}, unlockedNext });
+}
 export function resultSkip() { resultAnim.t = Math.max(resultAnim.t, RESULT_READY_T); }
 export function resultReady() { return resultAnim.t >= RESULT_READY_T; }
 

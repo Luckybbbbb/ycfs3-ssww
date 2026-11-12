@@ -13,7 +13,7 @@ globalThis.Image = class {
   get complete() { return this._complete && !!this.naturalWidth; }
   setLoaded(w = 144, h = 144) { this.naturalWidth = w; this.naturalHeight = h; this._complete = true; }
 };
-const { render, UI, resultSkip, bindImages } = await import('../scripts/ui/render.js');
+const { render, UI, resultRestart, resultSkip, resultReady, bindImages } = await import('../scripts/ui/render.js');
 const { FxLayer } = await import('../scripts/ui/fx.js');
 const { attachInput } = await import('../scripts/core/input.js');
 
@@ -193,24 +193,40 @@ test('M11 备战界面:主角面板/出战信息/4 装配槽/技能库(解锁灰
   assert.ok(r2.rec.fillTexts.some(t => t.includes('建议 Lv.4+')), 'Lv10 建议 chip 常显(无红色警告语义由样式承载)');
 });
 
-test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与失败(战败横幅/鼓励文案/按钮组)', () => {
+test('结算按实际关卡绘制胜负横幅、胜利去向和失败进度', () => {
   bindImages(new Map(['victory_badge', 'defeat_badge', 'unlock_key'].map(name =>
     [`icon:ui:${name}`, { _src: name, complete: true, naturalWidth: 128 }])));
   const battle = { phase: 'VICTORY', level: 3, kills: 129, expGained: 4226, coinsGained: 240, matsGained: 20, victoryCoins: 150, victoryMats: 30, wave: 10, enemies: [], ebolts: [], bolts: [], zones: [] };
+  const levelArt = level => ({ _src: `scene:${level}`, complete: true, naturalWidth: 1600, naturalHeight: 540 });
+  resultRestart(true);
   resultSkip(); // M15 结算 v2:跳过=直达完整呈现(时间轴末态,数字显示终值)
   const r = mkCtx();
-  render(r.ctx, mkEngineStub(), mkHud({ battle }));
+  render(r.ctx, mkEngineStub(), mkHud({ battle, levelArt }));
   assert.ok(r.rec.fillTexts.includes('通 关 !'), '胜利横幅');
   assert.ok(r.rec.fillTexts.includes('蛇妖已击破'), '胜利横幅回应本关首领');
   assert.ok(r.rec.fillTexts.includes('第 3 关 · 雾隐山道'), '结算展示实际关卡名');
   assert.ok(r.rec.fillTexts.some(t => t.includes('129 只')), '击杀统计');
   assert.ok(r.rec.fillTexts.some(t => t.includes('×4')), '最高连锁(hud.maxChain)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('4226 exp')), '经验累计');
-  assert.ok(r.rec.fillTexts.some(t => t.startsWith('解锁第 4 关')), '解锁 chip(FR-6)');
+  assert.ok(r.rec.fillTexts.includes('解锁第 4 关'));
+  assert.ok(r.rec.fillTexts.includes('霜语雪原'));
+  assert.ok(r.rec.draws.some(draw => draw.img === 'scene:3' && draw.a.slice(-4).join() === '90,130,540,150'));
+  assert.ok(r.rec.draws.some(draw => draw.img === 'scene:4' && draw.a.slice(-4).join() === '92,757,536,132'));
   assert.ok(r.rec.fillTexts.includes('下一关'), '下一关按钮');
   assert.ok(r.rec.draws.some(draw => draw.img === 'victory_badge'));
   assert.ok(r.rec.draws.some(draw => draw.img === 'unlock_key'));
   assert.ok(r.rec.fillTexts.some(t => t.includes('重打本关')), '重打按钮');
+  resultRestart();
+  resultSkip();
+  const replay = mkCtx();
+  render(replay.ctx, mkEngineStub(), mkHud({ battle, battleAssets: () => ({ ready: false }) }));
+  assert.ok(replay.rec.fillTexts.includes('下一站 · 第 4 关'));
+  assert.ok(replay.rec.fillTexts.includes('备战下一关'));
+  assert.ok(!replay.rec.draws.some(draw => draw.img === 'unlock_key'));
+  const final = mkCtx();
+  render(final.ctx, mkEngineStub(), mkHud({ battle: { ...battle, level: 5 } }));
+  assert.ok(final.rec.fillTexts.includes('五关已通关'));
+  assert.ok(final.rec.fillTexts.includes('完 成'));
   const battle2 = { phase: 'DEFEAT', level: 4, kills: 53, expGained: 1884, coinsGained: 90, matsGained: 6, wave: 6, victoryCoins: 0, victoryMats: 0, enemies: [], ebolts: [], bolts: [], zones: [] };
   const r2 = mkCtx();
   render(r2.ctx, mkEngineStub(), mkHud({ battle: battle2 }));
@@ -218,10 +234,17 @@ test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与�
   assert.ok(r2.rec.draws.some(draw => draw.img === 'defeat_badge'));
   assert.ok(!r2.rec.draws.some(draw => draw.img === 'unlock_key'));
   assert.ok(r2.rec.fillTexts.some(t => t.includes('第 4 关 · 第 6 波')), '败因定位(波次)');
-  assert.ok(r2.rec.fillTexts.some(t => t.includes('练到 Lv.12 再来挑战!')), '鼓励文案(距建议差距)');
-  assert.ok(r2.rec.fillTexts.some(t => t.includes('失败不扣任何进度')), '宽松取向说明(M15 v2 文案);');
+  assert.ok(r2.rec.fillTexts.includes('已通过 5 / 10 波'));
+  assert.ok(r2.rec.fillTexts.includes('当前 Lv.3，建议 Lv.12+ 再挑战'));
   assert.ok(r2.rec.fillTexts.some(t => t.includes('再战一次')), '再战按钮');
   assert.ok(r2.rec.fillTexts.some(t => t.includes('去备战')), '去备战按钮');
+  const ready = mkCtx();
+  resultRestart();
+  render(ready.ctx, { ...mkEngineStub(), fxEnabled: false }, mkHud({
+    battle: battle2, profile: () => ({ level: 12 }),
+  }));
+  assert.equal(resultReady(), true);
+  assert.ok(ready.rec.fillTexts.includes('去备战调整技能组合，再挑战这一关'));
 });
 
 test('M11 暂停与设置:战斗按钮贴图及文字回退，暂停浮层和设置面板开关', () => {
@@ -717,6 +740,13 @@ test('BEAUTIFY F11 彩带:同壁钟时刻片数与帧率无关(-03 B1/B6 整改:
   // 上限 120:t=3.2s target=min(120,108)=108;t 足够后不再超 120
   const src = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
   assert.ok(src.includes('CONFETTI_COLORS'), '彩带色表为模块级常量(不再每帧建数组)');
+  assert.equal(lastFrameConfetti(Array.from({ length: 120 }, () => 0.1)), 0, '彩带落出画面后退场');
+  resultRestart();
+  const reduced = mkCtx();
+  render(reduced.ctx, { ...mkEngineStub(), fxEnabled: false }, victoryHud(), 1 / 60);
+  assert.equal(resultReady(), true);
+  assert.ok(reduced.rec.fillTexts.includes('下一关'));
+  assert.equal(reduced.rec.fillRects.filter(f => f.w >= 9 && f.w <= 15 && f.h >= 13 && f.h <= 21).length, 0);
 });
 
 test('BEAUTIFY F9 释放反馈:带参定位不依赖预热缓存,墙钟 160ms(-04 R3 整改)', async () => {
