@@ -120,12 +120,15 @@ export function hasNoMatches(grid) {
 }
 
 // 交换后「被交换的两子之一参与新匹配」？（合法终态条件 b，严格版）
-export function swapCreatesMatch(grid, r1, c1, r2, c2) {
+export function matchBlocksAfterSwap(grid, r1, c1, r2, c2) {
   const g = grid.map(row => row.slice());
   [g[r1][c1], g[r2][c2]] = [g[r2][c2], g[r1][c1]];
-  const blocks = findMatchBlocks(g);
-  return blocks.some(b => b.cells.some(k =>
+  return findMatchBlocks(g).filter(b => b.cells.some(k =>
     (k.r === r1 && k.c === c1) || (k.r === r2 && k.c === c2)));
+}
+
+export function swapCreatesMatch(grid, r1, c1, r2, c2) {
+  return matchBlocksAfterSwap(grid, r1, c1, r2, c2).length > 0;
 }
 
 // 存在合法交换？（穷举 + 严格判定，02 文档第 8 节）

@@ -6,11 +6,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  makeRng, generateGrid, hasNoMatches, hasValidSwap, findMatchBlocks,
+  makeRng, generateGrid, hasNoMatches, hasValidSwap, findMatchBlocks, matchBlocksAfterSwap, ELEMENTS,
   shuffleGrid, enforceQuota, emptyGrid, isItem,
 } from '../scripts/board/grid.js';
 import { BoardEngine } from '../scripts/board/engine.js';
 import { rollItem, placeItem, tickItems } from '../scripts/board/items.js';
+import { firstMatchMove } from '../scripts/ui/board_guide.js';
 
 // ---- 构造辅助 ----
 function gridOf(rows) { // rows: 字符串数组，0~4=元素, '.'=空, 'I'=道具
@@ -44,6 +45,23 @@ test('(行+列)%5 反例盘：无初始三连但无合法交换（洗牌验证�
   const g = emptyGrid().map((row, r) => row.map((_, c) => ({ el: (r + c) % 5 })));
   assert.ok(hasNoMatches(g));
   assert.ok(!hasValidSwap(g));
+  assert.equal(firstMatchMove(g), null);
+});
+
+test('首次消除引导的箭头指向真实匹配，计算过程保持棋盘数据', () => {
+  for (const seed of [7, 42, 20260601]) {
+    const board = new BoardEngine(seed).grid;
+    const before = structuredClone(board);
+    const move = firstMatchMove(board, ['metal', 'wood', 'water', 'fire']);
+    assert.ok(move, `seed=${seed}`);
+    const { from, to } = move;
+    assert.equal(Math.abs(from.r - to.r) + Math.abs(from.c - to.c), 1);
+    assert.equal(ELEMENTS[board[from.r][from.c].el], move.element);
+    const blocks = matchBlocksAfterSwap(board, from.r, from.c, to.r, to.c);
+    assert.ok(blocks.some(block => ELEMENTS[block.el] === move.element &&
+      block.cells.some(cell => cell.r === to.r && cell.c === to.c)));
+    assert.deepEqual(board, before);
+  }
 });
 
 test('L/T 交叉形合并为一个连通块 count=5（FR-2.4）', () => {

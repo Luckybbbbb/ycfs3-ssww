@@ -24,6 +24,7 @@ export function defaultProfile() {
     skillLevels: { ...eco.skillLevels },
     unlockedLevel: 1,
     loadout: [...DEFAULT_LOADOUT],
+    tutorialSeen: false,
     settings: { effects: true, sfx: true, bgm: true }, // M11-02 F5 音效入档;M14:BGM 默认开(需求方 2026-10-18)
   };
 }
@@ -88,6 +89,7 @@ export function loadProfile(storage = globalThis.localStorage) {
     unlockedLevel: pickInt(v, 'unlockedLevel', 1, 999, d),
     loadout: Array.isArray(v.loadout) && v.loadout.length === 4 && v.loadout.every(x => typeof x === 'string')
       ? v.loadout : d.loadout,
+    tutorialSeen: v.tutorialSeen === true,
     settings,
   };
 }

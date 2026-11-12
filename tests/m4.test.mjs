@@ -100,6 +100,7 @@ test('FR-8 profile 往返(M6 v0.2):保存后读回一致;默认档=schemaVer2/�
   assert.deepEqual(p, defaultProfile());
   assert.equal(p.schemaVer, 2);
   p.level = 7; p.coins = 1316; p.materials = 158; p.unlockedLevel = 3;
+  p.tutorialSeen = true;
   p.loadout = ['metal_bolt', 'fire_bolt', 'water_bolt', 'wood_bolt'];
   p.ownedSkills = [...p.ownedSkills, 'fire_dotzone'];
   p.skillLevels.fire_dotzone = 3;
@@ -108,6 +109,7 @@ test('FR-8 profile 往返(M6 v0.2):保存后读回一致;默认档=schemaVer2/�
   assert.equal(back.level, 7);
   assert.equal(back.coins, 1316);
   assert.equal(back.materials, 158);
+  assert.equal(back.tutorialSeen, true);
   assert.deepEqual(back.loadout, ['metal_bolt', 'fire_bolt', 'water_bolt', 'wood_bolt']);
   assert.ok(back.ownedSkills.includes('fire_dotzone'), '拥有表往返');
   assert.equal(back.skillLevels.fire_dotzone, 3, '技能等级往返');

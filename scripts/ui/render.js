@@ -16,6 +16,7 @@ import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
 import { drawElementBolt } from './combat_fx.js';
+import { drawBoardGuide } from './board_guide.js';
 
 // M13 敌人双血条(需求方 2026-10-18:二段扣除动效实装到敌人血条——主条立即扣,
 // 淡红残影 punch→恒速追赶,与主角/BOSS HUD 条同一 HealthView 状态机)。
@@ -883,6 +884,8 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     }
   }
 
+  const boardGuide = hud.boardGuide?.();
+  if (boardGuide && battle?.phase === 'FIGHTING' && !hud.paused?.()) drawBoardGuide(ctx, boardGuide, worldT, _fxOn);
   // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====
   if (battle && battle.phase === 'VICTORY') {
     drawResult(ctx, hud, battle, true, dt);
