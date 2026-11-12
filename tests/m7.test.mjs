@@ -149,6 +149,7 @@ test('M7 锁链/脉冲路径(裁决 F2):行为内核直呼 e.hurt 后产正确�
   assert.ok(dmgs.length >= 2, `锁链每目标 1 条(实得 ${dmgs.length},目标数 ${n})`);
   assert.ok(dmgs.every(x => x.el === 'water'), '元素来源=skill.el(water)');
   assert.equal(dmgs[0].n, Math.round(10 * 0.6 * 1.0), 'chain 伤害=round(ATK×0.6×TM)');
+  assert.deepEqual(dmgs.map(event => event.impact.primary), [true, false]);
   const b2 = new Battle({ atk: 10, maxHp: 100, level: 1 });
   const c = mkEnemy(100, 300, 200);
   b2.enemies = [c];
@@ -157,6 +158,7 @@ test('M7 锁链/脉冲路径(裁决 F2):行为内核直呼 e.hurt 后产正确�
   assert.equal(pd.length, 1);
   assert.equal(pd[0].el, 'fire');
   assert.equal(pd[0].n, Math.round(10 * 1.8 * 1.0), 'pulse=round(ATK×1.8×TM)');
+  assert.deepEqual(pd[0].impact, { tier: 1, boss: false, primary: true });
 });
 
 test('M7 状态标记(6.2b):束缚施加 🌿束缚 1 条+bindEl 记录;眩晕 💫 仅更强时再冒', () => {
@@ -676,6 +678,7 @@ test('M8 暴击(6.2d):critChance=t1 9%~t5 25%;直击 roll 命中 → dmg×1.5+�
   assert.equal(e.hp, 100 - Math.round(16 * 1.5), '暴击 dmg=round(16×1.5)=24(N 仍=实际 applied)');
   const ev = b.floatTexts.find(x => x.kind === 'dmg');
   assert.equal(ev.crit, true, '冒字事件带 crit 标记');
+  assert.deepEqual(ev.impact, { tier: 2, boss: false, primary: true });
   assert.equal(b.log.at(-1).crit, true, 'hit 日志带 crit');
   // 非暴击
   ret = 0.99; calls = 0;
@@ -697,6 +700,27 @@ test('M8 暴击(6.2d):critChance=t1 9%~t5 25%;直击 roll 命中 → dmg×1.5+�
   assert.equal(calls, 0, '溅射不消耗 roll(不暴击)');
   assert.equal(near.hp, 100 - Math.round(24 * 0.5), '溅射 12 伤无暴击加成');
   assert.equal(b3.floatTexts.find(x => x.kind === 'splash').crit, false);
+  assert.equal(b3.floatTexts.find(x => x.kind === 'splash').impact.primary, false);
+});
+
+test('五行命中使用实际伤害，超出画面上限时优先保留首领暴击', () => {
+  const fx = new FxLayer();
+  const damage = { kind: 'dmg', x: 560, y: 210, n: 24, el: 'water', fromAngle: 0 };
+  fx.combatFloat({ ...damage, importance: 0 }); // 区域跳伤无命中标记。
+  fx.combatFloat({ ...damage, n: 0, impact: { tier: 1, primary: true } });
+  assert.equal(fx.impacts.active.length, 0);
+  fx.combatFloat({ ...damage, crit: true, impact: { tier: 5, boss: true, primary: true } });
+  const [bossHit] = fx.impacts.active;
+  assert.equal(bossHit.x, 545);
+  for (let i = 0; i < 20; i++) {
+    fx.combatFloat({ ...damage, kind: 'splash', impact: { tier: 3, primary: false } });
+  }
+  assert.equal(fx.impacts.active.length, 12);
+  assert.ok(fx.impacts.active.includes(bossHit));
+  fx.update(0.25);
+  assert.deepEqual(fx.impacts.active, [bossHit]);
+  fx.update(0.13);
+  assert.equal(fx.impacts.active.length, 0);
 });
 
 test('M8 暴击冒字:金色 #ffd700/字号 ×1.4=45/peak 1.38/寿命 1.25s', () => {

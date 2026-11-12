@@ -191,6 +191,7 @@ function startLevel(L) {
   caster.resetForNewLevel(); // REQ-05:终局清预约/档位/两项累计归零;CD 属局内进度同清
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
   hud.fx.clearCastFlights();
+  hud.fx.impacts.clear();
   parallax.setLevel(battle.level);
   window.__sswwParallaxImagesBound = parallax.bindImages(assets.images);
   hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
@@ -224,6 +225,7 @@ function retryLevel() {
   caster.resetTempState();
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
   hud.fx.clearCastFlights();
+  hud.fx.impacts.clear();
   hud.battleHud.reset(); // M13:二段血条/BOSS 条复位
   battle.kills = 0;
   battle.expGained = 0;
@@ -273,6 +275,7 @@ function toggleFx() {
   if (!engine.fxEnabled) {
     hud.battleHud.waveCue = null;
     hud.fx.clearCastFlights();
+    hud.fx.impacts.clear();
   }
   persistProfile();
   showToast(`动效 ${profile.settings.effects ? '开' : '关'}`);

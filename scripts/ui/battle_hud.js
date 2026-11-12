@@ -319,13 +319,29 @@ export class BattleHudView {
     // ===== BOSS 血条:关卡名下方,仅 Boss 波(需求方 2026-10-18:非 Boss 波不显示) =====
     if (s.isBossWave && s.bossMax > 0) {
       this.boss.draw(ctx, 220, 80 + TOPBAR_H, 280, 26);
+      if (hud.fxEnabled?.() !== false && this.boss.state === 'PUNCH' && this.boss.t < 0.18) {
+        const edge = 220 + Math.max(2, Math.min(278, this.boss.hp * 280));
+        ctx.save();
+        ctx.globalAlpha = (1 - this.boss.t / 0.18) * 0.8;
+        ctx.fillStyle = '#ffe3ac';
+        ctx.fillRect(edge - 2, 82 + TOPBAR_H, 4, 22);
+        ctx.restore();
+      }
+      ctx.save();
       ctx.fillStyle = '#fff';
+      ctx.strokeStyle = '#4b282a';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
       ctx.font = "bold 17px 'Nunito','Noto Sans SC',sans-serif";
+      const name = `首领 · ${s.bossName}`;
+      const hp = `${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`;
       ctx.textAlign = 'left';
-      ctx.fillText(`首领 · ${s.bossName}`, 230, 99 + TOPBAR_H);
+      ctx.strokeText(name, 230, 99 + TOPBAR_H);
+      ctx.fillText(name, 230, 99 + TOPBAR_H);
       ctx.textAlign = 'right';
-      ctx.fillText(`${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`, 490, 99 + TOPBAR_H);
-      ctx.textAlign = 'left';
+      ctx.strokeText(hp, 490, 99 + TOPBAR_H);
+      ctx.fillText(hp, 490, 99 + TOPBAR_H);
+      ctx.restore();
       combatTextObstacles.push({ left: 220, right: 500, top: TOPBAR_H + 80, bottom: TOPBAR_H + 106 });
     }
 

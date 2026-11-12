@@ -15,6 +15,7 @@ import { ENEMY_NAME, ENEMY_TYPES, levelWeights, bossType } from '../battle/wave.
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
+import { drawElementBolt } from './combat_fx.js';
 
 // M13 敌人双血条(需求方 2026-10-18:二段扣除动效实装到敌人血条——主条立即扣,
 // 淡红残影 punch→恒速追赶,与主角/BOSS HUD 条同一 HealthView 状态机)。
@@ -544,14 +545,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
     }
-    // ===== 技能弹(五行色光点) =====
-    for (const b of battle.bolts) {
-      ctx.fillStyle = GEM_SRC[b.el];
-      ctx.shadowColor = GEM_SRC[b.el];
-      ctx.shadowBlur = 8;
-      ctx.beginPath(); ctx.arc(b.x, b.y, 9, 0, Math.PI * 2); ctx.fill();
-      ctx.shadowBlur = 0;
-    }
+    for (const b of battle.bolts) drawElementBolt(ctx, b, _fxOn);
     // ===== M4 行为视觉:区域(dot=灼烧橙 / field=寒霜蓝)+ 生机光环(木绿圈) =====
     for (const z of battle.zones || []) {
       ctx.fillStyle = z.kind === 'dot' ? 'rgba(255,120,50,.18)' : 'rgba(120,190,255,.18)';
@@ -565,6 +559,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(PLAYER_X, 300, 110, 0, Math.PI * 2); ctx.stroke();
     }
+    if (_fxOn) hud.fx?.impacts?.draw(ctx);
     // M5 无敌道具:主角金圈
     if (battle.invincibleT > 0) {
       ctx.strokeStyle = `rgba(245,195,28,${Math.min(1, battle.invincibleT)})`;
@@ -587,10 +582,16 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.fillStyle = '#3f6fb5';
       roundRect(ctx, PLAYER_X - 40, 448 - 220, 80, 220, 24); ctx.fill();
     }
-    // 受击闪白反馈(FR-1.1 验收)
-    if (battle.hurtT > 0) {
-      ctx.fillStyle = `rgba(255,255,255,${Math.min(0.6, battle.hurtT * 3)})`;
-      ctx.fillRect(0, 0, 720, BATTLE_H);
+    if (_fxOn && battle.hurtT > 0) {
+      const fade = Math.min(1, battle.hurtT / 0.2);
+      ctx.save();
+      ctx.globalAlpha = fade * 0.82;
+      ctx.strokeStyle = '#ffcec0';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.ellipse(PLAYER_X, PLAYER_Y + 29, 58 + (1 - fade) * 15, 67, -0.3, 0.22, 2.55);
+      ctx.stroke();
+      ctx.restore();
     }
   }
   ctx.restore(); // 视差/震动变换结束(联动栏与棋盘不参与 screenshake)
@@ -1349,21 +1350,26 @@ function drawEnemy(ctx, e, t, scale) {
     }
   }
   const w = t.srcW * t.scale * scale, h = t.srcH * t.scale * scale;
-  // M8 受击反馈(03 文档 6.7):白闪=贴图白色剪影(filter 亮度归零反相)+ 冻结期水平微抖(SF/DNF 口径)
-  const flashing = e.hitFlashT > 0;
-  const shake = e.hitStopT > 0 ? Math.sin((e.hitFlashT + e.hitStopT) * 90) * 3 : 0;
+  // 白闪使用递减的半透明剪影，露出敌人轮廓和贴图细节。
+  const flashing = _fxOn && e.hitFlashT > 0;
+  const shake = _fxOn && e.hitStopT > 0 ? Math.sin((e.hitFlashT + e.hitStopT) * 90) * 3 : 0;
   const ex = e.x + shake;
   if (f && f.complete && f.naturalWidth > 0) {
-    if (flashing) { ctx.save(); ctx.filter = 'brightness(0) invert(1)'; }
     drawFlipH(ctx, f, ex - w / 2, e.y - h / 2, w, h); // M11-05:敌人帧整体水平镜像(面左向主角)
-    if (flashing) ctx.restore();
+    if (flashing) {
+      ctx.save();
+      ctx.globalAlpha *= Math.min(0.55, e.hitFlashT * 3.4);
+      ctx.filter = 'brightness(0) invert(1)';
+      drawFlipH(ctx, f, ex - w / 2, e.y - h / 2, w, h);
+      ctx.restore();
+    }
   } else {
     ctx.fillStyle = flashing ? '#ffffff' : '#5fae5f';
     ctx.beginPath(); ctx.ellipse(ex, e.y, (t.radius || 45) * scale, (t.radius || 45) * 1.4 * scale, 0, 0, Math.PI * 2); ctx.fill();
   }
 }
 
-void TIER_MULT; void PLAYER_Y; void ENEMY_SPAWN_X;
+void TIER_MULT; void ENEMY_SPAWN_X;
 
 // ==================== M11 界面(UI 设计稿 docs/design/ui/ 五屏) ====================
 // 布局常量导出:main.js 命中区与测试共用(单一来源,与 draw* 逐字一致)

@@ -6,6 +6,7 @@
 import { BOARD_W, BOARD_H, BOARD_Y } from '../board/grid.js';
 import { BATTLE_ASSET_BAR_H, GEM_COLORS as GEM_FLOAT } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { BATTLE_H } from '../battle/parallax.js'; // 战斗区高度单一来源(喊话演出以战斗区为舞台)
+import { ImpactEffects } from './combat_fx.js';
 
 // 伤害冒字样式表(03 文档 6.2a/6.2b;**全部五行语义色引用 draw_util GEM_COLORS 单一定义源**,
 // REQ-M7-02 F6:灼烧/吸血/光环/护盾/状态标记不再硬编码;非五行语义色[免伤/受击/击破]为独立字面值)
@@ -140,6 +141,7 @@ export class FxLayer {
   constructor() {
     this.particles = []; // 棋盘内的合成光点与爆发碎片
     this.castFlights = [];
+    this.impacts = new ImpactEffects();
     this.floaters = [];  // {x,y,text,t,life,size,color}
     this.combatTexts = []; // v0.3 伤害冒字(上限 64 字符位;M8 A 整条一体运动/暴击,03 文档 6.1)
     this.announces = [];   // M9 连锁播报 [{chain,text,color,t,life}](engine chain_announce 事件驱动)
@@ -239,6 +241,7 @@ export class FxLayer {
   combatFloat(ev) {
     const st = FT_STYLE[ev.kind];
     if (!st) return;
+    this.impacts.note(ev);
     const imp = ev.importance ?? st.imp;
     const crit = !!ev.crit;
     const size = crit ? Math.round(st.size * CRIT_SIZE_MULT) : st.size;
@@ -297,6 +300,7 @@ export class FxLayer {
   }
 
   update(dt) {
+    this.impacts.update(dt);
     for (const flight of this.castFlights) flight.t += dt;
     if (this.castFlights.length) this.castFlights = this.castFlights.filter(f => f.t < f.travel + CAST_ARRIVAL);
     if (this.call) { this.call.t += dt; if (this.call.t >= CALL_TOTAL) this.call = null; } // M12
@@ -386,12 +390,13 @@ export class FxLayer {
       const font = Math.max(6, Math.round(c.size * scale));
       ctx.font = `bold ${font}px 'Nunito','Noto Sans SC',sans-serif`;
       const outline = Math.max(3, Math.round(font / 8));
+      const edge = c.color === GEM_FLOAT.earth ? outline + 3 : outline;
       const metrics = ctx.measureText(c.text);
       const half = metrics.width / 2;
-      const leftPad = Math.max(half, metrics.actualBoundingBoxLeft ?? 0) + outline / 2;
-      const rightPad = Math.max(half, metrics.actualBoundingBoxRight ?? 0) + outline / 2;
-      const ascent = Math.max(font, metrics.actualBoundingBoxAscent ?? 0) + outline / 2;
-      const descent = Math.max(font * 0.18, metrics.actualBoundingBoxDescent ?? 0) + outline / 2;
+      const leftPad = Math.max(half, metrics.actualBoundingBoxLeft ?? 0) + edge / 2;
+      const rightPad = Math.max(half, metrics.actualBoundingBoxRight ?? 0) + edge / 2;
+      const ascent = Math.max(font, metrics.actualBoundingBoxAscent ?? 0) + edge / 2;
+      const descent = Math.max(font * 0.18, metrics.actualBoundingBoxDescent ?? 0) + edge / 2;
       const minX = leftPad + 6, maxX = BOARD_W - rightPad - 6;
       const minY = BATTLE_ASSET_BAR_H + 6 + ascent, maxY = BATTLE_H - 42 - descent;
       let x = Math.max(minX, Math.min(maxX, c.x));
@@ -416,6 +421,11 @@ export class FxLayer {
       }
       occupied.push({ left: x - leftPad, right: x + rightPad, top: y - ascent, bottom: y + descent });
       ctx.globalAlpha = p < FT_FADE_FROM ? 1 : Math.max(0, 1 - (p - FT_FADE_FROM) / (1 - FT_FADE_FROM));
+      if (edge > outline) {
+        ctx.strokeStyle = '#fff0d1';
+        ctx.lineWidth = edge;
+        ctx.strokeText(c.text, x, y);
+      }
       ctx.strokeStyle = '#000';
       ctx.lineWidth = outline;
       ctx.strokeText(c.text, x, y);

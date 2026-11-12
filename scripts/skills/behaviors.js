@@ -47,6 +47,7 @@ export function applyChain(ctx, skill, tier) {
     // 方向=中心敌→被击敌;中心自身方向缺省(向上)
     ctx.floatEvent({
       kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: skill.el,
+      impact: { tier, boss: e.isBoss, primary: e === primary },
       fromAngle: e === primary ? null : Math.atan2(e.y - primary.y, e.x - primary.x),
       importance: 1,
     });
@@ -124,6 +125,7 @@ export function applyPulse(ctx, skill, tier) {
       // 伤害冒字(6.5:脉冲直呼 e.hurt 不经 applyHit;元素来源=skill.el;方向=中心→被击敌)
       ctx.floatEvent({
         kind: 'dmg', x: e.x, y: e.y, n: r.applied, el: skill.el,
+        impact: { tier, boss: e.isBoss, primary: e === center },
         fromAngle: e === center ? null : Math.atan2(e.y - center.y, e.x - center.x),
         importance: 1,
       });

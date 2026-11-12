@@ -257,6 +257,7 @@ export class Battle {
     // 方向(6.3,REQ-M7-01 F1):溅射/范围=爆炸中心→被击敌;直击=弹速方向(makeBolt vx/vy 真实弹速)
     this.floatEvent({
       kind: isSplash ? 'splash' : 'dmg', x: e.x, y: e.y, n: r.applied, el: b.el, crit,
+      impact: { tier: b.tier, boss: e.isBoss, primary: !center && !isSplash },
       fromAngle: center
         ? Math.atan2(e.y - center.y, e.x - center.x)
         : (typeof b.vx === 'number' || typeof b.vy === 'number' ? Math.atan2(b.vy || 0, b.vx == null ? -1 : b.vx) : null),
