@@ -6,7 +6,16 @@
 // 相对路径: sw.js(仓库根,scope=部署目录;本地 dev 与 Pages 子路径均成立)
 
 const CACHE_PREFIX = 'ssww-cache-';
-const CACHE_NAME = CACHE_PREFIX + 'v2';
+const CACHE_VERSION = 'v3';
+const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
+
+function fetchCurrent(req) {
+  if (req.mode === 'navigate') return fetch(req, { cache: 'reload' });
+  const url = new URL(req.url);
+  url.searchParams.set('_ssww_rev', CACHE_VERSION);
+  // 以原请求为存储键，网络端按站点版本取资源，避免旧 HTTP 缓存写回新缓存。
+  return fetch(url, { cache: 'reload', credentials: req.credentials, headers: req.headers, redirect: req.redirect });
+}
 
 self.addEventListener('install', (event) => {
   // 不做 install 预缓存(资源清单由运行时逐请求缓存,避免版本列表维护)
@@ -32,7 +41,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       const cache = await caches.open(CACHE_NAME);
       try {
-        const fresh = await fetch(req);
+        const fresh = await fetchCurrent(req);
         if (fresh.ok) await cache.put(req, fresh.clone()).catch(() => {});
         return fresh;
       } catch {
@@ -49,7 +58,7 @@ self.addEventListener('fetch', (event) => {
     const hit = await cache.match(req);
     const fetchAndPut = (async () => {
       try {
-        const fresh = await fetch(req);
+        const fresh = await fetchCurrent(req);
         if (fresh.ok) await cache.put(req, fresh.clone()).catch(() => {});
         return fresh;
       } catch { return null; }
