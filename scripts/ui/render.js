@@ -983,11 +983,14 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   if (battle?.phase === 'FIGHTING' && !hud.paused?.()) {
     if (boardGuide) {
       drawBoardGuide(ctx, boardGuide, worldT, _fxOn);
-    } else if (hud.hintAvailable) {
-      drawBtn(ctx, UI.battle.hintBtn, '提示', hud.hintAvailable() ? 'primary' : 'disabled');
-      ctx.textAlign = 'left';
-      const hint = hud.boardHint?.();
-      if (hint) drawBoardHint(ctx, hint, worldT, _fxOn);
+    } else {
+      hud.battleHud?.drawSkillFeedback?.(ctx, hud);
+      if (hud.hintAvailable) {
+        drawBtn(ctx, UI.battle.hintBtn, '提示', hud.hintAvailable() ? 'primary' : 'disabled');
+        ctx.textAlign = 'left';
+        const hint = hud.boardHint?.();
+        if (hint) drawBoardHint(ctx, hint, worldT, _fxOn);
+      }
     }
   }
   // ===== 胜负结算(FR-1.4;UI 设计稿 05:横幅+统计卡+按钮组;M11 重做) =====

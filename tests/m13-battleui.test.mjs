@@ -270,6 +270,52 @@ test('开战和首领波显示短播报，普通换波只推进刻度，关动�
   assert.equal(view.waveCue, null);
 });
 
+test('消除技能底栏区分预约、公共冷却、等待目标和实际释放', () => {
+  const view = new BattleHudView();
+  const battle = { phase: 'FIGHTING', clock: 1.15, enemies: [{ alive: true }] };
+  const pending = [
+    { skillId: 'fire_bolt', t0: 1, selT: 1, execFloor: 1.75, tier: 1 },
+    { skillId: 'water_chain', t0: 1, selT: 1, execFloor: 1.30, tier: 3 },
+  ];
+  const caster = { pending, nextCastAt: 1.60, loadout: ['fire_bolt'] };
+  const hud = { battle, caster, fxEnabled: () => false };
+  let labels = [], rails = [];
+  const ctx = new Proxy({ globalAlpha: 1 }, {
+    get(state, key) {
+      if (key === 'fillText') return (text, x) => labels.push({ text, x });
+      if (key === 'fillRect') return (x,y,w) => rails.push({x,y,w});
+      return state[key] ?? (() => {});
+    },
+  });
+  function draw() {
+    labels = []; rails = [];
+    view.drawSkillFeedback(ctx, hud);
+    return labels.map(({ text }) => text);
+  }
+  const snapshot = JSON.stringify(caster);
+  assert.deepEqual(draw(), ['寒冰锁链','蓄势中 · 3档','+1']);
+  assert.ok(Math.abs(rails[1].w - 102) < 1e-8);
+  assert.equal(JSON.stringify(caster), snapshot);
+  battle.clock = 1.45;
+  assert.ok(draw().includes('公共冷却 · 3档'));
+  assert.ok(Math.abs(rails[1].w - 102) < 1e-8);
+  battle.enemies[0].alive = false;
+  assert.ok(draw().includes('等待目标 · 3档'));
+  battle.enemies[0].alive = true;
+  battle.clock = 1.60;
+  assert.ok(draw().includes('待释放 · 3档'));
+  pending.pop();
+  view.noteElimCast({ skill: { id: 'water_chain', name: '寒冰锁链', el: 'water' }, tier: 3 }, battle.clock);
+  assert.deepEqual(draw(), ['火弹','蓄势中 · 1档','寒冰锁链','已释放 · 3档']);
+  assert.ok(labels[0].x < 260 && labels[2].x > 460);
+  pending.length = 0;
+  battle.clock = 2.36;
+  assert.deepEqual(draw(), []);
+  view.reset();
+  battle.clock = 0;
+  assert.deepEqual(draw(), []);
+});
+
 test('战斗 HUD 使用真实道具剩余时间，动效关闭时也能辨认，并在到期和结算时消失', () => {
   const view = new BattleHudView();
   const battle = { phase: 'FIGHTING', invincibleT: 4.46 };

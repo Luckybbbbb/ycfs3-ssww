@@ -13,7 +13,8 @@ import { skillById, pickSkillForElement, SKILL_LIBRARY } from './library.js';
 import { dispatch as dispatchBehavior } from './behaviors.js';
 
 const FIVE = ['fire', 'water', 'wood', 'metal', 'earth'];
-const SHARED_CAST_CD = 0.30;
+export const SHARED_CAST_CD = 0.30;
+export const reservationReadyAt = p => Math.max(p.execFloor ?? p.t0 + 0.75, p.selT);
 // 元素名 → 初始弹技能 ID;技能 ID 原样保留(M2 兼容入口)
 const toSkillId = (v) => (skillById(v) ? v : `${v}_bolt`);
 
@@ -170,8 +171,7 @@ export class Caster {
 
   _releaseReservation(ctx, now) {
     for (const [index, p] of this.pending.entries()) {
-      const exec = Math.max(p.execFloor ?? p.t0 + 0.75, p.selT);
-      if (now < exec) continue;
+      if (now < reservationReadyAt(p)) continue;
       const skill = skillById(p.skillId);
       const used = this._execute(skill, p.tier, ctx, 'elim');
       if (!used) continue;

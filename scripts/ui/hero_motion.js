@@ -2,6 +2,7 @@
 // 主角战斗图集每行四帧，出手锚点使用图集绘制后的战场坐标。
 
 import { BOLT_SPEED, PLAYER_X } from '../skills/registry.js';
+import { reservationReadyAt } from '../skills/cast.js';
 
 export const HERO_CAST_TIME = 0.28;
 export const HERO_ATLAS_HEIGHT = 1536;
@@ -47,7 +48,7 @@ export function beginHeroCast(usedList, battle, previousFrame) {
 }
 
 export function heroWindup(pending, clock, nextCastAt = 0) {
-  const startAt = p => Math.max(p.execFloor ?? p.t0 + 0.75, p.selT, nextCastAt);
+  const startAt = p => Math.max(reservationReadyAt(p), nextCastAt);
   const cast = pending?.find(p => {
     const until = startAt(p) - clock;
     return until > 0 && until <= 0.09;

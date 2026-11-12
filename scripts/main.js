@@ -757,6 +757,7 @@ function boot(images) {
         for (const used of usedList) {
           parallax.triggerPulse();
           const slot = hud.battleHud.noteCast(used.skill.id, caster.loadout);
+          if (used.from === 'elim') hud.battleHud.noteElimCast(used, battle.clock);
           if (boardGuide?.mode === 'charge' && used.from === 'elim') {
             boardGuide = { mode: 'complete', skill: used.skill.name, element: used.skill.el, slot, time: 2 };
             rememberBoardGuide();

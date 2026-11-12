@@ -7,11 +7,53 @@
 // 相对路径: scripts/ui/battle_hud.js
 
 import { WAVES_PER_LEVEL } from '../meta/levels.js';
-import { BATTLE_ASSET_BAR_H as TOPBAR_H } from './draw_util.js';
+import { BATTLE_ASSET_BAR_H as TOPBAR_H, GEM_COLORS } from './draw_util.js';
 import { ENEMY_NAME, bossType } from '../battle/wave.js';
+import { reservationReadyAt, SHARED_CAST_CD } from '../skills/cast.js';
+import { skillById } from '../skills/library.js';
 
 export const BATTLE_H = 448; // 战斗区高度(与 parallax BATTLE_H 同口径;本地常量避免循环依赖)
 const SLOT_X = 392, SLOT_Y = 330, SLOT_SIZE = 72, SLOT_STEP = 78;
+const SKILL_FEEDBACK_TIME = 0.75;
+const SKILL_FEEDBACK_Y = 1184, SKILL_FEEDBACK_W = 228, SKILL_FEEDBACK_H = 80;
+
+function drawSkillFeedbackCard(ctx, hud, x, { skill, tier, label, fill = 1, more = 0, released = false, alpha = 1 }) {
+  const y = SKILL_FEEDBACK_Y, w = SKILL_FEEDBACK_W, h = SKILL_FEEDBACK_H;
+  const color = GEM_COLORS[skill.el] || '#a98753';
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = released ? '#453821' : '#173d35';
+  _rr(ctx, x, y, w, h, 15); ctx.fill();
+  ctx.strokeStyle = released ? '#d8b66f' : '#9dbbad';
+  ctx.lineWidth = 2; ctx.stroke();
+
+  ctx.fillStyle = '#f0e5cf';
+  _rr(ctx, x + 10, y + 10, 52, 52, 13); ctx.fill();
+  const icon = hud.skillImg?.(skill.id);
+  if (icon?.complete && icon.naturalWidth) ctx.drawImage(icon, x + 14, y + 14, 44, 44);
+  else {
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x + 36, y + 36, 12, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff5d9';
+  ctx.font = "bold 23px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.fillText(skill.name, x + 70, y + 26, more ? 105 : 147);
+  ctx.fillStyle = released ? '#ffdf9a' : '#d9eee5';
+  ctx.font = "18px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.fillText(`${label} · ${tier}档`, x + 70, y + 52, 147);
+  if (more) {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#f5d991';
+    ctx.fillText(`+${more}`, x + w - 12, y + 26);
+  }
+  ctx.fillStyle = released ? '#6c5837' : '#3f6056';
+  ctx.fillRect(x + 12, y + 69, w - 24, 3);
+  ctx.fillStyle = released ? '#ffda8b' : color;
+  ctx.fillRect(x + 12, y + 69, (w - 24) * Math.max(0, Math.min(1, fill)), 3);
+  ctx.restore();
+}
 const ITEM_STATUS_Y = 212, ITEM_STATUS_H = 36;
 const ITEM_STATUS = {
   invincible: { x: 228, w: 116, bg: '#5c431e', edge: '#e7be72' },
@@ -142,11 +184,15 @@ export class BattleHudView {
     // 首局首帧/换装后开新局都按真实装配定位,不再依赖 update 顺序预热的缓存);
     // 固定四槽独立计时(同帧多技能各自亮);未装配的消除链技能忽略不覆盖;-03 B5:fx 关不绘制
     this.castAt = [0, 0, 0, 0]; // 各槽释放时刻(墙钟 ms;0=无释放)
+    this.lastElimCast = null;
     this.waveCue = null;
     this._now = () => performance.now();
   }
 
-  reset() { this.hero.reset(1); this.boss.reset(1); this.castAt = [0, 0, 0, 0]; this.waveCue = null; }
+  reset() {
+    this.hero.reset(1); this.boss.reset(1); this.castAt = [0, 0, 0, 0]; this.waveCue = null;
+    this.lastElimCast = null;
+  }
 
   noteWave(wave) {
     const kind = wave === 1 ? 'opening' : wave === WAVES_PER_LEVEL ? 'boss' : 'normal';
@@ -236,6 +282,41 @@ export class BattleHudView {
     if (i < 0 || i >= this.castAt.length) return null;
     this.castAt[i] = this._now();
     return { x: SLOT_X + i * SLOT_STEP + SLOT_SIZE / 2, y: SLOT_Y + SLOT_SIZE / 2 };
+  }
+
+  noteElimCast(used, clock) {
+    this.lastElimCast = { skill: used.skill, tier: used.tier, clock };
+  }
+
+  drawSkillFeedback(ctx, hud) {
+    const { battle, caster } = hud;
+    if (battle?.phase !== 'FIGHTING' || !caster) return;
+    const clock = battle.clock;
+    const pending = caster.pending || [];
+    if (pending.length) {
+      // 已到期的预约按建立顺序展示，未到期时展示最早到期的一项。
+      let shown = pending[0], readyAt = reservationReadyAt(shown);
+      for (let i = 1; i < pending.length && readyAt > clock; i++) {
+        const at = reservationReadyAt(pending[i]);
+        if (at < readyAt) { shown = pending[i]; readyAt = at; }
+      }
+      const skill = skillById(shown.skillId);
+      if (skill) {
+        const hasTarget = battle.enemies?.some(enemy => enemy.alive);
+        const waiting = readyAt <= clock;
+        const gate = caster.nextCastAt - clock;
+        const label = waiting ? (!hasTarget ? '等待目标' : gate > 0 ? '公共冷却' : '待释放') : '蓄势中';
+        const fill = !waiting ? (clock - shown.t0) / Math.max(0.001, readyAt - shown.t0)
+          : hasTarget && gate > 0 ? 1 - gate / SHARED_CAST_CD : 1;
+        drawSkillFeedbackCard(ctx, hud, 16, { skill, tier: shown.tier, label, fill, more: pending.length - 1 });
+      }
+    }
+    const last = this.lastElimCast;
+    const age = last ? clock - last.clock : Infinity;
+    if (age >= 0 && age < SKILL_FEEDBACK_TIME) {
+      const alpha = hud.fxEnabled?.() === false ? 1 : Math.min(1, (SKILL_FEEDBACK_TIME - age) / 0.18);
+      drawSkillFeedbackCard(ctx, hud, 476, { skill: last.skill, tier: last.tier, label: '已释放', released: true, alpha });
+    }
   }
 
   // dt 累加入口(main 主循环逐帧调用);快照字段见 _snapshot
