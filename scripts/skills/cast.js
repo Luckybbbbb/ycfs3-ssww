@@ -2,18 +2,18 @@
 // M6/v0.2 双链路释放(03 文档 4.0):
 //   [主角链·养成] 4 装配槽技能各自 CD 就绪 → 按技能等级强度(skill_mult)自动释放(tier=1,无档位)
 //   [消除触发链]  消除→档位充能(charge)→每帧判定:池≥1 且 候选池非空(已拥有∧CD就绪∧未预约)
-//                 → 串行选技+原子建预约(池全部余额转 tier,池清零)→ 执行=max(t0+0.75, 选技时刻)
-// 两阶段仲裁:主角链意图收集(无副作用)→消除链建预约→主角链合并(同技能消除链优先)→执行。
-// CD 归属:每个技能一份 CD 两链共用;预约占执行权,CD 只在执行时写入。
+//                 → 选技并建立预约 → 到期后等待公共冷却并释放。
+// 两条链共用 0.30 秒释放间隔。同技能的消除预约优先，两条链均就绪时交替释放。
+// 技能自身 CD 和公共冷却都在释放成功后开始。
 // 兼容 M2 口径:tryCast(档位+装配门控)保留为演示 API(单测依赖);loadout 可传元素名。
 // 相对路径: scripts/skills/cast.js
 
-import { BOLT_CD } from './registry.js';
 import { DEFAULT_LOADOUT } from './registry.js';
 import { skillById, pickSkillForElement, SKILL_LIBRARY } from './library.js';
 import { dispatch as dispatchBehavior } from './behaviors.js';
 
 const FIVE = ['fire', 'water', 'wood', 'metal', 'earth'];
+const SHARED_CAST_CD = 0.30;
 // 元素名 → 初始弹技能 ID;技能 ID 原样保留(M2 兼容入口)
 const toSkillId = (v) => (skillById(v) ? v : `${v}_bolt`);
 
@@ -25,6 +25,8 @@ export class Caster {
     this.level = level;
     this.cds = {};        // 元素键 CD 视图(M2 兼容:镜像该行初始弹)
     this.skillCds = {};   // 技能键 CD(唯一,两链共用——03 文档 4.0 CD 归属)
+    this.nextCastAt = 0;
+    this.lastCastSource = null;
     for (const el of FIVE) { this.cds[el] = 0; this.skillCds[`${el}_bolt`] = 0; }
     this.cdBoostT = 0;      // M5 CD 加速剩余秒
     this.cdBoostRate = 1;
@@ -50,6 +52,8 @@ export class Caster {
   resetForNewLevel() {
     this.pending = [];
     this.charge.reset();
+    this.nextCastAt = 0;
+    this.lastCastSource = null;
     for (const id in this.skillCds) this.skillCds[id] = 0;
     for (const el of FIVE) this.cds[el] = 0;
   }
@@ -139,51 +143,44 @@ export class Caster {
   // 返回本帧执行列表 [{element, tier, skill, kind, from, result?}](子弹类在 _execute 内发射,返回成功执行记录)
   tick(ctx, hasTarget, rng) {
     const now = ctx.clock;
-    const out = [];
-    // 阶段 1:主角链意图收集(无副作用:CD 就绪 ∧ 未预约 ∧ 已拥有;不写 CD)
-    const mainCands = [];
+    // 留在档位池里的消除资源照常选技并建立预约。
+    for (const el of FIVE) this.reserveFor(el, rng, now);
+    if (!hasTarget || now + 1e-9 < this.nextCastAt) return [];
+    if (typeof ctx.nearestAlive === 'function' && !ctx.nearestAlive()) return [];
+
+    const used = this.lastCastSource === 'elim'
+      ? this._releaseSlot(ctx) ?? this._releaseReservation(ctx, now)
+      : this._releaseReservation(ctx, now) ?? this._releaseSlot(ctx);
+    if (!used) return [];
+    this.nextCastAt = now + SHARED_CAST_CD;
+    this.lastCastSource = used.from;
+    return [used];
+  }
+
+  _releaseSlot(ctx) {
     for (const id of this.loadout) {
       const skill = skillById(id);
-      if (!skill || !this.owned.includes(id)) continue;
-      if ((this.skillCds[id] || 0) > 0) continue;
+      if (!skill || !this.owned.includes(id) || (this.skillCds[id] || 0) > 0) continue;
       if (this.pending.some(p => p.skillId === id)) continue;
-      mainCands.push(skill);
+      const used = this._execute(skill, 1, ctx, 'main');
+      if (used) return used;
     }
-    // 阶段 2:池余档逐帧判定回落(REQ-04 F1 每帧判定;REQ-M6-04 F2 不合并)——
-    // 事件已在 reserveFor 即时建预约,此处只捡「CD 就绪后候选池变非空」的留池档位
-    // (单候选场景:事件2 因同技能已预约而留池,候选空 → 此处也不建预约,绝不在池层合并)
-    for (const el of FIVE) this.reserveFor(el, rng, now);
-    // 阶段 3:仲裁+主角链执行(同技能被消除链预约 → 主角链合并移除;不同技能并发)
-    // REQ-M6-06 F14:**每个技能执行前复检存活目标**——前槽非子弹技能(如烈焰环)杀死末敌后,
-    // 后槽技能不得以「入口 hasTarget」的过期判断继续执行(效果 0 仍写 CD);无目标即停止。
-    if (hasTarget) {
-      for (const skill of mainCands) {
-        if (this.pending.some(p => p.skillId === skill.id)) continue; // 消除链优先(同技能合并)
-        if ((this.skillCds[skill.id] || 0) > 0) continue;
-        if (typeof ctx.nearestAlive === 'function' && !ctx.nearestAlive()) break;
-        const used = this._execute(skill, 1, ctx, 'main'); // 主角链无档位(tier=1,03 文档 4.0)
-        if (used) out.push(used);
-      }
-    }
-    // 阶段 4:消除链到期预约执行(执行 = max(execFloor, 选技时刻);执行时刻**复检**存活敌——
-    // REQ-M6-04 F6:主角链脉冲同帧杀死最后目标时,到期预约不得被消费,须挂起待敌人出现)。
-    // M9-F2:execFloor=t0+floor 随档位留池保存(charge.earliestFloor),reserveFor 统一组装——
-    // 事件入口与延迟选技/跨轮留池的回落预约都继承最早被占用档位所属轮的段④起点;
-    // 历史无 floor 预约回退 0.75s 口径(rush1 的段④起点)
-    for (const p of [...this.pending]) {
+    return null;
+  }
+
+  _releaseReservation(ctx, now) {
+    for (const [index, p] of this.pending.entries()) {
       const exec = Math.max(p.execFloor ?? p.t0 + 0.75, p.selT);
       if (now < exec) continue;
-      if (typeof ctx.nearestAlive === 'function' && !ctx.nearestAlive()) continue;
       const skill = skillById(p.skillId);
-      // 同一提交(REQ-M6-05 F6):发射/生效成功才消费预约;失败(发射 null)预约保留挂起
       const used = this._execute(skill, p.tier, ctx, 'elim');
       if (!used) continue;
-      this.pending.splice(this.pending.indexOf(p), 1);
+      this.pending.splice(index, 1);
       used.resKey = p.id; // 执行记录携带预约身份(main 按其认领块,与入口/存续回写幂等互认,REQ-08 F8)
-      used.resRound = p.round; // 预约所属轮(main 盖章;undefined=本帧阶段2新建即执行,视为当前轮)
-      out.push(used);
+      used.resRound = p.round; // 预约所属轮。缺省代表本帧建立并执行。
+      return used;
     }
-    return out;
+    return null;
   }
 
   // 执行动作(03 文档 4.0 第 3 条):实际发射/生效与 CD 写入、预约消费**同一提交**。

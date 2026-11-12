@@ -744,7 +744,7 @@ function boot(images) {
           if (e.type === 'chain_announce' && engine.fxEnabled) hud.fx.chainAnnounce(e.chain); // M9 连锁播报(与 6.1 同步关闭口径:fx 关不播报)
         }
         if (matchSound) sfx.match(matchSound.chain, matchSound.element, matchSound.count);
-        // 同刻顺序④(M6 双链路,03 文档 4.0):caster.tick 仲裁(主角链合并/并发→消除链到期执行)
+        // 投射物和跳伤结算后，由 caster.tick 从两条链里放出一个已就绪技能。
         // 子弹类已在 caster 内经 ctx.launch 同一提交发射(F6);无存活敌人执行挂起(预约保留)
         const usedList = caster.tick(battle, battle.aliveEnemies().length > 0, elimRng);
         if (usedList.length) {

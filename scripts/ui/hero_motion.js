@@ -46,14 +46,15 @@ export function beginHeroCast(usedList, battle, previousFrame) {
     from: previousFrame ?? idleFrame(battle.clock) };
 }
 
-export function heroWindup(pending, clock) {
+export function heroWindup(pending, clock, nextCastAt = 0) {
+  const startAt = p => Math.max(p.execFloor ?? p.t0 + 0.75, p.selT, nextCastAt);
   const cast = pending?.find(p => {
-    const until = Math.max(p.execFloor ?? p.t0 + 0.75, p.selT) - clock;
+    const until = startAt(p) - clock;
     return until > 0 && until <= 0.09;
   });
   const action = ACTIONS[cast?.skillId];
   if (!action) return null;
-  const until = Math.max(cast.execFloor ?? cast.t0 + 0.75, cast.selT) - clock;
+  const until = startAt(cast) - clock;
   return { frame: action.first, alpha: smooth(1 - until / 0.09) };
 }
 

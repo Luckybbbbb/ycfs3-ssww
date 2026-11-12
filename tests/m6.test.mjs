@@ -1,7 +1,7 @@
 // tests/m6.test.mjs
 // M6 玩法重构单测:批次 C 双链路释放(03 文档 v0.2 4.0,REQ-06 过审版)
 // 覆盖:档位新公式(02 5.2)、消除触发链预约(选技转池/执行时刻/共享 CD)、主角链(skill_mult)、
-//       两阶段仲裁(同技能消除链优先/不同技能并发)、生命周期(终局清空/无敌人挂起)
+//       两条链共用施法间隔、同技能消除链优先、终局清空和无敌人挂起
 // 运行: node --test tests/m6.test.mjs
 // 相对路径: tests/m6.test.mjs
 
@@ -65,21 +65,43 @@ test('M6 充能:earliestT 记录最早充入时刻;drainAll 原子转池(池全�
 });
 
 // ---- 主角链(养成线) ----
-test('M6 主角链:CD 就绪即发(tier=1);同帧多槽就绪全部执行;CD 写入共享表', () => {
+test('主角链按槽位释放，同一时刻最多一个，公共间隔为 0.30 秒', () => {
   const charge = new Charge();
   const caster = new Caster(charge, ['fire_bolt', 'water_bolt'], 1);
   const ctx = mockCtx(10, 0);
   ctx.enemies = [{ alive: true }];
   const out = caster.tick(ctx, true, makeRngSeq([0]));
-  assert.equal(out.length, 2, '两槽同帧就绪并发执行');
-  assert.ok(out.every(u => u.from === 'main' && u.tier === 1), '主角链 tier=1(无档位)');
-  assert.equal(caster.skillCds.fire_bolt, 2.0, '共享 CD 写入');
-  assert.equal(caster.skillCds.water_bolt, 2.0);
-  ctx.clock = 1.0;
-  assert.equal(caster.tick(ctx, true, makeRngSeq([0])).length, 0, 'CD 中不执行');
-  caster.update(2.0); // CD 衰减 2s(update 驱动,tick 只读)
+  assert.deepEqual(out.map(u => [u.skill.id,u.from,u.tier]), [['fire_bolt','main',1]]);
+  assert.equal(caster.skillCds.fire_bolt, 2.0);
+  assert.equal(caster.skillCds.water_bolt, 0);
+  ctx.clock = 0.299;
+  assert.equal(caster.tick(ctx, true, makeRngSeq([0])).length, 0);
+  caster.update(0.30);
+  ctx.clock = 0.30;
+  assert.equal(caster.tick(ctx, true, makeRngSeq([0]))[0].skill.id, 'water_bolt');
+  caster.update(1.70);
   ctx.clock = 2.0;
-  assert.equal(caster.tick(ctx, true, makeRngSeq([0])).length, 2, 'CD 到期再发');
+  assert.equal(caster.tick(ctx, true, makeRngSeq([0]))[0].skill.id, 'fire_bolt');
+  caster.update(0.31);
+  ctx.clock = 2.31;
+  assert.equal(caster.tick(ctx, true, makeRngSeq([0]))[0].skill.id, 'water_bolt');
+});
+
+test('冷却加速只加快技能自身冷却，重开后公共间隔从首发重新计时', () => {
+  const caster = new Caster(new Charge(), ['fire_bolt','water_bolt']);
+  const ctx = mockCtx(10,0);
+  ctx.enemies = [{ alive:true }];
+  const tick = () => caster.tick(ctx,true,() => 0);
+  assert.equal(tick()[0].skill.id,'fire_bolt');
+  caster.setCdBoost(1,2);
+  caster.update(0.15);
+  ctx.clock = 0.15;
+  assert.ok(Math.abs(caster.skillCds.fire_bolt-1.70)<1e-9);
+  assert.deepEqual(tick(),[]);
+  caster.resetForNewLevel();
+  caster.resetTempState();
+  ctx.clock = 0;
+  assert.equal(tick()[0].skill.id,'fire_bolt');
 });
 
 test('M6 主角链:skill_mult 接入(03 文档 2.4/4.4——round(10×1.16×2.4)=28,无中间取整)', () => {
@@ -166,7 +188,7 @@ test('M6 消除链:留池档位在 CD 就绪帧经 tick 回落建预约(REQ-04 F
   assert.equal(out[0].tier, 1);
 });
 
-test('M6 仲裁:同技能同刻消除链优先(主角链合并);不同技能并发', () => {
+test('同技能只执行消除预约，两条链均就绪时轮流释放', () => {
   const charge = new Charge();
   const caster = new Caster(charge, ['fire_bolt'], 1);
   const ctx = mockCtx(10, 0);
@@ -176,12 +198,26 @@ test('M6 仲裁:同技能同刻消除链优先(主角链合并);不同技能并�
   const out = caster.tick(ctx, true, makeRngSeq([0]));
   assert.equal(out.length, 0, '预约未到期,主角链同技能被合并(消除链优先)');
   assert.equal(caster.pending.length, 1);
-  caster.loadout = ['water_bolt'];
+  caster.loadout = ['water_bolt','earth_bolt'];
+  charge.feed(ev('wood',3,1,0));
+  caster.reserveFor('wood',() => 0,0);
   ctx.clock = 0.75;
   const out2 = caster.tick(ctx, true, makeRngSeq([0]));
-  assert.equal(out2.length, 2, '水弹(主角链)+火弹(消除链)并发');
-  assert.ok(out2.some(u => u.from === 'main' && u.skill.id === 'water_bolt'));
-  assert.ok(out2.some(u => u.from === 'elim' && u.skill.id === 'fire_bolt'));
+  assert.deepEqual(out2.map(u=>[u.from,u.skill.id,u.tier]), [['elim','fire_bolt',5]]);
+  assert.equal(caster.pending[0].skillId,'wood_bolt');
+  assert.equal(caster.skillCds.water_bolt,0);
+  ctx.clock = 0.90;
+  ctx.enemies = [];
+  assert.deepEqual(caster.tick(ctx,false,()=>0),[]);
+  ctx.enemies = [{ alive:true }];
+  assert.deepEqual(caster.tick(ctx,true,()=>0),[]);
+  assert.equal(caster.pending[0].skillId,'wood_bolt');
+  ctx.clock = 1.05;
+  assert.deepEqual(caster.tick(ctx,true,()=>0).map(u=>[u.from,u.skill.id]),[['main','water_bolt']]);
+  ctx.clock = 1.35;
+  assert.deepEqual(caster.tick(ctx,true,()=>0).map(u=>[u.from,u.skill.id]),[['elim','wood_bolt']]);
+  ctx.clock = 1.65;
+  assert.deepEqual(caster.tick(ctx,true,()=>0).map(u=>[u.from,u.skill.id]),[['main','earth_bolt']]);
 });
 
 test('M6 消除链:选技映射正确性(桩 rng 索引对应,裁决 F7)+ 固定种子复现', () => {
@@ -258,8 +294,7 @@ test('M6 F6:同帧目标全灭,到期预约不消费不写 CD(执行时刻复检
 
 test('M6 F6 续审:发射/生效与 CD 写入、预约消费同一提交(锁链击杀末敌反例)', async () => {
   const { Battle } = await import('../scripts/battle/battle.js');
-  // 场景 A(裁决反例):同帧到期预约依次=火弹、寒冰锁链,末敌 HP6 将被锁链击杀。
-  // 火弹执行时刻目标仍存活 → 发射成功、CD 写入、预约消费(同一提交,弹已真实在飞)。
+  // 火弹和寒冰锁链同时到期，锁链等待火弹放完后的公共冷却。
   const ch1 = new Charge();
   const c1 = new Caster(ch1, ['fire_bolt'], 1, ['fire_bolt', 'water_chain']);
   const ctx1 = new Battle({ atk: 10, maxHp: 100, rng: null });
@@ -269,9 +304,12 @@ test('M6 F6 续审:发射/生效与 CD 写入、预约消费同一提交(锁链�
   assert.equal(c1.pending.length, 2);
   ctx1.clock = 0.75;
   const out = c1.tick(ctx1, true, makeRngSeq([0]));
-  assert.equal(out.length, 2, '火弹+锁链同帧执行');
+  assert.deepEqual(out.map(u=>u.skill.id),['fire_bolt']);
   assert.equal(ctx1.bolts.length, 1, '火弹在执行提交内真实发射(不再交 main 延后)');
   assert.equal(c1.skillCds.fire_bolt, 2.0, '发射成功才写 CD');
+  assert.equal(c1.pending[0].skillId,'water_chain');
+  ctx1.clock = 1.05;
+  assert.deepEqual(c1.tick(ctx1,true,()=>0).map(u=>u.skill.id),['water_chain']);
   assert.equal(c1.pending.length, 0, '两预约均消费');
   // 场景 B:执行时刻已无存活目标 → 火弹预约保留挂起、不写 CD(同提交回滚)
   const ch2 = new Charge();
@@ -286,6 +324,12 @@ test('M6 F6 续审:发射/生效与 CD 写入、预约消费同一提交(锁链�
   assert.equal(c2.pending.length, 1, '无存活目标预约保留');
   assert.equal(c2.skillCds.fire_bolt || 0, 0, '未写 CD');
   ctx2.enemies = [{ alive: true }];
+  const launch = ctx2.launch;
+  ctx2.launch = () => null;
+  assert.deepEqual(c2.tick(ctx2,true,()=>0),[]);
+  assert.equal(c2.nextCastAt,0);
+  assert.equal(c2.pending.length,1);
+  ctx2.launch = launch;
   assert.equal(c2.tick(ctx2, true, makeRngSeq([0])).length, 1, '目标出现后执行');
 });
 

@@ -64,6 +64,8 @@ test('已预约释放可播短抬手帧，等待时点不参与实际结算', ()
   assert.ok(heroMotionMix(1.95,null,20,windup).alpha > 0);
   assert.ok(heroWindup(pending,1.98).alpha > windup.alpha);
   assert.equal(heroWindup(pending,2),null);
+  assert.equal(heroWindup(pending,1.95,2.30),null);
+  assert.equal(heroWindup(pending,2.25,2.30)?.frame,20);
 });
 
 test('飞行拖尾采样过去的出手曲线，连珠错开后汇到原弹道', () => {

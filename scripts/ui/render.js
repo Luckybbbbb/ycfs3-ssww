@@ -640,7 +640,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     const cast = hasNewMotion && hud.heroCast;
     const pending = !attack && hasNewMotion && battle.phase === 'FIGHTING' &&
       hud.caster?.pending?.length && battle.enemies.some(e => e.alive);
-    const windup = pending ? heroWindup(hud.caster.pending, clock) : undefined;
+    const windup = pending ? heroWindup(hud.caster.pending, clock, hud.caster.nextCastAt) : undefined;
     const frame = heroMotionFrame(clock, battle.playerAttackT, hurt ? hurt.t : null, cast, windup);
     const mix = hasNewMotion ? heroMotionMix(clock, cast, frame, windup) : null;
     if (hasMotion) hud.heroFrame = mix && mix.alpha < 0.5 ? mix.under : (mix?.frame ?? frame);
