@@ -100,6 +100,7 @@ test('首页和首关只请求相关素材，战斗清单包含本关首领及�
   assert.ok(first.includes('ui:board_surface'));
   assert.ok(first.includes('skill-fx:shots') && first.includes('skill-fx:hits'));
   assert.ok(!first.includes('skill-fx:fields'));
+  assert.ok(!first.includes('call:bubble'));
   assert.ok(!HOME_ASSETS.some(item => item.key === 'ui:board_surface'));
   assert.ok(!menuManifest(1).some(item => item.key === 'ui:board_surface'));
   assert.ok(first.some(key => key.startsWith('slime:')));
@@ -108,6 +109,7 @@ test('首页和首关只请求相关素材，战斗清单包含本关首领及�
   const fifth = battleManifest(5, ['fire_dotzone', 'water_field']).map(item => item.key);
   assert.ok(fifth.includes('bg:volcano:near'));
   assert.ok(fifth.includes('skill-fx:fields'));
+  assert.ok(fifth.includes('call:bubble'));
   assert.ok(fifth.some(key => key.startsWith('boss:')));
   assert.deepEqual(fifth.filter(key => key.startsWith('call:bg:')).sort(), ['call:bg:fire:1', 'call:bg:water:2']);
 });

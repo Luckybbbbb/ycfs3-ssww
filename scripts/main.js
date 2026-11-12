@@ -23,7 +23,7 @@ import { createApi } from './api/api.js';
 import { maxHpAt, atkAt } from './meta/exp.js';
 import { PLAYER_X } from './skills/registry.js';
 import { PLAYER_Y } from './battle/enemy.js';
-import { HERO_CAST_TIME } from './ui/hero_motion.js';
+import { beginHeroCast, HERO_CAST_TIME } from './ui/hero_motion.js';
 import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpCost, COIN_PER_GACHA, SKILL_LEVEL_CAP } from './meta/economy.js';
 import { canPlay, onVictory, mergeRunResult, WAVES_PER_LEVEL } from './meta/levels.js';
 import { applyItem } from './board/items.js';
@@ -219,6 +219,8 @@ function startLevel(L) {
   caster.resetForNewLevel(); // REQ-05:终局清预约/档位/两项累计归零;CD 属局内进度同清
   beginBoardGuide(L);
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
+  hud.heroCast = null;
+  hud.heroFrame = null;
   hud.fx.clearCastFlights();
   hud.fx.impacts.clear();
   hud.fx.itemEffects.clear();
@@ -256,6 +258,8 @@ function retryLevel() {
   caster.resetTempState();
   beginBoardGuide(battle.level);
   hud.fx.clearCall(); // M12:旧局喊话演出不残留
+  hud.heroCast = null;
+  hud.heroFrame = null;
   hud.fx.clearCastFlights();
   hud.fx.impacts.clear();
   hud.fx.itemEffects.clear();
@@ -309,6 +313,7 @@ function toggleFx() {
   parallax.effects = engine.fxEnabled;
   if (!engine.fxEnabled) {
     hud.battleHud.waveCue = null;
+    hud.fx.clearCall();
     hud.fx.clearCastFlights();
     hud.fx.impacts.clear();
     hud.fx.itemEffects.clear();
@@ -742,21 +747,24 @@ function boot(images) {
         // 同刻顺序④(M6 双链路,03 文档 4.0):caster.tick 仲裁(主角链合并/并发→消除链到期执行)
         // 子弹类已在 caster 内经 ctx.launch 同一提交发射(F6);无存活敌人执行挂起(预约保留)
         const usedList = caster.tick(battle, battle.aliveEnemies().length > 0, elimRng);
+        if (usedList.length) {
+          hud.heroCast = beginHeroCast(usedList, battle, hud.heroFrame);
+          battle.playerAttackT = HERO_CAST_TIME;
+        }
         // 表现绑定(REQ-M6-07/08 F8,engine.claimBlockFx 幂等认领):消除链执行记录与
         // 存续预约回写 blockFx——含「预约建立后同帧即执行移除」的场景(0.80s CD 就绪,
         // 渲染层查不到 pending,必须按 tick 的执行记录认领);同一 resKey 重复回写不扩散。
         for (const used of usedList) {
-          battle.playerAttackT = HERO_CAST_TIME;
           parallax.triggerPulse();
           const slot = hud.battleHud.noteCast(used.skill.id, caster.loadout);
           if (boardGuide?.mode === 'charge' && used.from === 'elim') {
             boardGuide = { mode: 'complete', skill: used.skill.name, element: used.skill.el, slot, time: 2 };
             rememberBoardGuide();
           }
-          // 进阶技能名牌和背景按解锁档位取色，名牌冷却内跳过施法震动。
+          // 喊话和背景按解锁档位取色，冷却内跳过喊话与联动震动。
           if (used.skill.kind !== 'bolt' && engine.fxEnabled !== false) {
             if (hud.fx.skillCall(used.skill.name, used.skill.el, used.skill.unlockLevel >= 6 ? 2 : 1)) {
-              parallax.triggerShake(5, 0.35);
+              parallax.triggerShake(6.5, 0.28);
             }
           }
           // 执行记录认领(幂等 resKey)仅限预约所属轮=当前轮(轮次关系,REQ-08 F8);
@@ -786,7 +794,10 @@ function boot(images) {
       const combatEvents = battle.drainFloatTexts();
       sfx.impact(combatEvents);
       for (const ev of combatEvents) {
-        if (engine.fxEnabled) hud.fx.combatFloat(ev);
+        if (engine.fxEnabled) {
+          const fromHero = ev.skillId === 'water_chain' && ev.impact?.primary && hud.heroCast?.at === battle.clock;
+          hud.fx.combatFloat(fromHero ? { ...ev, linkFrom: hud.heroCast.action.origin } : ev);
+        }
         // -06 掉落表现:击杀→掉落货币/材料物(数值已入账,此为表现层;fx 关不生成)
         if (ev.kind === 'kill' && engine.fxEnabled !== false) {
           if (ev.boss && hud.battleHud.waveCue?.kind === 'boss') hud.battleHud.waveCue = null;
@@ -802,6 +813,8 @@ function boot(images) {
         // 未消费事件丢弃(终局后不再充能),棋盘未完成轮次快进收口到 IDLE(重试不留旧局残轮)
         caster.resetForNewLevel();
         hud.fx.clearCall(); // M12:旧局喊话演出不残留
+        hud.heroCast = null;
+        hud.heroFrame = null;
         hud.fx.clearCastFlights();
         hud.fx.itemEffects.clear();
         caster.resetTempState();

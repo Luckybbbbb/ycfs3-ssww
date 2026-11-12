@@ -61,6 +61,7 @@ export function iconList() {
 export function skillCallList() {
   const list = [
     { key: 'call:hero', url: 'assets/sprites/skillcall/hero.png', entity: 'skillcall' },
+    { key: 'call:bubble', url: 'assets/sprites/skillcall/bubble.png', entity: 'skillcall' },
   ];
   for (const el of ['fire', 'water', 'wood', 'metal', 'earth']) {
     for (const v of [1, 2]) {
@@ -123,6 +124,7 @@ export function battleManifest(level, ownedSkills) {
     const skill = skillById(id);
     if (skill && skill.kind !== 'bolt') calls.add(`call:bg:${skill.el}:${skill.unlockLevel >= 6 ? 2 : 1}`);
   }
+  if (calls.size) calls.add('call:bubble');
   return ASSETS.filter(({ key }) =>
     key === 'player:battle_motion' ||
     key.startsWith('icon:') || key === 'call:hero' || key === 'ui:avatar_frame' || key === 'ui:skill_frame' || key === 'ui:board_surface' ||

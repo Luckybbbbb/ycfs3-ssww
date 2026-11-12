@@ -16,8 +16,8 @@ import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
 import { drawElementBolt } from './combat_fx.js';
-import { drawSkillAura, drawSkillBolt, drawSkillRoots, drawSkillShield, drawSkillZone } from './skill_effects.js';
-import { drawHeroMotion, heroMotionFrame } from './hero_motion.js';
+import { drawCastRelease, drawSkillAura, drawSkillBolt, drawSkillRoots, drawSkillShield, drawSkillZone } from './skill_effects.js';
+import { drawHeroMotion, heroBoltView, heroMotionFrame, heroMotionMix, heroWindup, HERO_ATLAS_HEIGHT } from './hero_motion.js';
 import { drawBoardGuide, drawBoardHint } from './board_guide.js';
 import { UI_ICON_NAMES } from '../assets/manifest.js';
 
@@ -574,7 +574,10 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   if (px) px.draw(ctx);
   else drawFlatBackdrop(ctx);
   // M12 技能喊话背景层(z 序:场景 < 技能背景 < 敌人;战场变换内绘制,随 screenshake/pulse 联动)
-  if (hud.fx && engine.fxEnabled !== false) hud.fx.drawCallBg(ctx);
+  if (hud.fx && engine.fxEnabled !== false) {
+    hud.fx.drawCallBg(ctx);
+    hud.fx.drawCallImpact?.(ctx);
+  }
 
   if (battle) {
     const waveCue = hud.battleHud?.activeWaveCue?.(hud);
@@ -626,8 +629,12 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
     }
+    const heroAtlas = hud.heroMotion?.();
+    const hasMotion = heroAtlas?.complete && heroAtlas.naturalWidth >= 1024 && heroAtlas.naturalHeight >= 768;
+    const hasNewMotion = hasMotion && heroAtlas.naturalHeight >= HERO_ATLAS_HEIGHT;
     for (const b of battle.bolts) {
-      if (!(_fxOn && drawSkillBolt(ctx, page, b))) drawElementBolt(ctx, b, _fxOn);
+      const view = _fxOn && hasNewMotion ? heroBoltView(b) : b;
+      if (!(_fxOn && drawSkillBolt(ctx, page, view))) drawElementBolt(ctx, view, _fxOn);
     }
     if (_fxOn) hud.fx?.impacts?.draw(ctx, page);
     if (battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawShield(ctx, battle.invincibleT, _fxOn);
@@ -635,12 +642,18 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       drawSkillShield(ctx, page, PLAYER_X, 306, battle.clock);
     }
     // 主角战斗图集包含待机、施法和受击，旧素材供演示入口回退。
-    const contact = _fxOn && hud.fx?.impacts?.heroHit;
-    const hold = contact && contact.t < 0.105 ? contact.t : 0;
+    const hurt = _fxOn && hud.fx?.impacts?.heroHit;
     const attack = battle.playerAttackT > 0;
-    const heroAtlas = hud.heroMotion?.();
-    const hasMotion = heroAtlas?.complete && heroAtlas.naturalWidth >= 1024 && heroAtlas.naturalHeight >= 768;
-    const frame = heroMotionFrame(battle.clock ?? worldT, battle.playerAttackT, contact ? contact.t : null);
+    const clock = battle.clock ?? worldT;
+    const cast = hasNewMotion && hud.heroCast;
+    const pending = !attack && hasNewMotion && battle.phase === 'FIGHTING' &&
+      hud.caster?.pending?.length && battle.enemies.some(e => e.alive);
+    const windup = pending ? heroWindup(hud.caster.pending, clock) : undefined;
+    const frame = heroMotionFrame(clock, battle.playerAttackT, hurt ? hurt.t : null, cast, windup);
+    const mix = hasNewMotion ? heroMotionMix(clock, cast, frame, windup) : null;
+    if (hasMotion) hud.heroFrame = mix && mix.alpha < 0.5 ? mix.under : (mix?.frame ?? frame);
+    const contact = hurt && (!hasMotion || (frame >= 8 && frame < 12)) ? hurt : null;
+    const hold = contact && contact.t < 0.105 ? contact.t : 0;
     let pf;
     if (attack) {
       const p = 1 - Math.min(0.18, battle.playerAttackT + hold) / 0.18;
@@ -654,7 +667,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.translate(Math.cos(contact.angle) * recoil, Math.sin(contact.angle) * recoil * 0.45);
     }
     if (hasMotion) {
-      drawHeroMotion(ctx, heroAtlas, frame);
+      drawHeroMotion(ctx, heroAtlas, frame, mix);
       if (contact && contact.t < 0.086) {
         ctx.globalAlpha *= 0.76 * (1 - contact.t / 0.086);
         ctx.filter = 'brightness(0) invert(1)';
@@ -675,6 +688,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       roundRect(ctx, PLAYER_X - 40, 448 - 220, 80, 220, 24); ctx.fill();
     }
     ctx.restore();
+    if (_fxOn && cast && battle.phase === 'FIGHTING') drawCastRelease(ctx, cast, clock);
     if (_fxOn && battle.phase === 'FIGHTING') hud.fx?.itemEffects?.drawHeal(ctx);
     if (_fxOn && battle.hurtT > 0) {
       const fade = Math.min(1, battle.hurtT / 0.2);

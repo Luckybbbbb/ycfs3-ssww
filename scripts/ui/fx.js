@@ -96,7 +96,7 @@ function _mkCanvas(w, h) {
   return cv;
 }
 
-// 进阶技能名牌叠在战场上方，背景色仅在角色后方短暂浮现。
+// 喊话立绘与气泡位于战场中段，冲击线和闪光从角色后方展开。
 const CALL_CUT_T = 0.30, CALL_CUT_D = 0.03;
 const CALL_BG_T = 0.50, CALL_BG_D = 0.05;
 const CALL_HOLD = 0.50, CALL_EXIT_T = 0.35;        // 定格结束点/退场时长
@@ -105,17 +105,20 @@ const CAST_ARRIVAL = 0.16;
 const CAST_FLIGHT_LIMIT = 8;
 const CALL_CD = 2.0;                               // 喊话冷却:2s 内最多 1 次(需求方 2026-10-18;演出中再触发直接忽略)
 const CALL_W = 720, CALL_H = BATTLE_H;             // 战斗区逻辑尺寸(高度取 parallax 单一定义源)
-const CALL_PLATE = { left: 236, top: 163, right: 484, bottom: 207 };
+const CALL_ART = { left: 207, top: 150, right: 530, bottom: 336 };
+const CALL_BUBBLE_AT = 0.12;
 const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
 
 // M12 贴图表(初始全空;生产唯一填充入口=bindCallImages(main 预载成功后调用)——
 // M11-03 F1 同口径:顶层零加载,启动期图片加载只发生在 preload 内)
-export const CALL_IMG = { hero: null, bg: {} };
+export const CALL_IMG = { hero: null, bubble: null, bg: {} };
 export function bindCallImages(map) {
   if (!map || typeof map.get !== 'function') return 0;
   let n = 0;
   CALL_IMG.hero = map.get('call:hero') || null;
   if (CALL_IMG.hero) n++;
+  CALL_IMG.bubble = map.get('call:bubble') || null;
+  if (CALL_IMG.bubble) n++;
   CALL_IMG.bg = {};
   for (const el of ['fire', 'water', 'wood', 'metal', 'earth']) {
     for (const v of [1, 2]) {
@@ -505,7 +508,7 @@ export class FxLayer {
   // 终局/重开清场(REQ-M6-05 同口径:表现层不残留旧局演出);CD 同清(与 caster.resetTempState 对齐)
   clearCall() { this.call = null; this.callCdT = 0; }
 
-  // 技能背景层:render 在战场变换内、敌人绘制之前调用(z 序:场景 < 技能背景 < 敌人 < 技能名牌)。
+  // 技能背景层:render 在战场变换内、敌人绘制之前调用(z 序:场景 < 技能背景 < 敌人 < 喊话气泡)。
   // 羽化遮罩自中心向左右展开(替代 clip-path 硬边):离屏画布合成 destination-in 横向渐变。
   drawCallBg(ctx) {
     const c = this.call;
@@ -547,43 +550,95 @@ export class FxLayer {
     g.fillRect(0, 0, CALL_W, CALL_H);
     g.globalCompositeOperation = 'source-over';
     ctx.save();
-    ctx.globalAlpha *= alpha * 0.24;
+    ctx.globalAlpha *= alpha * 0.48;
     ctx.drawImage(this._bgWork, 0, 0);
     ctx.restore();
   }
 
+  drawCallImpact(ctx) {
+    const c = this.call;
+    if (!c) return;
+    const p = (c.t - 0.045) / 0.28;
+    if (p < 0 || p >= 1) return;
+    const fade = p < 0.24 ? p / 0.24 : (1 - p) / 0.76;
+    ctx.save();
+    ctx.globalAlpha *= fade * 0.48;
+    ctx.fillStyle = '#fff2ce';
+    ctx.translate(355, 219);
+    ctx.rotate(-0.12 + p * 0.16);
+    ctx.beginPath();
+    for (let i = 0; i < 28; i++) {
+      const angle = i * Math.PI / 14;
+      const x = Math.cos(angle), y = Math.sin(angle);
+      const inner = 84 + (i % 4) * 19 + p * 92;
+      ctx.moveTo(x * inner, y * inner);
+      ctx.lineTo(x * 430 - y * 2, y * 430 + x * 2);
+      ctx.lineTo(x * 430 + y * 4, y * 430 - x * 4);
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.restore();
+    if (p < 0.42) {
+      const flash = 0.23 * Math.sin(Math.PI * p / 0.42);
+      ctx.save();
+      ctx.fillStyle = `rgba(255,248,225,${flash})`;
+      ctx.fillRect(0, BATTLE_ASSET_BAR_H, CALL_W, CALL_H - BATTLE_ASSET_BAR_H);
+      ctx.restore();
+    }
+  }
+
   callBounds() {
-    return this.call ? CALL_PLATE : null;
+    return this.call?.t >= 0.055 ? CALL_ART : null;
   }
 
   _drawCallTop(ctx) {
     const c = this.call;
-    if (!c) return;
-    const { left, top, right, bottom } = CALL_PLATE;
-    const alpha = c.t < CALL_HOLD ? Math.min(1, c.t / 0.09)
-      : Math.max(0, 1 - (c.t - CALL_HOLD) / CALL_EXIT_T);
-    const color = GEM_FLOAT[c.el] || '#e6c17d';
+    if (!c || c.t < 0.055) return;
+    const { left, top, right, bottom } = CALL_ART;
+    const out = Math.min(1, Math.max(0, (c.t - CALL_HOLD) / CALL_EXIT_T));
+    const entry = Math.min(1, (c.t - 0.055) / 0.21);
     const hero = CALL_IMG.hero;
     ctx.save();
-    ctx.globalAlpha *= alpha;
-    roundRect(ctx, left, top, right - left, bottom - top, 20);
-    ctx.fillStyle = 'rgba(21, 19, 28, .91)';
-    ctx.fill();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    if (hero) {
+    ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip();
+    ctx.globalAlpha *= 1 - out * out;
+    if (hero?.naturalWidth > 0) {
       ctx.save();
-      roundRect(ctx, left + 8, top + 5, 34, 34, 16);
-      ctx.clip();
-      ctx.drawImage(hero, 160, 40, 320, 320, left + 8, top + 5, 34, 34);
+      ctx.translate(273 - 68 * (1 - easeOutBack(entry)) - 64 * out, 322);
+      ctx.rotate(-0.12 * (1 - entry) + 0.04 * out);
+      ctx.shadowColor = 'rgba(33,18,20,.58)';
+      ctx.shadowBlur = 9;
+      ctx.drawImage(hero, -65, -168, 130, 168);
       ctx.restore();
     }
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff3d8';
-    ctx.font = "bold 28px 'Nunito','Noto Sans SC',sans-serif";
-    ctx.fillText(c.name, (left + right) / 2 + (hero ? 14 : 0), (top + bottom) / 2, 180);
+
+    if (c.t >= CALL_BUBBLE_AT) {
+      const p = Math.min(1, (c.t - CALL_BUBBLE_AT) / 0.17);
+      const scale = (0.65 + 0.35 * easeOutBack(p)) * (1 - 0.18 * out);
+      const bubble = CALL_IMG.bubble;
+      ctx.save();
+      ctx.globalAlpha *= Math.min(1, p * 3.4);
+      ctx.translate(405, 226);
+      ctx.scale(scale, scale);
+      ctx.shadowColor = 'rgba(37,15,18,.48)';
+      ctx.shadowBlur = 10;
+      if (bubble?.naturalWidth > 0) {
+        ctx.drawImage(bubble, -115, -75, 230, 150);
+      } else {
+        ctx.fillStyle = '#fff2d2';
+        roundRect(ctx, -102, -32, 204, 64, 13); ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = "900 38px 'Nunito','Noto Sans SC',sans-serif";
+      ctx.strokeStyle = '#fff8d9';
+      ctx.lineWidth = 4;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(c.name, 0, -2, 177);
+      ctx.fillStyle = '#412416';
+      ctx.fillText(c.name, 0, -2, 177);
+      ctx.restore();
+    }
     ctx.restore();
   }
 

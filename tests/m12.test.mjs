@@ -1,4 +1,4 @@
-// tests/m12.test.mjs — 技能名牌与战场背景
+// tests/m12.test.mjs — 技能喊话与战场背景
 // 覆盖:manifest 喊话清单/bindCallImages 绑定入口/演出状态机(CD 门控+自动过期+清场)/
 //       无 DOM 环境绘制不抛错(z 序双钩子)/parallax 可变震屏参数
 // 运行: node --test tests/m12.test.mjs
@@ -31,12 +31,12 @@ function mkCtx() {
 }
 
 // ---- M12-1 资源清单 ----
-test('M12 manifest:头像与五行背景各有对应素材', () => {
+test('M12 manifest:立绘、气泡与五行背景各有对应素材', () => {
   const m = fullManifest();
   const call = m.filter(it => it.entity === 'skillcall');
-  assert.equal(call.length, 11);
+  assert.equal(call.length, 12);
   const keys = new Set(call.map(it => it.key));
-  assert.ok(keys.has('call:hero'));
+  assert.ok(keys.has('call:hero') && keys.has('call:bubble'));
   for (const el of ['fire', 'water', 'wood', 'metal', 'earth']) {
     assert.ok(keys.has(`call:bg:${el}:1`) && keys.has(`call:bg:${el}:2`), `五行 ${el} 两变体在清单`);
   }
@@ -45,10 +45,10 @@ test('M12 manifest:头像与五行背景各有对应素材', () => {
   }
 });
 
-test('M12 bindCallImages:绑定头像与五行背景，缺图安全回退', () => {
+test('M12 bindCallImages:绑定立绘、气泡与五行背景，缺图安全回退', () => {
   const imgs = new Map();
-  for (const it of fullManifest().filter(i => i.entity === 'skillcall')) imgs.set(it.key, { _src: it.url });
-  assert.equal(bindCallImages(imgs), 11);
+  for (const it of fullManifest().filter(i => i.entity === 'skillcall')) imgs.set(it.key, { _src: it.url, naturalWidth: 640 });
+  assert.equal(bindCallImages(imgs), 12);
   assert.equal(bindCallImages(new Map()), 0);
   assert.deepEqual(CALL_IMG.bg, {}, '切换素材包后清除旧背景');
   assert.equal(bindCallImages(null), 0, '非 Map 入参返回 0(不抛错)');
@@ -106,7 +106,7 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   fx.skillCall('烈焰焚天', 'fire', 1);
   // CALL_IMG 为模块级共享单例(前序用例可能已绑定):显式清空保证「未绑定」分支,finally 还原
   const saved = { ...CALL_IMG };
-  CALL_IMG.hero = null; CALL_IMG.bg = {};
+  CALL_IMG.hero = null; CALL_IMG.bubble = null; CALL_IMG.bg = {};
   try {
     for (let t = 0; t <= 0.9; t += 0.05) { // 全时间轴采样(含入场/定格/退场边界)
       fx.call.t = t;
@@ -118,18 +118,19 @@ test('M12 绘制:drawCallBg/_drawCallTop 全时间轴采样不抛错;无贴图�
   } finally {
     Object.assign(CALL_IMG, saved);
   }
-  // Node 环境跳过离屏背景，名牌仍画出小像。
+  // Node 环境跳过离屏背景，仍绘制立绘和喊话气泡。
   const imgs = new Map();
-  for (const it of fullManifest().filter(i => i.entity === 'skillcall')) imgs.set(it.key, { _src: it.url });
+  for (const it of fullManifest().filter(i => i.entity === 'skillcall')) imgs.set(it.key, { _src: it.url, naturalWidth: 640 });
   bindCallImages(imgs);
   const rec2 = mkCtx();
   fx.call.t = 0.4; // 定格段:各元素可见
   fx.drawCallBg(rec2.ctx);
   fx.draw(rec2.ctx);
-  assert.equal(rec2.rec.draws.length, 1);
+  assert.equal(rec2.rec.draws.length, 2);
+  assert.ok(rec2.rec.draws.some(draw => draw.img.endsWith('/bubble.png')));
   const box = fx.callBounds();
   assert.ok(box.left >= 0 && box.right <= 720 && box.top >= 44 && box.bottom <= 448);
-  assert.ok(box.right - box.left < 300 && box.bottom - box.top < 60);
+  assert.ok(box.left >= 207 && box.right <= 530 && box.top >= 150 && box.bottom <= 336);
 });
 
 test('M12 演出不阻塞逻辑:fx.update/draw 不写任何战斗状态(纯表现,技能名/元素/变体只读)', () => {
@@ -145,19 +146,19 @@ test('M12 演出不阻塞逻辑:fx.update/draw 不写任何战斗状态(纯表�
 });
 
 // ---- M12-4 parallax 可变震屏 ----
-test('M12 parallax:triggerShake(5,0.35) 覆盖幅度/时长;缺省保持受击 4px/0.12s 原口径', () => {
+test('M12 parallax:triggerShake(6.5,0.28) 覆盖幅度/时长;缺省保持受击 4px/0.12s 原口径', () => {
   const px = new Parallax({ effects: true });
   assert.equal(px.shakeAmp, 4);
   assert.equal(px.shakeDur, 0.12);
-  px.triggerShake(5, 0.35);
-  assert.equal(px.shakeAmp, 5, '喊话砸入幅度 5px');
-  assert.equal(px.shakeDur, 0.35, '喊话砸入时长 0.35s');
+  px.triggerShake(6.5, 0.28);
+  assert.equal(px.shakeAmp, 6.5, '喊话冲击幅度 6.5px');
+  assert.equal(px.shakeDur, 0.28, '喊话震动时长 0.28s');
   assert.ok(px.shakeT > 0, '震屏已激活');
   px.update(0.4);
   assert.ok(px.shakeT <= 0, '震屏按时长衰减归零');
   // 关动效口径:不激活
   const pxOff = new Parallax({ effects: false });
-  pxOff.triggerShake(5, 0.35);
+  pxOff.triggerShake(6.5, 0.28);
   assert.equal(pxOff.shakeT, 0, 'effects=false 震屏不激活(6.1 同步关闭口径)');
 });
 
@@ -168,7 +169,7 @@ test('M12 main 接线:kind!=="bolt" 触发喊话;震屏仅在 skillCall 返回 t
   assert.ok(src.includes('if (hud.fx.skillCall('), 'M12M13-ACCEPT F3:skillCall 返回值门控');
   // 震屏必须在 skillCall 返回值分支内(CD 期被忽略时**不震屏**)
   assert.ok(
-    /if \(hud\.fx\.skillCall\([^\n]*\)\) \{\s*\n\s*parallax\.triggerShake\(5, 0\.35\);/.test(src),
+    /if \(hud\.fx\.skillCall\([^\n]*\)\) \{\s*\n\s*parallax\.triggerShake\(6\.5, 0\.28\);/.test(src),
     '震屏在 skillCall 返回 true 分支内(F3:CD 期整体忽略)',
   );
   assert.ok(src.includes('used.skill.unlockLevel >= 6 ? 2 : 1'), '变体映射:Lv6→2,Lv3→1');

@@ -2,6 +2,7 @@
 // 在实际弹道、命中位置和区域边界上播放 PixelFX 图集。
 
 import { SKILL_FX_ART } from '../assets/skill_fx_art.js';
+import { GEM_COLORS } from './draw_util.js';
 
 const BOLTS = {
   fire: ['fireShot', 0.64], water: ['waterShot', 0.60], wood: ['woodShot', 0.58],
@@ -9,6 +10,40 @@ const BOLTS = {
 };
 const HITS = { fire: 'fireHit', water: 'waterHit', wood: 'woodHit', metal: 'metalHit', earth: 'earthHit' };
 const PULSES = { fire_pulse: 'fireRing', metal_pulse: 'bladeStorm', earth_pulse: 'earthQuake' };
+
+export function drawCastRelease(ctx, cast, clock) {
+  if (!cast) return;
+  const p = (clock - cast.at) / 0.16;
+  if (p < 0 || p >= 1) return;
+  const { x, y } = cast.action.origin;
+  const r = 7 + p * (21 + cast.tier * 2);
+  const color = GEM_COLORS[cast.element];
+  ctx.save();
+  if (cast.target) {
+    const tx = cast.target.x, ty = cast.target.y + 32;
+    const beam = ctx.createLinearGradient(x, y, tx, ty);
+    beam.addColorStop(0, 'rgba(255,244,211,.16)');
+    beam.addColorStop(0.55, color);
+    beam.addColorStop(1, '#fff5d9');
+    ctx.globalAlpha *= (1 - p) * 0.55;
+    ctx.strokeStyle = beam;
+    ctx.lineWidth = 3 - p;
+    ctx.beginPath(); ctx.moveTo(x, y);
+    ctx.quadraticCurveTo((x + tx) / 2, Math.min(y, ty) - 25, tx, ty); ctx.stroke();
+    ctx.restore();
+    ctx.save();
+  }
+  ctx.translate(x, y);
+  if (cast.action.angle) ctx.rotate(cast.action.angle);
+  ctx.globalAlpha *= (1 - p) ** 2;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4 - 2.5 * p;
+  ctx.beginPath(); ctx.ellipse(0, 0, r * 0.57, r, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#fff5d9';
+  ctx.beginPath(); ctx.moveTo(-r * 0.72, 0); ctx.lineTo(0, -r * 0.26);
+  ctx.lineTo(r, 0); ctx.lineTo(0, r * 0.26); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
 
 function sprite(ctx, page, key, x, y, time, scaleX, scaleY = scaleX, angle = 0, alpha = 1) {
   const art = SKILL_FX_ART[key];
