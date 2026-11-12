@@ -542,10 +542,10 @@ test('M15 开始界面生图:仅背景/仅 LOGO 绑定、未加载与解码失�
   render(rl1.ctx, mkEngineStub(), mkHud({ screen: () => 'start' }));
   const logoDraw = rl1.rec.draws.find(d => d.img.includes('assets/ui/start/logo.png'));
   assert.ok(logoDraw, '仅 LOGO 加载后绘制(find 谓词判别力对照:下条几何断言同源)');
-  assert.equal(logoDraw.a[2], 500, 'LOGO 显示区宽 500');
-  assert.equal(logoDraw.a[3], 220, 'LOGO 显示区高 220');
-  assert.equal(logoDraw.a[0], 110, 'LOGO 显示区 x=110');
-  assert.ok(logoDraw.a[1] >= 122 && logoDraw.a[1] <= 138, 'LOGO y=ty-120 ∈[122,138](浮动 ±8)');
+  assert.equal(logoDraw.a[2], 650, 'LOGO 等比放大 30% 后宽 650');
+  assert.equal(logoDraw.a[3], 286, 'LOGO 等比放大 30% 后高 286');
+  assert.equal(logoDraw.a[0], 35, 'LOGO 水平居中');
+  assert.ok(logoDraw.a[1] >= 89 && logoDraw.a[1] <= 105, 'LOGO y=ty-153 ∈[89,105](浮动 ±8)');
   assert.ok(rl1.rec.fillRects.some(f => f.w === 720 && f.h === 1280), '仅 LOGO 加载:背景仍程序化渐变填充');
   assert.ok(!rl1.rec.fillTexts.includes('言出法随'), '仅 LOGO 加载:不再程序化文字标题');
 

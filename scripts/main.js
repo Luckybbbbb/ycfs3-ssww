@@ -614,7 +614,6 @@ function boot(images) {
             }
             // 需求方 2026-10-18:「元素 ×N → 档位」消除方块提示不再显示(档位信息由技能框/播报承载)
             sfx.match(e.chain);
-            if (engine.fxEnabled) hud.fx.onMatchCleared(e, e.chain); // REQ-M6-04 F8:关动效不触发粒子
           }
           if (e.type === 'board_paralyzed') showToast('棋盘瘫痪');
           if (e.type === 'chain_announce' && engine.fxEnabled) hud.fx.chainAnnounce(e.chain); // M9 连锁播报(与 6.1 同步关闭口径:fx 关不播报)

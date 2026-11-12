@@ -18,7 +18,7 @@ const { skillById } = await import('../scripts/skills/library.js');
 
 // ---- 录制型 2D context 桩:记录 fillText/scale/stroke/beginPath 调用 ----
 function mkCtx() {
-  const rec = { fillTexts: [], scales: [], strokes: 0, gradients: 0 };
+  const rec = { fillTexts: [], scales: [], arcs: [], strokes: 0, gradients: 0 };
   const gradient = { addColorStop() {} };
   const ctx = new Proxy({}, {
     get(_t, prop) {
@@ -27,6 +27,7 @@ function mkCtx() {
       if (prop === 'measureText') return () => ({ width: 10 });
       if (prop === 'fillText') return (text) => rec.fillTexts.push(String(text));
       if (prop === 'scale') return (x, y) => rec.scales.push([x, y]);
+      if (prop === 'arc') return (x, y, radius) => rec.arcs.push({ x, y, radius });
       if (prop === 'stroke') return () => { rec.strokes++; };
       return () => {};
     },
@@ -66,15 +67,19 @@ function mkHud(engine, { fxLayer = new FxLayer(), caster = null, charge = null }
   };
 }
 
-test('F8 render 接线:段②五行色粒子迸发 ≤8 真实触发(实际 render 入口)', () => {
+test('F8 render 接线:段②合成光圈与五行色粒子 ≤8 在消除质心触发', () => {
   const e = mkStage(true);
   const fx = new FxLayer();
   e.update(0.4); // 段②(0.35~0.5)
-  const { ctx } = mkCtx();
+  const { ctx, rec } = mkCtx();
   render(ctx, e, mkHud(e, { fxLayer: fx }));
   const key = [...e.blockFx.keys()][0];
   assert.ok(e._flashShown.has(key), '段②闪光粒子已触发(上轮 g.stage 恒 0 时此处必挂)');
   assert.ok(fx.particles.length > 0 && fx.particles.length <= 8, `段②粒子 ${fx.particles.length} 个(02 3.1:≤8)`);
+  assert.ok(fx.particles.every(particle => !particle.shards), '合成阶段只生成光点');
+  const { cx, cc } = e.clearing[0];
+  const rings = rec.arcs.filter(({ x, y, radius }) => x === (cc + 0.5) * 90 && y === 448 + (cx + 0.5) * 90 && radius > 16);
+  assert.equal(rings.length, 2, '外圈与内高光沿同一质心扩张');
 });
 
 test('F8 render 接线:段③技能图标=预约技能名+档位星(状态驱动,认领后可见)', () => {
@@ -105,6 +110,7 @@ test('F8 render 接线:未认领块显示「蓄能」+池内档位;段④图标�
   assert.ok(rec.scales.some(([sx, sy]) => sx > 1 && sy > 1 && sx <= 1.31), `段④放大 scale>1(≤1.3 倍),实际: ${JSON.stringify(rec.scales)}`);
   assert.ok(rec.strokes >= 4, `段④碎片飞散 stroke ${rec.strokes} 次(≥4 片)`);
   assert.ok(fx.particles.length > before, '段④径向光效粒子已触发');
+  assert.ok(fx.particles.slice(before).every(particle => particle.shards), '施放阶段生成五行碎晶');
   // 认领发生在段④仍显示(0.8s 延迟选技场景:执行记录认领)
   e.claimBlockFx(el0, 'fire_bolt', 1);
   ({ ctx, rec } = mkCtx());

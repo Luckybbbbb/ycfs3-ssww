@@ -3,13 +3,9 @@
 // 相对路径: scripts/ui/fx.js
 // 数值: 粒子 ≤12/次、上限 200(00 文档 FR-1.5 粒子上限口径),飞字 0.9s 上浮 40px
 
-import { CELL, ELEMENTS, BOARD_Y } from '../board/grid.js';
+import { BOARD_W, BOARD_H, BOARD_Y } from '../board/grid.js';
 import { GEM_COLORS as GEM_FLOAT } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { BATTLE_H } from '../battle/parallax.js'; // 战斗区高度单一来源(喊话演出以战斗区为舞台)
-
-// 粒子 RGB 由 GEM_COLORS 派生(hex→rgb;M8 配色整改后随单一定义源联动,不再独立硬编码)
-const hexRgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-const GEM_RGB = Object.fromEntries(Object.entries(GEM_FLOAT).map(([k, v]) => [k, hexRgb(v)]));
 
 // 伤害冒字样式表(03 文档 6.2a/6.2b;**全部五行语义色引用 draw_util GEM_COLORS 单一定义源**,
 // REQ-M7-02 F6:灼烧/吸血/光环/护盾/状态标记不再硬编码;非五行语义色[免伤/受击/击破]为独立字面值)
@@ -120,7 +116,7 @@ export function bindCallImages(map) {
 
 export class FxLayer {
   constructor() {
-    this.particles = []; // {x,y,vx,vy,t,life,size,rgb}
+    this.particles = []; // 棋盘内的合成光点与爆发碎片
     this.floaters = [];  // {x,y,text,t,life,size,color}
     this.combatTexts = []; // v0.3 伤害冒字(上限 64 字符位;M8 A 整条一体运动/暴击,03 文档 6.1)
     this.announces = [];   // M9 连锁播报 [{chain,text,color,t,life}](engine chain_announce 事件驱动)
@@ -134,16 +130,18 @@ export class FxLayer {
 
   // 消除粒子爆裂:cx/cy 格中心(逻辑坐标),el 元素名,count 消除数(越多越密);
   // cap 粒子上限(段②合成闪光 ≤8、段④径向光效 ≤12,02 文档 3.1)
-  burst(cx, cy, el, count, cap = 12) {
-    const rgb = GEM_RGB[el] || [255, 255, 255];
+  burst(cx, cy, el, count, cap = 12, shards = false) {
+    const color = GEM_FLOAT[el] || '#fff';
     const n = Math.min(cap, 6 + count);
+    const offset = Math.random() * Math.PI * 2;
     for (let i = 0; i < n && this.particles.length < 200; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const sp = 120 + Math.random() * 180;
+      const a = offset + (i + Math.random() * 0.6) * Math.PI * 2 / n;
+      const sp = (shards ? 150 : 65) + Math.random() * (shards ? 140 : 90);
       this.particles.push({
-        x: cx + (Math.random() - 0.5) * 30, y: cy + (Math.random() - 0.5) * 30,
-        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 80,
-        t: 0, life: 0.5 + Math.random() * 0.3, size: 4 + Math.random() * 5, rgb,
+        x: cx + Math.cos(a) * 8, y: cy + Math.sin(a) * 8,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 45,
+        t: 0, life: (shards ? 0.34 : 0.20) + Math.random() * 0.16,
+        size: 3 + Math.random() * (shards ? 6 : 3), color, shards, angle: a,
       });
     }
   }
@@ -255,13 +253,37 @@ export class FxLayer {
   }
 
   draw(ctx) {
-    for (const p of this.particles) {
-      const k = 1 - p.t / p.life;
-      ctx.globalAlpha = k;
-      ctx.fillStyle = `rgb(${p.rgb[0]},${p.rgb[1]},${p.rgb[2]})`;
+    if (this.particles.length) {
+      ctx.save();
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * k + 1, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.rect(0, BOARD_Y, BOARD_W, BOARD_H);
+      ctx.clip();
+      for (const p of this.particles) {
+        const k = 1 - p.t / p.life;
+        const s = p.size * (0.5 + k * 0.5);
+        ctx.globalAlpha = k;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        if (p.shards) {
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.angle + p.t * 7);
+          ctx.moveTo(s * 1.5, 0);
+          ctx.lineTo(-s * 0.4, s * 0.7);
+          ctx.lineTo(-s, 0);
+          ctx.lineTo(-s * 0.4, -s * 0.55);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#fff2c7';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
     }
     ctx.globalAlpha = 1;
     ctx.textAlign = 'center';
@@ -525,15 +547,4 @@ export class FxLayer {
     return this._linesTile;
   }
 
-  /** 由引擎事件驱动(main.js 桥接):match_cleared 事件 → 粒子 + 飞字 */
-  onMatchCleared(ev, chainMax) {
-    // M11:移除消除点「连锁 ×N」飞字——连锁播报唯一化(fx.chainAnnounce 王者式定版播报,
-    // 需求方 2026-10-17:旧常显/飞字提示与新播报重复,移除);粒子迸发保留
-    const cx = ev.c * CELL + CELL / 2;
-    const cy = BOARD_Y + ev.r * CELL + CELL / 2; // M13:棋盘上移(448),不再硬编码
-    this.burst(cx, cy, ev.element, ev.count);
-    void chainMax; void ELEMENTS;
-  }
-  // (段③技能图标与段④图标碎裂改由 render 状态驱动逐帧绘制,REQ-M6-06 F8;
-  //  原 showIcon 一次性浮字无法反映认领回写与新建预约,已移除)
 }

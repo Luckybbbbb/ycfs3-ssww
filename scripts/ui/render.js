@@ -374,6 +374,42 @@ function screenIn(scr) {
 }
 let _ovA = 1; // 当前浮层 fade alpha(drawPickPanel 内层 alpha 需相乘)
 
+function drawClearCellHighlights(ctx, engine) {
+  const absorb = engine.stageDur?.absorb ?? 0.35;
+  ctx.save();
+  ctx.lineWidth = 3;
+  for (const cell of engine.clearing) {
+    const progress = Math.max(0, (engine.clearTotal - cell.t) / absorb);
+    if (progress >= 1) continue;
+    const x = cell.c * CELL + 6, y = BOARD_Y + cell.r * CELL + 6;
+    const color = GEM_SRC[ELEMENTS[cell.el]];
+    ctx.fillStyle = ctx.strokeStyle = color;
+    roundRect(ctx, x, y, CELL - 12, CELL - 12, 16);
+    ctx.globalAlpha = 0.24 * (1 - progress);
+    ctx.fill();
+    ctx.globalAlpha = 0.88 * (1 - progress);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawClearPulse(ctx, x, y, color, progress, spread) {
+  const radius = 16 + spread * (1 - (1 - progress) ** 2);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.95 * (1 - progress);
+  ctx.lineWidth = 3 + 5 * (1 - progress);
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = '#fff7d6';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(x, y, radius - 3, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
 export function render(ctx, engine, hud, dt = 1 / 60) {
   worldT += dt; // 需求方 2026-10-19:主角动画异常快——worldT 原按帧数固定 +1/60,高刷屏(120Hz+)下 2 倍速;改按渲染回调实际 dt 推进(帧率无关)
   ctx.clearRect(0, 0, 720, 1280);
@@ -558,6 +594,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       ctx.fillRect(c * CELL, BOARD_Y + r * CELL, CELL, CELL);
     }
   }
+  if (engine.fxEnabled !== false && engine.clearing?.length) drawClearCellHighlights(ctx, engine);
   // 果冻拖拽/回弹状态(M6:v0.2 02 文档 2.2;hud.drag = input.dragState() 快照 {drag,bounces})
   // REQ-M6-06 F7:回弹与新拖动**分别保存**——A 回弹期间拖 B,B 正常跟手,A 继续回弹互不影响
   const ds = hud.drag ? hud.drag() : null;
@@ -610,6 +647,22 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     const size = 74 * (cell.scale ?? 1);
     // 形变合成:拖拽挤压 × 演出段形变(段①吸收挤压等,cell.sx/sy 由 engine 提供)
     const jw = size * sx * (cell.sx ?? 1), jh = size * sy * (cell.sy ?? 1);
+    if (cell.stage === 1) {
+      const dx = cell.offsetX || 0, dy = cell.offsetY || 0;
+      const distance = Math.hypot(dx, dy);
+      if (distance > 8) {
+        const trail = Math.min(1, 45 / distance);
+        ctx.globalAlpha = 0.36;
+        ctx.strokeStyle = GEM_SRC[el];
+        ctx.lineWidth = 10;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - dx * trail, cy - dy * trail);
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+    }
     ctx.globalAlpha = cell.alpha;
     if (img && img.complete && img.naturalWidth > 0) {
       if (cell.offsetY === 0) {
@@ -622,7 +675,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       const es = 37 * (cell.scale ?? 1);
       ctx.beginPath(); ctx.ellipse(cx, cy, es * sx * (cell.sx ?? 1), es * sy * (cell.sy ?? 1), 0, 0, Math.PI * 2); ctx.fill();
     }
-    if (cell.flash > 0) {
+    if (cell.flash > 0 && cell.stage !== 2) {
       ctx.globalAlpha = cell.flash * 0.8;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath(); ctx.arc(cx, cy, 40, 0, Math.PI * 2); ctx.fill();
@@ -639,7 +692,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   // stamp.reserved→技能名+档位星;未认领→「蓄能」+池内档位。
   if (engine.fxEnabled !== false && engine.clearing && engine.clearing.length) {
     const sd = engine.stageDur || { absorb: 0.35, flash: 0.15, icon: 0.25, burst: 0.15 };
-    const t2 = sd.absorb, t3 = sd.absorb + sd.flash, t4 = sd.absorb + sd.flash + sd.icon, tEnd = t4 + sd.burst;
+    const t2 = sd.absorb, t3 = t2 + sd.flash, t4 = t3 + sd.icon;
     const groups = new Map(); // bk -> {r, c, elName, count, elapsed}
     for (const cl of engine.clearing) {
       const key = cl.bk || `x${cl.r},${cl.c}`;
@@ -649,9 +702,17 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       g.elapsed = Math.max(g.elapsed, engine.clearTotal - cl.t);
       if (g.elName === null && cl.el !== undefined) g.elName = ELEMENTS[cl.el];
     }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, BOARD_Y, BOARD_W, BOARD_H);
+    ctx.clip();
     for (const [key, g] of groups) {
       const gx = g.c * CELL + CELL / 2, gy = BOARD_Y + g.r * CELL + CELL / 2; // M13
       const stage = g.elapsed >= t4 ? 4 : g.elapsed >= t3 ? 3 : g.elapsed >= t2 ? 2 : 1;
+      const color = GEM_SRC[g.elName] || GEM_SRC.fire;
+      const p4 = Math.min(1, Math.max(0, (g.elapsed - t4) / sd.burst));
+      if (stage === 2) drawClearPulse(ctx, gx, gy, color, (g.elapsed - t2) / sd.flash, 38);
+      if (stage === 4) drawClearPulse(ctx, gx, gy, color, p4, 52 + Math.min(g.count, 10) * 4);
       // 段② 起点:合成闪光五行色粒子迸发 ≤8(一次性)
       if (stage >= 2) {
         if (!engine._flashShown) engine._flashShown = new Set();
@@ -662,7 +723,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
       }
       // 段③/④:强化技能图标(预约→技能名+档位星;未认领→元素蓄能+池内档位)
       if (stage >= 3 && stage <= 4 && (g.elName || engine.blockFx?.get(key))) {
-        let label = `${g.elName || ''}蓄能`, stars = 0;
+        let label = `${ELEMENT_NAME[g.elName] || ''}蓄能`, stars = 0;
         const stamp = engine.blockFx?.get(key);
         if (stamp?.reserved) {
           label = skillById(stamp.skillId)?.name || stamp.skillId;
@@ -672,32 +733,35 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
         }
         // ③上浮 20px(段③时长=sd.icon);④放大 1.3 倍后碎裂淡出(段④时长=sd.burst;M9-F1 随 RUSH 缩放)
         const e3 = Math.min(sd.icon, Math.max(0, g.elapsed - t3));
-        const p4 = Math.min(1, Math.max(0, (g.elapsed - t4) / sd.burst));
         const iconAlpha = stage >= 4 ? 1 - p4 : Math.min(1, e3 / (sd.icon * 0.4));
         const iconScale = stage >= 4 ? 1 + 0.3 * p4 : 0.8 + 0.2 * (e3 / sd.icon);
         const yOff = stage >= 4 ? -20 : -20 * (e3 / sd.icon);
         if (iconAlpha > 0.01) {
           ctx.save();
-          ctx.translate(gx, gy + yOff);
+          const skillImg = SKILL_IMG[stamp?.skillId || ''];
+          const badgeImg = skillImg || GEM_IMG[g.elName];
+          const badgeSize = skillImg ? 56 : 40;
+          const hasBadge = badgeImg?.complete && badgeImg.naturalWidth > 0;
+          const text = stars > 0 ? `${label} ${'★'.repeat(stars)}` : label;
+          ctx.font = `bold ${hasBadge ? 22 : 24}px 'Nunito','Noto Sans SC',sans-serif`;
+          const halfW = Math.max(hasBadge ? badgeSize / 2 : 0, ctx.measureText(text).width / 2) * iconScale + 6;
+          const x = Math.max(halfW, Math.min(BOARD_W - halfW, gx));
+          const y = Math.max(BOARD_Y + 48 * iconScale + 4, Math.min(BOARD_Y + BOARD_H - 34 * iconScale, gy + yOff));
+          ctx.translate(x, y);
           ctx.scale(iconScale, iconScale);
           ctx.globalAlpha = iconAlpha;
-          // M10:技能图标贴图(56px 居中偏上)+下方技能名+档位星;缺图回退纯文字(原样式)
-          const skillImg = SKILL_IMG[stamp?.skillId || ''];
-          if (skillImg && skillImg.complete && skillImg.naturalWidth > 0) {
-            ctx.drawImage(skillImg, -28, -46, 56, 56);
-            ctx.fillStyle = '#7a4f27';
-            ctx.font = "bold 18px 'Nunito','Noto Sans SC',sans-serif";
-            ctx.textAlign = 'center';
-            ctx.fillText(stars > 0 ? `${label} ${'★'.repeat(stars)}` : label, 0, 28);
-          } else {
-            ctx.fillStyle = '#ffb02e';
-            ctx.font = "bold 24px 'Nunito','Noto Sans SC',sans-serif";
-            ctx.textAlign = 'center';
-            ctx.fillText(stars > 0 ? `${label} ${'★'.repeat(stars)}` : label, 0, 0);
-          }
+          if (hasBadge) ctx.drawImage(badgeImg, -badgeSize / 2, 10 - badgeSize, badgeSize, badgeSize);
+          ctx.textAlign = 'center';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = 5;
+          ctx.strokeStyle = '#fff7e6';
+          ctx.fillStyle = '#55361f';
+          const textY = hasBadge ? 30 : 0;
+          ctx.strokeText(text, 0, textY);
+          ctx.fillText(text, 0, textY);
           if (stage >= 4) {
             // 碎裂:4 片碎片沿对角方向飞散
-            ctx.strokeStyle = '#ffb02e';
+            ctx.strokeStyle = color;
             ctx.lineWidth = 3;
             const frag = 8 + 26 * p4;
             for (const [fx2, fy2] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
@@ -716,10 +780,11 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
         if (!engine._burstShown) engine._burstShown = new Set();
         if (!engine._burstShown.has(key)) {
           engine._burstShown.add(key);
-          if (hud.fx) hud.fx.burst(gx, gy, g.elName || 'fire', g.count, 12);
+          if (hud.fx) hud.fx.burst(gx, gy, g.elName || 'fire', g.count, 12, true);
         }
       }
     }
+    ctx.restore();
   } else if (engine._flashShown && !engine.clearing?.length) {
     engine._iconShown = new Set(); engine._burstShown = new Set(); engine._flashShown = new Set();
   }
@@ -1449,11 +1514,11 @@ function drawStartScreen(ctx, hud, dt) {
   ctx.lineTo(500, 455); ctx.lineTo(720, 584); ctx.lineTo(720, 620); ctx.lineTo(0, 620);
   ctx.fill();
   }
-  // 标题(M15 Task 51:定名 LOGO 图=言出法随/三生万物,500×220 显示区随既有浮动动画;缺图回退程序化文字)
+  // 标题放大至 650×286，保持原中心与浮动幅度。
   const ty = 250 + Math.sin(worldT * 1.6) * 8;
   const startLogo = START_IMG.logo;
   if (startLogo && startLogo.complete && startLogo.naturalWidth > 0) {
-    ctx.drawImage(startLogo, 110, ty - 120, 500, 220);
+    ctx.drawImage(startLogo, 35, ty - 153, 650, 286);
   } else {
   ctx.textAlign = 'center';
   ctx.font = FONT(104, 'bold');
