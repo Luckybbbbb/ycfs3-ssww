@@ -48,6 +48,7 @@ import { LEVEL_META, WAVES_PER_LEVEL } from '../meta/levels.js'; // M11 UI 设�
 import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶栏经验条
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
+const TOAST_BOUNDS = { left: 180, top: 160, right: 540, bottom: 204 };
 const ITEM_STYLE = {
   heal: { plate: '#f8e9e6', timer: '#a45055' },
   invincible: { plate: '#f6eedb', timer: '#8a6a2a' },
@@ -641,7 +642,9 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   drawCoinDrops(ctx);
   // M13 战斗区 HUD(头像/二段血条/关卡名/BOSS 条/技能框/波次进度;draw 自带快照,只读;
   // 自 2026-10-19 起整体下移 44px,避让上方货币栏条带)
-  if (hud.battleHud) hud.battleHud.draw(ctx, hud);
+  const combatHudBounds = hud.battleHud ? hud.battleHud.draw(ctx, hud) : [];
+  combatHudBounds.push(...BATTLE_BUTTON_BOUNDS);
+  if (hud.toast?.t > 0) combatHudBounds.push(TOAST_BOUNDS);
 
   // ===== 三消棋盘 =====
   // M9:播报棋盘微震(chain≥4 播报附带 ±2px 衰减;覆盖棋盘+演出+特效层,底栏/弹层不参与)
@@ -845,7 +848,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
 
   // 特效层(REQ-M7-01 F5:关动效 fxEnabled=false 时**停止绘制**存量粒子/冒字——
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
-  if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx);
+  if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx, combatHudBounds);
   ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
 
   // M9:预输入缓冲预选提示(FALLING 等忙时滑动被记住——两格金色虚线框+「落定执行」微标)
@@ -907,12 +910,13 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   ovDrawnThisFrame = false;
   if (hud.toast && hud.toast.t > 0) {
     ctx.fillStyle = 'rgba(121,79,39,.85)';
-    roundRect(ctx, 180, 160, 360, 44, 12);
+    const { left, top, right, bottom } = TOAST_BOUNDS;
+    roundRect(ctx, left, top, right - left, bottom - top, 12);
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.font = "20px 'Nunito','Noto Sans SC',sans-serif";
     ctx.textAlign = 'center';
-    ctx.fillText(hud.toast.text, 360, 189);
+    ctx.fillText(hud.toast.text, (left + right) / 2, top + 29);
     ctx.textAlign = 'left';
   }
 }
@@ -1405,6 +1409,10 @@ const FONT = (s, w = '') => `${w ? w + ' ' : ''}${s}px 'Nunito','Noto Sans SC',s
 // ===== M11-02 F2/F7 整改:命中区单一来源 =====
 // 选关卡片按钮 / 备战槽位 / 技能库行的命中区此前在 main 硬编码(与 render 布局双源易漂移,
 // libRectOf 甚至按旧 7 行计算)——统一由 UI 常量派生,main 与测试共用。
+const BATTLE_BUTTON_BOUNDS = [UI.battle.pauseBtn, UI.battle.settingsBtn].map(
+  ({ x, y, w, h }) => ({ left: x, top: y, right: x + w, bottom: y + h }),
+);
+
 export const uiCardBtn = (L) => ({
   x: 510,
   y: UI.menu.cardTop + (L - 1) * (UI.menu.cardH + UI.menu.cardGap) + UI.menu.cardBtnY,

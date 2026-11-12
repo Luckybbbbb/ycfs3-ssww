@@ -631,6 +631,38 @@ test('M7 黑色描边(需求反馈):draw 先 strokeText(#000)后 fillText,描边
   assert.ok(right.y - font >= 50, '击破提示避开顶部资产栏');
 });
 
+test('战斗冒字在右上角聚集时避开同帧文本和道具状态栏', () => {
+  const fx = new FxLayer();
+  fx.combatFloat({ kind: 'kill', x: 760, y: 28, jitter: 0 });
+  fx.combatFloat({ kind: 'kill', x: 778, y: 31, jitter: 0 });
+  fx.combatFloat({ kind: 'dmg', x: 762, y: 150, n: 23, crit: true, jitter: 0 });
+  fx.combatFloat({ kind: 'splash', x: 760, y: 155, n: 5, jitter: 0 });
+  fx.update(0.14);
+  const records = [];
+  const hud = { left: 615, right: 716, top: 145, bottom: 173 };
+  const ctx = {
+    measureText(text) { return { width: [...text].length * 18 }; },
+    strokeText(text, x, y) {
+      const font = Number(this.font.match(/(\d+)px/)[1]);
+      const half = [...text].length * 9 + this.lineWidth / 2;
+      records.push({ text, left: x - half, right: x + half,
+        top: y - font - this.lineWidth / 2, bottom: y + font * 0.18 + this.lineWidth / 2 });
+    },
+    fillText() {},
+  };
+  const state = JSON.stringify(fx.combatTexts);
+  fx.draw(ctx, [hud]);
+  assert.equal(records.filter(r => r.text === '击破').length, 2);
+  assert.ok(records.some(r => r.text === '-23'), '空间足够时仍显示暴击');
+  const overlap = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  for (const [i, box] of records.entries()) {
+    assert.ok(!overlap(box, hud), '状态栏保有自己的空间');
+    assert.ok(!records.slice(0, i).some(previous => overlap(box, previous)), '同帧冒字可独立阅读');
+    assert.ok(box.left >= 6 && box.right <= 714 && box.top >= 50 && box.bottom <= 406);
+  }
+  assert.equal(JSON.stringify(fx.combatTexts), state, '排版只调整绘制位置');
+});
+
 // ---- M8 新增:暴击(6.2d)/整条一体(需求方 2026-10-17 口径)/受击反馈(6.7) ----
 test('M8 暴击(6.2d):critChance=t1 9%~t5 25%;直击 roll 命中 → dmg×1.5+事件 crit;溅射不 roll', () => {
   assert.deepEqual([1, 2, 3, 4, 5].map(critChance).map(x => Math.round(x * 100) / 100), [0.09, 0.13, 0.17, 0.21, 0.25], '5%+档位×4%');

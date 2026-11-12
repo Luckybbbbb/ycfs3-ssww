@@ -218,6 +218,47 @@ test('M13 BattleHudView:draw 冒烟不抛错;快照只读;BOSS 条仅 Boss 波',
   assert.equal(v._snapshot({ ...hud, battle: { ...battle, shield: 0 } }).shield, 0, '无盾 shield=0(条不画)');
 });
 
+test('战斗 HUD 使用真实道具剩余时间，动效关闭时也能辨认，并在到期和结算时消失', () => {
+  const view = new BattleHudView();
+  const battle = { phase: 'FIGHTING', invincibleT: 4.46 };
+  const caster = { cdBoostT: 7.49, cdBoostRate: 2, loadout: ['fire_bolt'] };
+  const hud = {
+    battle, caster, fxEnabled: () => false,
+    itemImg: kind => ({ kind, complete: true, naturalWidth: 144 }),
+  };
+  const labels = [], icons = [], strokes = [];
+  const ctx = new Proxy({}, {
+    get(target, key) {
+      if (key === 'measureText') return text => ({ width: text.length * 10 });
+      if (key === 'fillText') return text => labels.push(text);
+      if (key === 'drawImage') return image => icons.push(image.kind);
+      if (key === 'stroke') return () => strokes.push(target.strokeStyle);
+      return () => {};
+    },
+  });
+  const bounds = view.draw(ctx, hud);
+  assert.deepEqual(icons, ['invincible', 'cd']);
+  assert.ok(labels.includes('无敌 4.5s') && labels.includes('冷却×2 7.5s'));
+  assert.equal(bounds.length, 6, '角色栏、关卡、道具和技能栏都避让冒字');
+  const statuses = bounds.filter(box => box.top > 204 && box.bottom < 304);
+  assert.equal(statuses.length, 2, '道具状态留在战斗提示下方');
+  assert.ok(statuses[0].right < statuses[1].left, '两枚状态同时在场时各自独立');
+  assert.equal(strokes.filter(style => style === '#9dd4ef').length, 2, '蓝边覆盖冷却状态和技能槽');
+  assert.equal(battle.invincibleT, 4.46);
+  assert.equal(caster.cdBoostT, 7.49);
+
+  battle.invincibleT = -0.001;
+  caster.cdBoostT = 0;
+  labels.length = 0;
+  const idleBounds = view.draw(ctx, hud);
+  assert.equal(idleBounds.length, 4, '到期后释放道具状态的占位');
+  assert.ok(labels.every(label => !/无敌|冷却×/.test(label)));
+  battle.phase = 'VICTORY';
+  battle.invincibleT = 2;
+  caster.cdBoostT = 1;
+  assert.deepEqual(view.draw(ctx, hud), idleBounds);
+});
+
 test('M13 布局迁移:BOARD_Y=448;底栏 1168~1280 全高;底栏按钮 y=1176;旧血条/联动栏已移除', async () => {
   assert.equal(BOARD_Y, 448, '棋盘上移(联动栏移除)');
   assert.equal(448 + 8 * CELL, 1168, '棋盘底=底栏顶');

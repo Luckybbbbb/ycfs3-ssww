@@ -10,6 +10,11 @@ import { WAVES_PER_LEVEL } from '../meta/levels.js';
 import { BATTLE_ASSET_BAR_H as TOPBAR_H } from './draw_util.js';
 
 export const BATTLE_H = 448; // 战斗区高度(与 parallax BATTLE_H 同口径;本地常量避免循环依赖)
+const ITEM_STATUS_Y = 212, ITEM_STATUS_H = 36;
+const ITEM_STATUS = {
+  invincible: { x: 228, w: 116, bg: '#5c431e', edge: '#e7be72', mark: '✦' },
+  cd: { x: 352, w: 142, bg: '#214863', edge: '#9dd4ef', mark: '⏱' },
+};
 
 // ---- 二段血条(残影状态机;frac 全程 0..1) ----
 export const GHOST_PUNCH = 0.4;    // punch 停顿(s)
@@ -103,6 +108,30 @@ export function bindHudImages(map) {
 export const LEVEL_THEMES = ['meadow', 'swamp', 'mist', 'snow', 'volcano'];
 export const themeOf = (level) => LEVEL_THEMES[(Math.max(1, level) - 1) % LEVEL_THEMES.length];
 
+function drawItemStatus(ctx, hud, kind, label, remaining) {
+  const { x, w, bg, edge, mark } = ITEM_STATUS[kind];
+  const y = ITEM_STATUS_Y;
+  ctx.fillStyle = bg;
+  _rr(ctx, x, y, w, ITEM_STATUS_H, 10);
+  ctx.fill();
+  ctx.strokeStyle = edge;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const img = hud.itemImg?.(kind);
+  if (img?.complete && img.naturalWidth > 0) {
+    ctx.drawImage(img, x + 5, y + 4, 28, 28);
+  } else {
+    ctx.font = "bold 20px 'Nunito','Noto Sans SC',sans-serif";
+    ctx.fillStyle = edge;
+    ctx.fillText(mark, x + 8, y + 25);
+  }
+  ctx.font = "bold 18px 'Nunito','Noto Sans SC',sans-serif";
+  ctx.fillStyle = '#fff7e8';
+  const time = (Math.ceil(remaining * 10) / 10).toFixed(1);
+  ctx.fillText(`${label} ${time}s`, x + 33, y + 24);
+  return { left: x - 1, right: x + w + 1, top: y - 1, bottom: y + ITEM_STATUS_H + 1 };
+}
+
 // ---- 战斗区 HUD 视图 ----
 export class BattleHudView {
   constructor() {
@@ -140,6 +169,7 @@ export class BattleHudView {
     const slots = (caster.loadout || []).slice(0, 4);
     const enemies = typeof battle.aliveEnemies === 'function' ? battle.aliveEnemies() : [];
     const boss = enemies.find(e => e.isBoss || e.name === 'boss') || null; // -05 N1:Boss 身份走 isBoss(兼容旧类型名)
+    const fighting = battle.phase === 'FIGHTING';
     return {
       hp: battle.hp ?? 1, maxHp: battle.maxHp ?? 1,
       // M13 需求方反馈:护盾条(蓝)=earth_shield 护盾值,口径同旧版 battle.shield/(maxHp×30% 封顶)
@@ -153,11 +183,18 @@ export class BattleHudView {
       profileLv: (typeof hud.profile === 'function' ? (hud.profile()?.level ?? 1) : 1) || 1,
       slots,
       skillCds: caster.skillCds || {},
+      invincibleT: fighting ? battle.invincibleT ?? 0 : 0,
+      cdBoostT: fighting ? caster.cdBoostT ?? 0 : 0,
+      cdBoostRate: caster.cdBoostRate ?? 1,
     };
   }
 
   draw(ctx, hud) {
     const s = this._snapshot(hud);
+    const combatTextObstacles = [
+      { left: 16, right: 224, top: TOPBAR_H + 16, bottom: TOPBAR_H + 88 },
+      { left: 236, right: 484, top: TOPBAR_H + 16, bottom: TOPBAR_H + 56 },
+    ];
     // 需求方 2026-10-19:战斗区顶部新增货币栏条带(0~TOPBAR_H),战斗区 HUD 整体下移,
     // TOPBAR_H 与 render.js 共用货币栏高度。
     // ===== 左上角:头像+头像框 =====
@@ -211,7 +248,11 @@ export class BattleHudView {
       ctx.textAlign = 'center';
       ctx.fillText(`BOSS  ${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`, 360, 99 + TOPBAR_H);
       ctx.textAlign = 'left';
+      combatTextObstacles.push({ left: 220, right: 500, top: TOPBAR_H + 80, bottom: TOPBAR_H + 106 });
     }
+
+    if (s.invincibleT > 0) combatTextObstacles.push(drawItemStatus(ctx, hud, 'invincible', '无敌', s.invincibleT));
+    if (s.cdBoostT > 0) combatTextObstacles.push(drawItemStatus(ctx, hud, 'cd', `冷却×${s.cdBoostRate}`, s.cdBoostT));
 
     // ===== 技能框×4:战斗区右下(72px 框+56px 图标+CD 扫描) =====
     ctx.font = "bold 15px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:13px→15px bold
@@ -223,6 +264,10 @@ export class BattleHudView {
     ctx.fillStyle = '#fff4de';
     ctx.fillText(slotsLabel, 690, 321);
     ctx.textAlign = 'left';
+    combatTextObstacles.push({ left: 700 - labelWidth, right: 700, top: 304, bottom: 327 });
+    if (s.slots.length) {
+      combatTextObstacles.push({ left: 392, right: 392 + (s.slots.length - 1) * 78 + 72, top: 330, bottom: 402 });
+    }
     s.slots.forEach((id, i) => {
       const x = 392 + i * 78, y = 330;
       const fr = HUD_IMG.skillFrame;
@@ -257,6 +302,12 @@ export class BattleHudView {
         ctx.arc(x + 36, y + 36, 38, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
         ctx.closePath(); ctx.fill();
         ctx.restore();
+      }
+      if (s.cdBoostT > 0) {
+        ctx.strokeStyle = '#9dd4ef';
+        ctx.lineWidth = 2;
+        _rr(ctx, x + 2, y + 2, 68, 68, 16);
+        ctx.stroke();
       }
     });
 
@@ -298,5 +349,6 @@ export class BattleHudView {
     ctx.textAlign = 'center';
     ctx.fillText('BOSS', 679, 432);
     ctx.textAlign = 'left';
+    return combatTextObstacles;
   }
 }

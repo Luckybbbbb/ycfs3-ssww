@@ -38,7 +38,7 @@ test('M14 save:settings 白名单含 bgm(缺省 true);main toggleBgm 写档+启�
   assert.ok(mainSrc.includes("if (hit(p, UI.pause.bgmBtn)) { toggleBgm(); return; }"), '暂停面板点击路由');
 });
 
-test('M14 toast:移除「元素×N→档位」与「交换」提示;迁战斗区中上方且文字显式居中', () => {
+test('M14 toast:移除「元素×N→档位」与「交换」提示;迁战斗区中上方且文字显式居中', async () => {
   const mainSrc = fs.readFileSync(new URL('../scripts/main.js', import.meta.url), 'utf-8');
   assert.ok(!mainSrc.includes('→ ${e.element}档 +${gain}`)'), '消除方块提示已移除(需求方 2026-10-18)');
   assert.ok(!mainSrc.includes("showToast('交换')"), '「交换」提示已移除(音效保留 sfx.swap)');
@@ -46,9 +46,27 @@ test('M14 toast:移除「元素×N→档位」与「交换」提示;迁战斗区
   assert.ok(mainSrc.includes('sfx.swap()'), '交换音效保留');
   assert.ok(mainSrc.includes('sfx.match(e.chain)'), '消除音效保留');
   assert.ok(mainSrc.includes("showToast('棋盘瘫痪')"), '战斗信息 toast 保留(瘫痪)');
-  const rSrc = fs.readFileSync(new URL('../scripts/ui/render.js', import.meta.url), 'utf-8');
-  assert.ok(rSrc.includes('roundRect(ctx, 180, 160, 360, 44, 12)'), 'toast 移战斗区中上方(y=160)');
-  assert.ok(rSrc.includes("ctx.textAlign = 'center';\n    ctx.fillText(hud.toast.text, 360, 189)"), '文字显式居中(修复偏右)');
+  const { render } = await import('../scripts/ui/render.js');
+  const labels = [];
+  const ctx = new Proxy({}, {
+    get(state, key) {
+      if (key === 'measureText') return () => ({ width: 20 });
+      if (key === 'fillText') return (text, x, y) => labels.push({ text, x, y, align: state.textAlign });
+      return () => {};
+    },
+  });
+  let obstacles;
+  render(ctx, { cellsForRender: () => [] }, {
+    toast: { text: '无敌 3s', t: 1 },
+    parallax: { transform: () => ({ ox: 0, oy: 0, scale: 1 }), draw() {} },
+    fx: { drawCallBg() {}, draw(_, bounds) { obstacles = bounds; } },
+  });
+  assert.deepEqual(obstacles, [
+    { left: 96, top: 134, right: 152, bottom: 178 },
+    { left: 158, top: 134, right: 214, bottom: 178 },
+    { left: 180, top: 160, right: 540, bottom: 204 },
+  ], '提示和操作按钮与冒字共用避让边界');
+  assert.deepEqual(labels.at(-1), { text: '无敌 3s', x: 360, y: 189, align: 'center' });
 });
 
 test('M14 UI:设置/暂停面板音乐按钮(布局+绘制);hud.bgmEnabled 句柄', () => {

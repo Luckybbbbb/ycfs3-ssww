@@ -39,10 +39,30 @@ const FT_DRAG = 3.2;       // 指数阻力系数(v ×= e^(-3.2·dt))
 const FT_GRAV = 90;        // 微重力(px/s²,血滴下垂感)
 const FT_FADE_FROM = 0.7;  // 生命进度 ≥0.7 开始淡出(末 30%)
 const FT_V0_MULT = 4;      // 初速=speed×4(imp0 200/imp1 360/imp2 520 px/s)
+const FT_LAYOUT_GAP = 4;
 const CRIT_COLOR = '#ffd700';   // 暴击金(非五行语义,与免伤同金)
 const CRIT_SIZE_MULT = 1.4;     // 暴击字号放大
 const CRIT_PEAK = 1.38;         // 暴击 pop 过冲更强
 const CRIT_LIFE = 1.25;         // 暴击存在时间延长(调研:暴击应延长存在)
+
+function closestFreeCoordinate(blocked, desired, min, max, maxShift) {
+  // 合并包含目标坐标的阻挡区间，再从两端选最近的空位。
+  blocked.sort((a, b) => a.lo - b.lo);
+  let lo = -Infinity, hi = -Infinity;
+  for (const span of blocked) {
+    if (span.lo > hi) {
+      if (lo < desired && desired < hi) break;
+      if (span.lo >= desired) return desired;
+      lo = span.lo;
+    }
+    hi = Math.max(hi, span.hi);
+  }
+  if (desired <= lo || desired >= hi) return desired;
+  const up = lo >= min && desired - lo <= maxShift ? desired - lo : Infinity;
+  const down = hi <= max && hi - desired <= maxShift ? hi - desired : Infinity;
+  if (!Number.isFinite(Math.min(up, down))) return null;
+  return up <= down ? lo : hi;
+}
 
 // ===== M9 连锁播报(需求方 2026-10-17:王者「N连XX」屏幕定版播报)=====
 // 文案=王者 2017 官方播报(二连击破/三连决胜/四连超凡/五连绝世),≥6 延伸「连锁狂潮 ×N」;
@@ -193,7 +213,7 @@ export class FxLayer {
     const a = base + (Math.random() - 0.5) * 2 * jitter;
     const v0 = speed * FT_V0_MULT * (0.92 + Math.random() * 0.16); // 初速 ±8% 自然散布
     this.combatTexts.push({
-      x: ev.x, y, text, color, size, imp, seq: this._seq, charN,
+      x: ev.x, y, text, color, size, imp, crit, seq: this._seq, charN,
       t: 0, life,
       vx: Math.cos(a) * v0, vy: Math.sin(a) * v0, peak,
     });
@@ -252,7 +272,7 @@ export class FxLayer {
     return 1;
   }
 
-  draw(ctx) {
+  draw(ctx, combatHudBounds = []) {
     if (this.particles.length) {
       ctx.save();
       ctx.beginPath();
@@ -298,18 +318,46 @@ export class FxLayer {
     // 伤害冒字绘制(M8 A:pop 过冲→回落 1.0;末 30% 淡出;黑色描边在外圈;整条一体居中)
     ctx.lineJoin = 'round'; // 描边圆角避免尖刺
     ctx.textBaseline = 'alphabetic';
-    for (const c of this.combatTexts) {
+    const occupied = [...combatHudBounds];
+    const ordered = this.combatTexts.slice().sort((a, b) => b.imp - a.imp || Number(b.crit) - Number(a.crit) || b.seq - a.seq);
+    for (const c of ordered) {
       const p = c.t / c.life;
       const scale = this._scale(c);
-      ctx.globalAlpha = p < FT_FADE_FROM ? 1 : Math.max(0, 1 - (p - FT_FADE_FROM) / (1 - FT_FADE_FROM));
       const font = Math.max(6, Math.round(c.size * scale));
       ctx.font = `bold ${font}px 'Nunito','Noto Sans SC',sans-serif`;
-      ctx.strokeStyle = '#000';
       const outline = Math.max(3, Math.round(font / 8));
+      const metrics = ctx.measureText(c.text);
+      const half = metrics.width / 2;
+      const leftPad = Math.max(half, metrics.actualBoundingBoxLeft ?? 0) + outline / 2;
+      const rightPad = Math.max(half, metrics.actualBoundingBoxRight ?? 0) + outline / 2;
+      const ascent = Math.max(font, metrics.actualBoundingBoxAscent ?? 0) + outline / 2;
+      const descent = Math.max(font * 0.18, metrics.actualBoundingBoxDescent ?? 0) + outline / 2;
+      const minX = leftPad + 6, maxX = BOARD_W - rightPad - 6;
+      const minY = BATTLE_ASSET_BAR_H + 6 + ascent, maxY = BATTLE_H - 42 - descent;
+      let x = Math.max(minX, Math.min(maxX, c.x));
+      let y = Math.max(minY, Math.min(maxY, c.y - (c.imp === 2 ? 12 : 0)));
+      const vertical = [];
+      const horizontal = [];
+      for (const box of occupied) {
+        if (x + rightPad + FT_LAYOUT_GAP > box.left && x - leftPad - FT_LAYOUT_GAP < box.right) {
+          vertical.push({ lo: box.top - descent - FT_LAYOUT_GAP, hi: box.bottom + ascent + FT_LAYOUT_GAP });
+        }
+        if (y + descent + FT_LAYOUT_GAP > box.top && y - ascent - FT_LAYOUT_GAP < box.bottom) {
+          horizontal.push({ lo: box.left - rightPad - FT_LAYOUT_GAP, hi: box.right + leftPad + FT_LAYOUT_GAP });
+        }
+      }
+      const freeY = closestFreeCoordinate(vertical, y, minY, maxY, 96);
+      if (freeY !== null) {
+        y = freeY;
+      } else {
+        const freeX = closestFreeCoordinate(horizontal, x, minX, maxX, 144);
+        if (freeX === null) continue;
+        x = freeX;
+      }
+      occupied.push({ left: x - leftPad, right: x + rightPad, top: y - ascent, bottom: y + descent });
+      ctx.globalAlpha = p < FT_FADE_FROM ? 1 : Math.max(0, 1 - (p - FT_FADE_FROM) / (1 - FT_FADE_FROM));
+      ctx.strokeStyle = '#000';
       ctx.lineWidth = outline;
-      const inset = (ctx.measureText(c.text).width + outline) / 2 + 6;
-      const x = Math.max(inset, Math.min(BOARD_W - inset, c.x));
-      const y = Math.max(BATTLE_ASSET_BAR_H + font + 6, Math.min(BATTLE_H - 42, c.y - (c.imp === 2 ? 12 : 0)));
       ctx.strokeText(c.text, x, y);
       ctx.fillStyle = c.color;
       ctx.fillText(c.text, x, y);

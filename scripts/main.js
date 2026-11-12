@@ -249,6 +249,7 @@ function boot(images) {
   hud.heroImg = images.get('call:hero') || null; // 头像复用技能喊话立绘裁头部
   hud.levelName = () => LEVEL_META[(battle.level - 1) % LEVEL_META.length].name;
   hud.skillImg = (id) => images.get(`icon:skills:${id}`) || null; // 技能图标(预载 Map 直取)
+  hud.itemImg = (id) => images.get(`icon:items:${id}`) || null;
   hud.skillMeta = (id) => skillById(id);
   // M11-02 F5:音效开关启动恢复(档内 settings.sfx;与 effects 同一套写档)
   sfx.enabled = profile.settings.sfx !== false;
