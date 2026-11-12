@@ -129,7 +129,10 @@ test('M13 parallax:setLevel 切主题;bindImages 按主题取图;程序化兜底
   px.setLevel(3); // mist
   px.bindImages(m);
   // draw 冒烟(图未 complete → complete 检查走程序化兜底,不抛错)
-  const ctx = new Proxy({}, { get: () => () => {}, set: () => true });
+  const ctx = new Proxy({}, {
+    get: (_, key) => key === 'createLinearGradient' ? () => ({ addColorStop() {} }) : () => {},
+    set: () => true,
+  });
   px.update(1 / 60);
   px.draw(ctx);
   px.setWave(10, true);

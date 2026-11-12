@@ -9,7 +9,7 @@ import { attachInput } from './core/input.js';
 import { BoardEngine } from './board/engine.js';
 import { render, updateEnemyHealthViews } from './ui/render.js';
 import { FxLayer, bindCallImages } from './ui/fx.js';
-import { BattleHudView, bindHudImages } from './ui/battle_hud.js';
+import { BattleHudView, bindHudImages, themeOf } from './ui/battle_hud.js';
 import { sfx, bgm, bgmDebug } from './ui/audio.js';
 import { Charge } from './skills/charge.js';
 import { Caster } from './skills/cast.js';
@@ -235,9 +235,10 @@ function toggleBgm() {
 function toggleFx() {
   profile.settings.effects = profile.settings.effects === false; // false→true,其余→false
   engine.fxEnabled = profile.settings.effects;
+  parallax.effects = engine.fxEnabled;
   if (!engine.fxEnabled) hud.battleHud.waveCue = null;
   persistProfile();
-  showToast(`消除动效 ${profile.settings.effects ? '开' : '关'}`);
+  showToast(`动效 ${profile.settings.effects ? '开' : '关'}`);
   sfx.item();
 }
 
@@ -251,6 +252,7 @@ function boot(images) {
   // M13 HUD 上下文(只读转发:battle_hud._snapshot 消费)
   hud.heroImg = images.get('call:hero') || null; // 头像复用技能喊话立绘裁头部
   hud.levelName = () => LEVEL_META[(battle.level - 1) % LEVEL_META.length].name;
+  hud.levelArt = (level) => images.get(`bg:${themeOf(level)}:far`) || null;
   hud.skillImg = (id) => images.get(`icon:skills:${id}`) || null; // 技能图标(预载 Map 直取)
   hud.itemImg = (id) => images.get(`icon:items:${id}`) || null;
   hud.skillMeta = (id) => skillById(id);

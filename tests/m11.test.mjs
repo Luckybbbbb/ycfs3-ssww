@@ -156,7 +156,10 @@ test('M11 开始界面:标题/开始冒险按钮/设置/关于/存档条绘制(�
 
 test('M11 选关界面:顶栏/三态卡片(已通关重打/当前挑战/锁定)/养成入口绘制', () => {
   const r = mkCtx();
-  render(r.ctx, mkEngineStub(), mkHud({ screen: () => 'menu' }));
+  render(r.ctx, mkEngineStub(), mkHud({
+    screen: () => 'menu',
+    levelArt: level => ({ _src: `level-${level}-far`, complete: true, naturalWidth: 720, naturalHeight: 448 }),
+  }));
   assert.ok(r.rec.fillTexts.includes('关卡选择'), '标题');
   assert.ok(r.rec.fillTexts.some(t => t.includes('第 1 关 · 青葱丘林')), '卡片名(LEVEL_META)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('重打')), '已通关态按钮');
@@ -165,6 +168,9 @@ test('M11 选关界面:顶栏/三态卡片(已通关重打/当前挑战/锁定)/
   assert.ok(r.rec.fillTexts.some(t => t.includes('通关第 3 关后解锁')), '锁定解锁条件');
   assert.ok(r.rec.fillTexts.some(t => t.includes('当前进度')), '当前进度 chip');
   assert.ok(r.rec.fillTexts.some(t => t.includes('养成')), '养成入口(FR-10 保留)');
+  assert.deepEqual(r.rec.draws.filter(draw => draw.img.endsWith('-far')).map(draw => draw.img),
+    [1,2,3,4,5].map(level => `level-${level}-far`), '五关都显示各自的场景裁切');
+  assert.ok(r.rec.fillStyles.includes('rgba(24,30,31,.63)'), '锁定卡片的场景带暗罩');
 });
 
 test('M11 备战界面:主角面板/出战信息/4 装配槽/技能库(解锁灰显+●标记)/出战按钮/低等级警告', () => {

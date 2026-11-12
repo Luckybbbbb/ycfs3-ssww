@@ -1711,14 +1711,27 @@ function drawMenuScreen(ctx, hud) {
         ctx.restore();
       }
     }
-    // Boss 缩略图(boss 序列帧首帧;缺图灰盒)
+    // 用已经预载的战场远景衬托本关首领，锁定关只预览场景。
     const th = 126, tx = 56, tyy = y + 22;
     ctx.fillStyle = '#efe9db';
     roundRect(ctx, tx, tyy, th, th, 16); ctx.fill();
+    const scene = hud.levelArt?.(i);
+    const hasScene = scene?.complete && scene.naturalWidth > 0 && scene.naturalHeight > 0;
+    if (hasScene) {
+      const side = Math.min(scene.naturalWidth, scene.naturalHeight);
+      const sx = (scene.naturalWidth - side) / 2;
+      const sy = (scene.naturalHeight - side) / 2;
+      ctx.save();
+      roundRect(ctx, tx, tyy, th, th, 16); ctx.clip();
+      ctx.drawImage(scene, sx, sy, side, side, tx, tyy, th, th);
+      ctx.fillStyle = unlocked ? 'rgba(250,240,218,.20)' : 'rgba(24,30,31,.63)';
+      ctx.fillRect(tx, tyy, th, th);
+      ctx.restore();
+    }
     // 需求方 2026-10-19 第三批:缩略图=该关 Boss 类型帧首帧(LEVEL_BOSS:fox/zombie/snake/tiger/boss)
     const bossImg = ENEMY_FRAMES[bossType(i)] && ENEMY_FRAMES[bossType(i)][0]; // 循环变量 i=关卡号
     if (!unlocked) {
-      ctx.fillStyle = '#c4b89e'; ctx.font = FONT(34);
+      ctx.fillStyle = hasScene ? '#fff2d7' : '#816f57'; ctx.font = FONT(34);
       ctx.fillText('🔒', tx + th / 2, tyy + th / 2 + 4);
       ctx.font = FONT(18); ctx.fillText('未解锁', tx + th / 2, tyy + th / 2 + 40);
     } else if (bossImg && bossImg.complete && bossImg.naturalWidth > 0) {

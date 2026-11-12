@@ -419,13 +419,22 @@ test('FR-1.5 screenshake:4px/120ms 衰减;pulse 1.0→1.02→1.0;关闭动效后
   assert.equal(tfo.scale, 1);
 });
 
-test('FR-1.5 飘叶粒子 ≤20(≤40 总约束);关闭动效不生成粒子', () => {
+test('FR-1.5 分关环境粒子有各自动向和上限，切关清空，关动效冻结', () => {
   const p = new Parallax({ effects: true });
-  for (let i = 0; i < 120; i++) p.update(0.016);
-  assert.ok(p.leaves.length <= 20, '飘叶上限 20');
+  for (const [level, dirY] of [[1, 1], [2, -1], [3, 1], [4, 1], [5, -1]]) {
+    p.setLevel(level);
+    assert.equal(p.ambientParticles.length, 0, '切关清除旧主题粒子');
+    for (let i = 0; i < 120; i++) p.update(0.016);
+    assert.ok(p.ambientParticles.length > 0 && p.ambientParticles.length <= 20);
+    assert.ok(p.ambientParticles.every(particle => Math.sign(particle.vy) === dirY));
+  }
+  const frozen = p.ambientParticles.map(({ x, y }) => [x, y]);
+  p.effects = false;
+  p.update(1);
+  assert.deepEqual(p.ambientParticles.map(({ x, y }) => [x, y]), frozen);
   const off = new Parallax({ effects: false });
   for (let i = 0; i < 120; i++) off.update(0.016);
-  assert.equal(off.leaves.length, 0, '关闭动效无粒子');
+  assert.equal(off.ambientParticles.length, 0, '关闭动效无粒子');
 });
 
 // ---- REQ-M3-03 整改回归(裁决 8 项) ----

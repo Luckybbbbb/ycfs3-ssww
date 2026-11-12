@@ -6,7 +6,7 @@
 // 相对路径: sw.js(仓库根,scope=部署目录;本地 dev 与 Pages 子路径均成立)
 
 const CACHE_PREFIX = 'ssww-cache-';
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
 
 function fetchCurrent(req) {
@@ -14,7 +14,7 @@ function fetchCurrent(req) {
   const url = new URL(req.url);
   url.searchParams.set('_ssww_rev', CACHE_VERSION);
   // 以原请求为存储键，网络端按站点版本取资源，避免旧 HTTP 缓存写回新缓存。
-  return fetch(url, { cache: 'reload', credentials: req.credentials, headers: req.headers, redirect: req.redirect });
+  return fetch(url, { cache: 'no-cache', credentials: req.credentials, headers: req.headers, redirect: req.redirect });
 }
 
 self.addEventListener('install', (event) => {
