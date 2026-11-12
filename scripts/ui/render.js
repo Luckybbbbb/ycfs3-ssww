@@ -11,7 +11,7 @@ import { BATTLE_ASSET_BAR_H, roundRect, GEM_COLORS as GEM_SRC } from './draw_uti
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
 import { skillById, SKILL_LIBRARY } from '../skills/library.js';
 import { levelUpCost, skillUpCost, SKILL_LEVEL_CAP } from '../meta/economy.js';
-import { ENEMY_TYPES, levelWeights, bossType } from '../battle/wave.js';
+import { ENEMY_NAME, ENEMY_TYPES, levelWeights, bossType } from '../battle/wave.js';
 import { PLAYER_Y, ENEMY_SPAWN_X } from '../battle/enemy.js';
 import { BATTLE_H } from '../battle/parallax.js';
 import { HealthView } from './battle_hud.js';
@@ -146,8 +146,6 @@ const SKILL_BRIEF = {
 };
 // M11-06:元素中文名(tips/换装列表)
 const ELEMENT_NAME = { fire: '火', water: '水', wood: '木', metal: '金', earth: '土' };
-// M14:敌人中文名(关卡选择 chips 与备战信息卡敌人行;需求方口径 slime=幽灵)
-const ENEMY_NAME = { slime: '幽灵', fox: '狐妖', zombie: '僵尸', snake: '蛇妖', tiger: '虎妖', boss: '妖王' };
 // M11-03 F1:显式兜底入口(幂等)——把渲染消费的全部贴图按 manifest 同款路径自建加载。
 // 仅限单测/无 main 的演示环境显式调用;生产路径唯一入口=bindImages(preload Map)。
 export function ensureFallbackImages() {
@@ -510,6 +508,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
         ctx.globalAlpha = 1;
         continue;
       }
+      if (e.isBoss) drawBossGroundMark(ctx, e, t, battle.clock, _fxOn);
       drawEnemy(ctx, e, t, 1);
       // 血条(Boss 另有 HUD 大血条,此处保留小血条)——M13 双血条:主条立即扣+淡红残影
       // 二段扣除(punch 0.4s→恒速 30%/s→1.2s 兜底,与 battle_hud 同一状态机;关动效直接同步)。
@@ -645,6 +644,8 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   const combatHudBounds = hud.battleHud ? hud.battleHud.draw(ctx, hud) : [];
   combatHudBounds.push(...BATTLE_BUTTON_BOUNDS);
   if (hud.toast?.t > 0) combatHudBounds.push(TOAST_BOUNDS);
+  const waveNotice = hud.battleHud?.waveNotice?.(hud);
+  if (waveNotice) combatHudBounds.push(waveNotice);
 
   // ===== 三消棋盘 =====
   // M9:播报棋盘微震(chain≥4 播报附带 ±2px 衰减;覆盖棋盘+演出+特效层,底栏/弹层不参与)
@@ -850,6 +851,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   // main 侧事件仍照常排空丢弃,6.1「冒字与粒子同步关闭」)
   if (hud.fx && engine.fxEnabled !== false) hud.fx.draw(ctx, combatHudBounds);
   ctx.restore(); // M9 棋盘微震变换结束(播报光带/文字随棋盘震,底栏不参与)
+  if (waveNotice) hud.battleHud.drawWaveNotice(ctx, waveNotice);
 
   // M9:预输入缓冲预选提示(FALLING 等忙时滑动被记住——两格金色虚线框+「落定执行」微标)
   if (engine.swapBuffer) {
@@ -1306,6 +1308,27 @@ function fitText(ctx, text, maxW) {
   let s = text;
   while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
   return s + '…';
+}
+
+function drawBossGroundMark(ctx, enemy, type, clock, effects) {
+  const x = enemy.x, y = enemy.y + type.srcH * type.scale * 0.39;
+  const radius = type.srcW * type.scale * 0.41;
+  const pulse = effects ? (1 + Math.sin(clock * 5)) / 2 : 0.5;
+  ctx.save();
+  ctx.fillStyle = 'rgba(104,24,34,.28)';
+  ctx.strokeStyle = '#f3a16c';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(x, y, radius, 13, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.53 + pulse * 0.33;
+  ctx.stroke();
+  ctx.strokeStyle = '#b64b4b';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(x, y, radius + 9, 18, 0, 0.18, Math.PI - 0.18);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawEnemy(ctx, e, t, scale) {
@@ -2068,6 +2091,7 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
   const t = T.t;
   const ease = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
   const stage = (d0, d1) => ease((t - d0) / (d1 - d0)); // 0→1 入场进度
+  const levelName = LEVEL_META[battle.level - 1]?.name;
   // 遮罩(0~0.25s 淡入)
   const mA = Math.min(1, t / 0.25);
   ctx.fillStyle = victory ? `rgba(232,246,224,${0.88 * mA})` : `rgba(243,226,224,${0.9 * mA})`;
@@ -2109,13 +2133,27 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
       ctx.globalAlpha = 0.92 * bIn;
       ctx.translate(0, (1 - bIn) * -24);
     }
-    ctx.fillStyle = victory ? '#6fba2c' : '#e05a5a';
+    if (victory) {
+      const jade = ctx.createLinearGradient(90, 130, 630, 280);
+      jade.addColorStop(0, '#244f42');
+      jade.addColorStop(0.52, '#38745c');
+      jade.addColorStop(1, '#20493d');
+      ctx.fillStyle = jade;
+    } else {
+      ctx.fillStyle = '#e05a5a';
+    }
     roundRect(ctx, 90, 130, 540, 150, 24); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 4;
+    ctx.strokeStyle = victory ? '#e9c988' : 'rgba(255,255,255,.6)'; ctx.lineWidth = 4;
     roundRect(ctx, 90, 130, 540, 150, 24); ctx.stroke();
     ctx.fillStyle = '#fff';
     ctx.font = FONT(64, 'bold');
-    ctx.fillText(victory ? '通 关 !' : '战 败', 360, 228);
+    ctx.fillText(victory ? '通 关 !' : '战 败', 360, victory ? 208 : 228);
+    const bossName = ENEMY_NAME[bossType(battle.level)];
+    if (victory && bossName) {
+      ctx.fillStyle = '#f1dcab';
+      ctx.font = FONT(24, 'bold');
+      ctx.fillText(`${bossName}已击破`, 360, 248);
+    }
     ctx.restore();
   }
   // 统计卡(0.6s 起淡入)+ 统计行 stagger(0.7s 起每行 +130ms)+ 数字滚动
@@ -2129,7 +2167,7 @@ function drawResult(ctx, hud, battle, victory, dt = 1 / 60) {
     ctx.fillStyle = '#794f27';
     ctx.font = FONT(30, 'bold');
     ctx.textAlign = 'center';
-    ctx.fillText(victory ? `第 ${battle.level} 关 · 结算` : `第 ${battle.level} 关 · 第 ${battle.wave} 波`, 360, 390);
+    ctx.fillText(victory ? `第 ${battle.level} 关 · ${levelName || '结算'}` : `第 ${battle.level} 关 · 第 ${battle.wave} 波`, 360, 390);
     ctx.font = FONT(25);
     ctx.textAlign = 'left';
     // 统计行定义(与样板同序;数字滚动:显示值每帧向真值逼近 18%)

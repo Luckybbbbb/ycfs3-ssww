@@ -8,12 +8,18 @@
 
 import { WAVES_PER_LEVEL } from '../meta/levels.js';
 import { BATTLE_ASSET_BAR_H as TOPBAR_H } from './draw_util.js';
+import { ENEMY_NAME, bossType } from '../battle/wave.js';
 
 export const BATTLE_H = 448; // 战斗区高度(与 parallax BATTLE_H 同口径;本地常量避免循环依赖)
 const ITEM_STATUS_Y = 212, ITEM_STATUS_H = 36;
 const ITEM_STATUS = {
   invincible: { x: 228, w: 116, bg: '#5c431e', edge: '#e7be72', mark: '✦' },
   cd: { x: 352, w: 142, bg: '#214863', edge: '#9dd4ef', mark: '⏱' },
+};
+const WAVE_CUE_DURATION = { opening: 0.84, normal: 0.56, boss: 1.24 };
+const WAVE_NOTICE_PALETTE = {
+  opening: { edge: '#f2d39a', outer: '#162e28', center: '#285748', text: '#fff1c6' },
+  boss: { edge: '#ffca84', outer: '#351c29', center: '#78343d', text: '#fff1ca' },
 };
 
 // ---- 二段血条(残影状态机;frac 全程 0..1) ----
@@ -142,10 +148,76 @@ export class BattleHudView {
     // 首局首帧/换装后开新局都按真实装配定位,不再依赖 update 顺序预热的缓存);
     // 固定四槽独立计时(同帧多技能各自亮);未装配的消除链技能忽略不覆盖;-03 B5:fx 关不绘制
     this.castAt = [0, 0, 0, 0]; // 各槽释放时刻(墙钟 ms;0=无释放)
+    this.waveCue = null;
     this._now = () => performance.now();
   }
 
-  reset() { this.hero.reset(1); this.boss.reset(1); this.castAt = [0, 0, 0, 0]; }
+  reset() { this.hero.reset(1); this.boss.reset(1); this.castAt = [0, 0, 0, 0]; this.waveCue = null; }
+
+  noteWave(wave) {
+    const kind = wave === 1 ? 'opening' : wave === WAVES_PER_LEVEL ? 'boss' : 'normal';
+    this.waveCue = { wave, kind, t: 0, duration: WAVE_CUE_DURATION[kind] };
+  }
+
+  activeWaveCue(hud) {
+    const cue = this.waveCue;
+    return cue && hud.battle?.phase === 'FIGHTING' && cue.wave === hud.battle.wave && hud.fxEnabled?.() !== false ? cue : null;
+  }
+
+  waveNotice(hud) {
+    const cue = this.activeWaveCue(hud);
+    if (!cue || cue.kind === 'normal') return null;
+    const inT = Math.min(1, cue.t / 0.16);
+    const outT = Math.min(1, (cue.duration - cue.t) / 0.22);
+    const entry = 1 - (1 - inT) ** 3;
+    const boss = cue.kind === 'boss';
+    const half = (boss ? 172 : 112) * (0.82 + entry * 0.18);
+    const top = (boss ? 254 : 258) + (1 - entry) * 8 + (1 - outT) * 5;
+    const name = ENEMY_NAME[bossType(hud.battle.level)];
+    return {
+      kind: cue.kind, alpha: Math.min(entry, outT), sweep: inT,
+      text: boss ? (name ? `${name}现身` : '首领现身') : '开战',
+      left: 360 - half, right: 360 + half, top, bottom: top + (boss ? 52 : 44),
+    };
+  }
+
+  drawWaveNotice(ctx, notice) {
+    const { kind, left, right, top, bottom, alpha, sweep, text } = notice;
+    const palette = WAVE_NOTICE_PALETTE[kind];
+    const midY = (top + bottom) / 2;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const gradient = ctx.createLinearGradient(left, 0, right, 0);
+    gradient.addColorStop(0, palette.outer);
+    gradient.addColorStop(0.5, palette.center);
+    gradient.addColorStop(1, palette.outer);
+    ctx.fillStyle = gradient;
+    ctx.strokeStyle = palette.edge;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(left, midY);
+    ctx.lineTo(left + 22, top);
+    ctx.lineTo(right - 22, top);
+    ctx.lineTo(right, midY);
+    ctx.lineTo(right - 22, bottom);
+    ctx.lineTo(left + 22, bottom);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.globalAlpha = alpha * 0.46;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(360 - (360 - left - 36) * sweep, bottom - 5);
+    ctx.lineTo(360 + (right - 360 - 36) * sweep, bottom - 5);
+    ctx.stroke();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = palette.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${kind === 'boss' ? 34 : 31}px 'Nunito','Noto Sans SC',sans-serif`;
+    ctx.fillText(text, 360, midY);
+    ctx.restore();
+  }
 
   // BEAUTIFY-01 F9:实际释放时由 main(usedList 消费处)调用;loadout=当前真实装配(main 传入)
   noteCast(skillId, loadout) {
@@ -160,6 +232,9 @@ export class BattleHudView {
     this.hero.update(dt, s.maxHp > 0 ? s.hp / s.maxHp : 1, fxEnabled);
     this.boss.update(dt, s.bossMax > 0 ? s.bossHp / s.bossMax : 1, fxEnabled);
     this._slotsCache = s.slots; // 备用定位(draw 主路径用实时快照 s.slots)
+    if (this.waveCue && (!fxEnabled || !this.activeWaveCue(hud) || (this.waveCue.t += dt) >= this.waveCue.duration)) {
+      this.waveCue = null;
+    }
   }
 
   // 实况快照:全部来自 hud 只读转发(battle/caster/levels),不写任何战斗状态
@@ -176,7 +251,7 @@ export class BattleHudView {
       shield: battle.shield ?? 0, shieldCap: Math.max(1, Math.round((battle.maxHp ?? 1) * 0.3)),
       level: battle.level ?? 1, wave: Math.max(0, battle.wave ?? 0),
       wavesTotal: WAVES_PER_LEVEL,
-      bossHp: boss ? boss.hp : 0, bossMax: boss ? boss.maxHp : 0,
+      bossHp: boss ? boss.hp : 0, bossMax: boss ? boss.maxHp : 0, bossName: boss ? ENEMY_NAME[boss.name] || boss.name : '',
       isBossWave: (battle.wave ?? 0) >= WAVES_PER_LEVEL,
       // M12M13-ACCEPT F4:Lv 徽标显示**角色等级**(profile.level),不是关卡编号
       // (原先误用 battle.level:9 级角色进第 2 关被画成 Lv.2——显示回归)
@@ -244,9 +319,11 @@ export class BattleHudView {
     if (s.isBossWave && s.bossMax > 0) {
       this.boss.draw(ctx, 220, 80 + TOPBAR_H, 280, 26);
       ctx.fillStyle = '#fff';
-      ctx.font = "bold 16px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2
-      ctx.textAlign = 'center';
-      ctx.fillText(`BOSS  ${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`, 360, 99 + TOPBAR_H);
+      ctx.font = "bold 17px 'Nunito','Noto Sans SC',sans-serif";
+      ctx.textAlign = 'left';
+      ctx.fillText(`首领 · ${s.bossName}`, 230, 99 + TOPBAR_H);
+      ctx.textAlign = 'right';
+      ctx.fillText(`${Math.max(0, Math.ceil(s.bossHp))}/${s.bossMax}`, 490, 99 + TOPBAR_H);
       ctx.textAlign = 'left';
       combatTextObstacles.push({ left: 220, right: 500, top: TOPBAR_H + 80, bottom: TOPBAR_H + 106 });
     }
@@ -324,9 +401,15 @@ export class BattleHudView {
     ctx.font = "16px 'Nunito','Noto Sans SC',sans-serif";
     ctx.fillText(`第 ${s.wave}/${s.wavesTotal} 波`, 28, 434);
     const N = s.wavesTotal, x = 158, w = 494, step = w / N;
+    const cue = this.activeWaveCue(hud);
     ctx.fillStyle = '#d9d3c4';
     _rr(ctx, x, 425, w, 7, 3); ctx.fill();
-    if (s.wave > 0) { ctx.fillStyle = '#6fba2c'; _rr(ctx, x, 425, w * ((s.wave - 1) / N), 7, 3); ctx.fill(); }
+    if (s.wave > 1) {
+      const enter = cue ? 1 - (1 - Math.min(1, cue.t / 0.27)) ** 3 : 1;
+      ctx.fillStyle = '#6fba2c';
+      _rr(ctx, x, 425, step * (s.wave - 2 + enter), 7, 3);
+      ctx.fill();
+    }
     for (let i = 1; i <= N; i++) {
       const xx = x + i * step;
       if (i === N) { // Boss 标记(加大菱形+白描边;Boss 波红色点亮)
@@ -343,6 +426,17 @@ export class BattleHudView {
         ctx.fillStyle = i < s.wave ? '#6fba2c' : i === s.wave ? '#19c8b9' : '#bdb29e';
         ctx.fill();
       }
+    }
+    if (cue) {
+      const p = cue.t / cue.duration;
+      ctx.save();
+      ctx.globalAlpha = (1 - p) * 0.85;
+      ctx.strokeStyle = s.isBossWave ? '#e05a5a' : '#00897f';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x + s.wave * step, 428, 7 + 6 * p, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
     ctx.fillStyle = s.isBossWave ? '#c44747' : '#806a51';
     ctx.font = "bold 13px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:11px→13px

@@ -81,6 +81,11 @@ export const sfx = {
     tone({ freq: 660, dur: 0.08, type: 'sine', vol: 0.14 });
     tone({ freq: 990, dur: 0.12, type: 'sine', vol: 0.12, delay: 0.07 });
   },
+  bossArrival() {
+    tone({ freq: 164, slide: -79, dur: 0.30, type: 'triangle', vol: 0.16 });
+    tone({ freq: 123, slide: -55, dur: 0.32, type: 'triangle', vol: 0.14, delay: 0.17 });
+    tone({ freq: 494, slide: -69, dur: 0.30, type: 'sine', vol: 0.08, delay: 0.18 });
+  },
   // ===== M15 界面 v2 音效(养成/结算;口径=06/05 样板) =====
   deduct() { tone({ freq: 220, dur: 0.08, type: 'square', vol: 0.05 }); }, // 货币扣除「嗒」
   // -06 掉落到达「叮铃」(金币落袋;双高音短促衰减,与 item 同族但更高频)

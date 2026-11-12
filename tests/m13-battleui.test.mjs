@@ -218,6 +218,49 @@ test('M13 BattleHudView:draw 冒烟不抛错;快照只读;BOSS 条仅 Boss 波',
   assert.equal(v._snapshot({ ...hud, battle: { ...battle, shield: 0 } }).shield, 0, '无盾 shield=0(条不画)');
 });
 
+test('开战和首领波显示短播报，普通换波只推进刻度，关动效或结束即清场', () => {
+  const view = new BattleHudView();
+  const battle = { phase: 'FIGHTING', level: 1, wave: 1, aliveEnemies: () => [] };
+  const hud = { battle, fxEnabled: () => true };
+  const labels = [], arcs = [];
+  const ctx = new Proxy({}, {
+    get(state, key) {
+      if (key === 'measureText') return text => ({ width: text.length * 10 });
+      if (key === 'createLinearGradient') return () => ({ addColorStop() {} });
+      if (key === 'fillText') return text => labels.push(text);
+      if (key === 'arc') return (x, y, r) => arcs.push({ x, y, r, color: state.strokeStyle });
+      return () => {};
+    },
+  });
+  view.noteWave(1);
+  view.update(0.2, hud);
+  view.drawWaveNotice(ctx, view.waveNotice(hud));
+  assert.deepEqual(labels, ['开战']);
+  battle.wave = 2;
+  view.noteWave(2);
+  view.update(0.2, hud);
+  assert.equal(view.waveNotice(hud), null, '普通换波不挡战场');
+  view.draw(ctx, hud);
+  assert.ok(arcs.some(arc => arc.y === 428 && arc.color === '#00897f' && arc.r > 7));
+  view.update(0.36, hud);
+  assert.equal(view.activeWaveCue(hud), null);
+
+  battle.wave = 10;
+  battle.aliveEnemies = () => [{ name: 'fox', isBoss: true, hp: 63, maxHp: 75 }];
+  view.noteWave(10);
+  view.update(0.2, hud);
+  view.draw(ctx, hud);
+  assert.ok(labels.includes('首领 · 狐妖') && labels.includes('63/75'));
+  view.drawWaveNotice(ctx, view.waveNotice(hud));
+  assert.equal(labels.at(-1), '狐妖现身');
+  assert.equal(view.waveNotice({ ...hud, fxEnabled: () => false }), null);
+  battle.phase = 'VICTORY';
+  view.update(0.01, hud);
+  assert.equal(view.activeWaveCue(hud), null);
+  view.reset();
+  assert.equal(view.waveCue, null);
+});
+
 test('战斗 HUD 使用真实道具剩余时间，动效关闭时也能辨认，并在到期和结算时消失', () => {
   const view = new BattleHudView();
   const battle = { phase: 'FIGHTING', invincibleT: 4.46 };

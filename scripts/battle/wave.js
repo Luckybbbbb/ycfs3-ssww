@@ -3,6 +3,8 @@
 // 数值依据: docs/design/04-敌人设计.md 第 1/3/4/6 节、docs/design/05-关卡设计.md 第 1/4 节
 // 相对路径: scripts/battle/wave.js
 
+export const ENEMY_NAME = { slime: '幽灵', fox: '狐妖', zombie: '僵尸', snake: '蛇妖', tiger: '虎妖', boss: '妖王' };
+
 // ---- 敌人类型表(04 文档第 1 节总表 + 第 6 节帧清单,帧号非等差必须按数组加载) ----
 export const ENEMY_TYPES = {
   slime:  { dir: 'slime',    prefix: 's_', frames: [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37, 39, 45], fps: 8,

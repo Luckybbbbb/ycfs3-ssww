@@ -21,7 +21,7 @@ import { preload } from './assets/loader.js';
 import { createApi } from './api/api.js';
 import { maxHpAt, atkAt } from './meta/exp.js';
 import { victoryReward, applyLevelUp, applySkillUp, gacha, levelUpCost, skillUpCost, COIN_PER_GACHA, SKILL_LEVEL_CAP } from './meta/economy.js';
-import { canPlay, onVictory, mergeRunResult } from './meta/levels.js';
+import { canPlay, onVictory, mergeRunResult, WAVES_PER_LEVEL } from './meta/levels.js';
 import { applyItem } from './board/items.js';
 import { skillById, SKILL_LIBRARY } from './skills/library.js';
 import { LEVEL_META } from './meta/levels.js';
@@ -171,6 +171,7 @@ function startLevel(L) {
   clearedTotal = 0;
   maxChain = 0; // M11:最高连锁统计归零
   paused = false; panel = null;
+  hud.toast = null;
   victoryHandled = false;
   screen = 'playing';
   lastWave = 0;
@@ -199,6 +200,7 @@ function retryLevel() {
   clearedTotal = 0;
   maxChain = 0;
   paused = false; panel = null;
+  hud.toast = null;
   victoryHandled = false;
   lastWave = 0;
   parallax.setWave(1, false);
@@ -233,6 +235,7 @@ function toggleBgm() {
 function toggleFx() {
   profile.settings.effects = profile.settings.effects === false; // false→true,其余→false
   engine.fxEnabled = profile.settings.effects;
+  if (!engine.fxEnabled) hud.battleHud.waveCue = null;
   persistProfile();
   showToast(`消除动效 ${profile.settings.effects ? '开' : '关'}`);
   sfx.item();
@@ -704,7 +707,12 @@ function boot(images) {
       // 换波同步视差与受击 screenshake
       if (battle.wave !== lastWave) {
         lastWave = battle.wave;
-        parallax.setWave(battle.wave, battle.wave === 10);
+        const bossWave = battle.wave === WAVES_PER_LEVEL;
+        parallax.setWave(battle.wave, bossWave);
+        if (battle.phase === 'FIGHTING') {
+          if (engine.fxEnabled) hud.battleHud.noteWave(battle.wave);
+          if (bossWave) sfx.bossArrival();
+        }
       }
       // screenshake 边沿触发:battle.shakeT 从 0 变正(新一次受击)才 triggerShake,
       // 不再每帧重置(REQ-M3-03 整改 7:此前震动被反复续时,150ms 仍有偏移)

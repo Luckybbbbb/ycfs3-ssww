@@ -193,6 +193,8 @@ test('M11 结算界面:胜利(通关横幅/统计行/解锁 chip/按钮组)与�
   const r = mkCtx();
   render(r.ctx, mkEngineStub(), mkHud({ battle }));
   assert.ok(r.rec.fillTexts.includes('通 关 !'), '胜利横幅');
+  assert.ok(r.rec.fillTexts.includes('蛇妖已击破'), '胜利横幅回应本关首领');
+  assert.ok(r.rec.fillTexts.includes('第 3 关 · 雾隐山道'), '结算展示实际关卡名');
   assert.ok(r.rec.fillTexts.some(t => t.includes('129 只')), '击杀统计');
   assert.ok(r.rec.fillTexts.some(t => t.includes('×4')), '最高连锁(hud.maxChain)');
   assert.ok(r.rec.fillTexts.some(t => t.includes('4226 exp')), '经验累计');
