@@ -6,7 +6,8 @@
 // 素材: player/slime/fox/zombie/snake/tiger/boss 序列帧复用 godot-roguelike(04 文档第 6 节);宝石见 gems/LICENSE.md
 
 import { BOARD_W, BOARD_H, BOARD_Y, CELL, ELEMENTS, isItem } from '../board/grid.js';
-import { roundRect, GEM_COLORS as GEM_SRC } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
+import { ITEM_LIFETIME } from '../board/items.js';
+import { BATTLE_ASSET_BAR_H, roundRect, GEM_COLORS as GEM_SRC } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { PLAYER_X, TIER_MULT } from '../skills/registry.js';
 import { skillById, SKILL_LIBRARY } from '../skills/library.js';
 import { levelUpCost, skillUpCost, SKILL_LEVEL_CAP } from '../meta/economy.js';
@@ -47,6 +48,11 @@ import { LEVEL_META, WAVES_PER_LEVEL } from '../meta/levels.js'; // M11 UI 设�
 import { expNeed, levelFromExp } from '../meta/exp.js'; // M11 选关/备战顶栏经验条
 
 const ITEM_ICON = { heal: '❤', invincible: '✦', cd: '⏱' };
+const ITEM_STYLE = {
+  heal: { plate: '#f8e9e6', timer: '#a45055' },
+  invincible: { plate: '#f6eedb', timer: '#8a6a2a' },
+  cd: { plate: '#e7eef7', timer: '#416e9c' },
+};
 // M14 界面图标贴图(assets/icons/ui/*.png 替换 emoji;表初始空,生产唯一填充入口=bindImages;
 // miss 时回退原 emoji 文字,不阻塞渲染)
 const UI_IMG = {}; // M14 界面图标表(见上)
@@ -410,6 +416,62 @@ function drawClearPulse(ctx, x, y, color, progress, spread) {
   ctx.restore();
 }
 
+function drawBoardItem(ctx, cell, x, y) {
+  const { plate, timer } = ITEM_STYLE[cell.item] ?? ITEM_STYLE.invincible;
+  const timeLeft = Math.max(0, cell.expire);
+  const remaining = Math.min(1, timeLeft / ITEM_LIFETIME);
+  const urgent = timeLeft <= 3;
+  const cx = x + CELL / 2, cy = y + 43;
+  const start = -Math.PI / 2;
+  ctx.save();
+  ctx.globalAlpha = cell.alpha;
+  ctx.fillStyle = plate;
+  roundRect(ctx, x + 10, y + 9, CELL - 20, CELL - 18, 16);
+  ctx.fill();
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(73,57,43,.18)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 33, start, start + Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = urgent ? '#9f353b' : timer;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 33, start, start + Math.PI * 2 * remaining);
+  ctx.stroke();
+
+  const itemImg = ITEM_IMG[cell.item + (cell.premium ? '_premium' : '')];
+  ctx.textAlign = 'center';
+  if (itemImg && itemImg.complete && itemImg.naturalWidth > 0) {
+    ctx.drawImage(itemImg, cx - 28, y + 9, 56, 56);
+  } else {
+    ctx.fillStyle = timer;
+    ctx.font = FONT(30, 'bold');
+    ctx.fillText(ITEM_ICON[cell.item] || '?', cx, y + 48);
+  }
+  ctx.fillStyle = plate;
+  roundRect(ctx, cx - 18, y + 61, 36, 20, 8);
+  ctx.fill();
+  ctx.fillStyle = urgent ? '#8f3038' : '#503d2a';
+  ctx.font = FONT(16, 'bold');
+  ctx.fillText(`${Math.ceil(timeLeft)}s`, cx, y + 76);
+
+  if (cell.premium) {
+    ctx.beginPath();
+    ctx.moveTo(x + 72, y + 9);
+    ctx.lineTo(x + 78, y + 15);
+    ctx.lineTo(x + 72, y + 21);
+    ctx.lineTo(x + 66, y + 15);
+    ctx.closePath();
+    ctx.fillStyle = '#ba842b';
+    ctx.fill();
+    ctx.strokeStyle = '#fff5d8';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 export function render(ctx, engine, hud, dt = 1 / 60) {
   worldT += dt; // 需求方 2026-10-19:主角动画异常快——worldT 原按帧数固定 +1/60,高刷屏(120Hz+)下 2 倍速;改按渲染回调实际 dt 推进(帧率无关)
   ctx.clearRect(0, 0, 720, 1280);
@@ -538,7 +600,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   // 在途掉落不计数)——图标 bump 由掉落到达触发,数字滚动与到达同步。
   if (battle && battle.phase === 'FIGHTING' && hud.profile) {
     const prof = hud.profile();
-    const TB = { x: 0, y: 0, w: 720, h: 44 };
+    const TB = { x: 0, y: 0, w: 720, h: BATTLE_ASSET_BAR_H };
     ctx.fillStyle = 'rgba(248,248,240,.96)';
     ctx.fillRect(TB.x, TB.y, TB.w, TB.h);
     ctx.strokeStyle = '#dac9a7'; ctx.lineWidth = 2;
@@ -614,31 +676,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
     const x = cell.c * CELL + (cell.offsetX || 0) + jx;
     const y = BOARD_Y + cell.r * CELL + cell.offsetY + jy;
     if (isItem(cell)) {
-      ctx.globalAlpha = cell.alpha;
-      ctx.fillStyle = cell.premium ? '#ffe9b8' : '#ffe9c2';
-      roundRect(ctx, x + 8, y + 8, CELL - 16, CELL - 16, 18);
-      ctx.fill();
-      ctx.strokeStyle = '#f5c31c';
-      ctx.lineWidth = 3;
-      roundRect(ctx, x + 8, y + 8, CELL - 16, CELL - 16, 18);
-      ctx.stroke();
-      // 道具格倒计时圈(FR-7/02 文档第 6 节:10s 环形倒计时,自 12 点方向顺时针)
-      ctx.beginPath();
-      ctx.arc(x + CELL / 2, y + CELL / 2, CELL / 2 - 4, -Math.PI / 2, -Math.PI / 2 + Math.max(0, Math.min(1, cell.expire / 10)) * Math.PI * 2);
-      ctx.stroke();
-      // M11:道具图标贴图(高级版用 _premium;缺图回退 emoji 原样式)
-      const itemImg = ITEM_IMG[cell.item + (cell.premium ? '_premium' : '')];
-      if (itemImg && itemImg.complete && itemImg.naturalWidth > 0) {
-        ctx.drawImage(itemImg, x + 19, y + 12, CELL - 38, CELL - 38);
-      } else {
-        ctx.fillStyle = '#794f27';
-        ctx.font = "30px 'Nunito','Noto Sans SC',sans-serif";
-        ctx.fillText(ITEM_ICON[cell.item] || '?', x + CELL / 2, y + CELL / 2 - 2);
-      }
-      ctx.fillStyle = '#794f27';
-      ctx.font = "14px 'Nunito','Noto Sans SC',sans-serif";
-      ctx.fillText(Math.ceil(cell.expire) + 's', x + CELL / 2, y + CELL / 2 + 30);
-      ctx.globalAlpha = 1;
+      drawBoardItem(ctx, cell, x, y);
       continue;
     }
     const el = ELEMENTS[cell.el];

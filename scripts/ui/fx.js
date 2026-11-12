@@ -4,7 +4,7 @@
 // 数值: 粒子 ≤12/次、上限 200(00 文档 FR-1.5 粒子上限口径),飞字 0.9s 上浮 40px
 
 import { BOARD_W, BOARD_H, BOARD_Y } from '../board/grid.js';
-import { GEM_COLORS as GEM_FLOAT } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
+import { BATTLE_ASSET_BAR_H, GEM_COLORS as GEM_FLOAT } from './draw_util.js'; // 五行色单一定义源(弹道与冒字共用,REQ-M7-01 F6)
 import { BATTLE_H } from '../battle/parallax.js'; // 战斗区高度单一来源(喊话演出以战斗区为舞台)
 
 // 伤害冒字样式表(03 文档 6.2a/6.2b;**全部五行语义色引用 draw_util GEM_COLORS 单一定义源**,
@@ -297,18 +297,22 @@ export class FxLayer {
     ctx.globalAlpha = 1;
     // 伤害冒字绘制(M8 A:pop 过冲→回落 1.0;末 30% 淡出;黑色描边在外圈;整条一体居中)
     ctx.lineJoin = 'round'; // 描边圆角避免尖刺
+    ctx.textBaseline = 'alphabetic';
     for (const c of this.combatTexts) {
       const p = c.t / c.life;
       const scale = this._scale(c);
       ctx.globalAlpha = p < FT_FADE_FROM ? 1 : Math.max(0, 1 - (p - FT_FADE_FROM) / (1 - FT_FADE_FROM));
       const font = Math.max(6, Math.round(c.size * scale));
       ctx.font = `bold ${font}px 'Nunito','Noto Sans SC',sans-serif`;
-      const ty = c.y - (c.imp === 2 ? 12 : 0);
       ctx.strokeStyle = '#000';
-      ctx.lineWidth = Math.max(3, Math.round(font / 8)); // 描边宽≈字号 1/8(随缩放)
-      ctx.strokeText(c.text, c.x, ty);
+      const outline = Math.max(3, Math.round(font / 8));
+      ctx.lineWidth = outline;
+      const inset = (ctx.measureText(c.text).width + outline) / 2 + 6;
+      const x = Math.max(inset, Math.min(BOARD_W - inset, c.x));
+      const y = Math.max(BATTLE_ASSET_BAR_H + font + 6, Math.min(BATTLE_H - 42, c.y - (c.imp === 2 ? 12 : 0)));
+      ctx.strokeText(c.text, x, y);
       ctx.fillStyle = c.color;
-      ctx.fillText(c.text, c.x, ty);
+      ctx.fillText(c.text, x, y);
     }
     ctx.globalAlpha = 1;
     // M9 连锁播报绘制(王者定版:左滑入→overshoot 定版→停留→上浮淡出;M9-F5:滑入含水平位移、

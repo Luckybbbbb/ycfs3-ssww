@@ -365,6 +365,7 @@ test('M8 pop 过冲→回落(easeOutBack):经**实际 draw** 验证过冲、回�
     set font(v) { this._f = v; }, get font() { return this._f; },
     set globalAlpha(v) {}, set fillStyle(v) {}, set textAlign(v) {},
     set strokeStyle(v) {}, set lineWidth(v) {}, set lineJoin(v) {},
+    measureText(text) { return { width: text.length * 12 }; },
     fillText(text) { drawn.push({ text, font: this._f }); },
     strokeText() {}, // 描边(黑色描边调整后 draw 会调用)
   };
@@ -602,14 +603,16 @@ test('M7 冒字字号翻倍(需求反馈):FT_STYLE 全部 size ×2(直击 32/击
 test('M7 黑色描边(需求反馈):draw 先 strokeText(#000)后 fillText,描边宽≈字号/8(M8 珊瑚红填充)', () => {
   const fx = new FxLayer();
   fx.combatFloat({ kind: 'dmg', x: 0, y: 0, n: 9, el: 'fire', jitter: 0 });
+  fx.combatFloat({ kind: 'kill', x: 760, y: 20, jitter: 0 });
   fx.update(0.1); // 先推进(整条一体:t=0 起跳,无未起跳位)
   const calls = [];
   const ctx = {
     set font(v) { this._f = v; }, get font() { return this._f; },
     set globalAlpha(v) {}, set fillStyle(v) { this._fill = v; }, set strokeStyle(v) { this._stroke = v; },
     set lineWidth(v) { this._lw = v; }, set lineJoin(v) {}, set textAlign(v) {},
+    measureText(t) { return { width: t.length * 12 }; },
     fillText(t) { calls.push({ op: 'fill', t, fill: this._fill, font: this._f }); },
-    strokeText(t) { calls.push({ op: 'stroke', t, stroke: this._stroke, lw: this._lw, font: this._f }); },
+    strokeText(t, x, y) { calls.push({ op: 'stroke', t, stroke: this._stroke, lw: this._lw, font: this._f, x, y }); },
   };
   fx.draw(ctx);
   const d = fx.combatTexts[0];
@@ -620,6 +623,12 @@ test('M7 黑色描边(需求反馈):draw 先 strokeText(#000)后 fillText,描边
   assert.equal(calls[strokeIdx].stroke, '#000', '描边黑色');
   assert.ok(calls[strokeIdx].lw >= 3, `描边宽≥3(实得 ${calls[strokeIdx].lw})`);
   assert.equal(calls[fillIdx].fill, '#e05a5a', '填充仍为元素色(GEM_COLORS fire)');
+  const left = calls[strokeIdx];
+  assert.ok(left.x - 12 - left.lw / 2 >= 6, '左侧伤害数字完整留在画布内');
+  const right = calls.find(call => call.op === 'stroke' && call.t === '击破');
+  const font = Number(right.font.match(/(\d+)px/)[1]);
+  assert.ok(right.x + 12 + right.lw / 2 <= 714, '右侧击破提示完整留在画布内');
+  assert.ok(right.y - font >= 50, '击破提示避开顶部资产栏');
 });
 
 // ---- M8 新增:暴击(6.2d)/整条一体(需求方 2026-10-17 口径)/受击反馈(6.7) ----

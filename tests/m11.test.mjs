@@ -20,13 +20,14 @@ const { attachInput } = await import('../scripts/core/input.js');
 // ---- 录制型 2D context 桩 ----
 function mkCtx() {
   // -03 B1 整改:Proxy set 拦截记录 fillStyle/globalAlpha(按压色/淡入 alpha 可真断言,不再恒真)
-  const rec = { fillTexts: [], draws: [], strokes: 0, rects: [], fillRects: [], gradients: 0, fillStyles: [], globals: [], strokeStyles: [], lineLimits: [] };
+  const rec = { fillTexts: [], draws: [], arcs: [], strokes: 0, rects: [], fillRects: [], gradients: 0, fillStyles: [], globals: [], strokeStyles: [], lineLimits: [] };
   const ctx = new Proxy({}, {
     get(_t, prop) {
       if (prop === '__rec') return rec;
       if (prop === 'measureText') return () => ({ width: 10 });
       if (prop === 'fillText') return (text) => rec.fillTexts.push(String(text));
       if (prop === 'drawImage') return (img, ...a) => rec.draws.push({ img: String(img?._src ?? img), a });
+      if (prop === 'arc') return (...args) => rec.arcs.push(args);
       if (prop === 'stroke') return () => { rec.strokes++; };
       if (prop === 'fillRect') return (x, y, w, h) => rec.fillRects.push({ x, y, w, h });
       if (prop === 'createLinearGradient' || prop === 'createRadialGradient') return () => { rec.gradients++; return { addColorStop() {} }; };
@@ -118,6 +119,18 @@ test('M11 道具图标:ITEM_IMG 6 张(items/<item>[_premium].png);道具格实�
   render(r2.ctx, e, mkHud());
   assert.ok(r2.rec.draws.some(d => d.img.includes('/assets/icons/items/invincible_premium.png')), '高级无敌贴图实绘(premium 后缀)');
   assert.ok(!r2.rec.fillTexts.includes('✦'), '贴图就绪后不再回退 emoji');
+  assert.ok(r2.rec.fillTexts.includes('7s'));
+  assert.ok(r2.rec.strokeStyles.includes('#8a6a2a'), '无敌道具显示自己的倒计时色');
+  assert.ok(r2.rec.arcs.some(([x, y, radius, start, end]) =>
+    x === 45 && y === 491 && radius === 33 && start === -Math.PI / 2 &&
+    Math.abs(end - start - 1.4 * Math.PI) < 1e-8), '7 秒时，细环剩余 70%');
+
+  e.cellsForRender = () => [{ r: 0, c: 0, item: 'cd', premium: false, expire: 1.7, alpha: 1, offsetX: 0, offsetY: 0 }];
+  const urgent = mkCtx();
+  render(urgent.ctx, e, mkHud());
+  assert.ok(urgent.rec.draws.some(d => d.img.includes('/assets/icons/items/cd.png')));
+  assert.ok(urgent.rec.fillTexts.includes('2s'));
+  assert.ok(urgent.rec.strokeStyles.includes('#9f353b'), '剩余 3 秒内切换临期提示');
 });
 
 // ---- M11-3 UI 五屏绘制 ----

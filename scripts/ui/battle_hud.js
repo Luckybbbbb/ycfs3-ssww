@@ -7,6 +7,7 @@
 // 相对路径: scripts/ui/battle_hud.js
 
 import { WAVES_PER_LEVEL } from '../meta/levels.js';
+import { BATTLE_ASSET_BAR_H as TOPBAR_H } from './draw_util.js';
 
 export const BATTLE_H = 448; // 战斗区高度(与 parallax BATTLE_H 同口径;本地常量避免循环依赖)
 
@@ -158,8 +159,7 @@ export class BattleHudView {
   draw(ctx, hud) {
     const s = this._snapshot(hud);
     // 需求方 2026-10-19:战斗区顶部新增货币栏条带(0~TOPBAR_H),战斗区 HUD 整体下移,
-    // 与该条带不再重叠。TOPBAR_H 与 render.js 中的战斗区货币栏条带高度保持一致。
-    const TOPBAR_H = 44;
+    // TOPBAR_H 与 render.js 共用货币栏高度。
     // ===== 左上角:头像+头像框 =====
     // 需求方 2026-10-18 反馈:专用生图头像与主角立绘发色不符「不太像」——
     // 改为立绘裁头部(与喊话演出同一形象,发色/帽饰完全一致);ui:hero_avatar 已移出清单
@@ -214,10 +214,14 @@ export class BattleHudView {
     }
 
     // ===== 技能框×4:战斗区右下(72px 框+56px 图标+CD 扫描) =====
-    ctx.fillStyle = 'rgba(255,246,228,.9)';
     ctx.font = "bold 15px 'Nunito','Noto Sans SC',sans-serif"; // BEAUTIFY-01 F2:13px→15px bold
     ctx.textAlign = 'right';
-    ctx.fillText('装配技能 · 自动释放', 698, 321);
+    const slotsLabel = '装配技能 · 自动释放';
+    const labelWidth = ctx.measureText(slotsLabel).width + 20;
+    ctx.fillStyle = 'rgba(36,51,36,.84)';
+    _rr(ctx, 700 - labelWidth, 304, labelWidth, 23, 8); ctx.fill();
+    ctx.fillStyle = '#fff4de';
+    ctx.fillText(slotsLabel, 690, 321);
     ctx.textAlign = 'left';
     s.slots.forEach((id, i) => {
       const x = 392 + i * 78, y = 330;

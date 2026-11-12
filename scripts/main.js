@@ -475,7 +475,8 @@ function boot(images) {
         if (fx.kind === 'heal') {
           const before = battle.hp;
           battle.hp = Math.min(battle.maxHp, battle.hp + fx.amount);
-          showToast(`回血 +${battle.hp - before}`);
+          const healed = battle.hp - before;
+          showToast(healed > 0 ? `回血 +${healed}` : '生命已满');
         } else if (fx.kind === 'invincible') {
           battle.invincibleT = fx.seconds;
           showToast(`无敌 ${fx.seconds}s`);
