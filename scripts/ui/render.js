@@ -572,6 +572,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   if (hud.fx && engine.fxEnabled !== false) hud.fx.drawCallBg(ctx);
 
   if (battle) {
+    const waveCue = hud.battleHud?.activeWaveCue?.(hud);
     // ===== 敌人(六类序列帧,尺寸=贴图×scale;死亡淡出放大) =====
     for (const e of battle.enemies) {
       const t = ENEMY_TYPES[e.name] || ENEMY_TYPES.slime;
@@ -582,7 +583,7 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
         ctx.globalAlpha = 1;
         continue;
       }
-      if (e.isBoss) drawBossGroundMark(ctx, e, t, battle.clock, _fxOn);
+      if (e.isBoss) drawBossGroundMark(ctx, e, t, battle.clock, _fxOn, waveCue?.kind === 'boss' ? waveCue.t : undefined);
       drawEnemy(ctx, e, t, 1);
       // 血条(Boss 另有 HUD 大血条,此处保留小血条)——M13 双血条:主条立即扣+淡红残影
       // 二段扣除(punch 0.4s→恒速 30%/s→1.2s 兜底,与 battle_hud 同一状态机;关动效直接同步)。
@@ -901,7 +902,10 @@ export function render(ctx, engine, hud, dt = 1 / 60) {
   ctx.fillStyle = '#b09b6c';
   ctx.fillRect(0, 1168, BOARD_W, 2);
   if (engine.fxEnabled !== false) hud.fx?.drawCastFlights?.(ctx);
-  if (waveNotice) hud.battleHud.drawWaveNotice(ctx, waveNotice);
+  if (waveNotice) {
+    const portrait = waveNotice.kind === 'boss' ? ENEMY_FRAMES[bossType(battle.level)]?.[0] : null;
+    hud.battleHud.drawWaveNotice(ctx, waveNotice, portrait);
+  }
 
   // M9:预输入缓冲预选提示(FALLING 等忙时滑动被记住——两格金色虚线框+「落定执行」微标)
   if (engine.swapBuffer) {
@@ -1371,7 +1375,7 @@ function fitText(ctx, text, maxW) {
   return s + '…';
 }
 
-function drawBossGroundMark(ctx, enemy, type, clock, effects) {
+function drawBossGroundMark(ctx, enemy, type, clock, effects, arrival) {
   const x = enemy.x, y = enemy.y + type.srcH * type.scale * 0.39;
   const radius = type.srcW * type.scale * 0.41;
   const pulse = effects ? (1 + Math.sin(clock * 5)) / 2 : 0.5;
@@ -1389,6 +1393,22 @@ function drawBossGroundMark(ctx, enemy, type, clock, effects) {
   ctx.beginPath();
   ctx.ellipse(x, y, radius + 9, 18, 0, 0.18, Math.PI - 0.18);
   ctx.stroke();
+  if (effects && arrival >= 0 && arrival < 0.92) {
+    const p = arrival / 0.92;
+    const reach = 1 - (1 - p) ** 2;
+    ctx.globalAlpha = Math.min(1, p * 5) * (1 - p);
+    ctx.strokeStyle = '#ffe4a7';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(x, y, radius + 8 + 54 * reach, 16 + 14 * reach, 0, 0, Math.PI * 2); ctx.stroke();
+    const innerX = radius + 3 + 21 * reach, innerY = 12 + 10 * reach;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3 - 0.12;
+      ctx.moveTo(x + Math.cos(a) * innerX, y + Math.sin(a) * innerY);
+      ctx.ellipse(x, y, innerX, innerY, 0, a, a + 0.34);
+    }
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

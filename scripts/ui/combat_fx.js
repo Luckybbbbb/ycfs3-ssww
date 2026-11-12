@@ -12,6 +12,7 @@ const ELEMENT_ART = {
   earth: { light: '#f3ca91', dark: '#533b35', aspect: 1.07, trail: 26 },
 };
 const MAX_IMPACTS = 12;
+const BOSS_FALL_TIME = 0.58;
 
 function elementPath(ctx, el) {
   ctx.beginPath();
@@ -117,9 +118,13 @@ function impactMark(ctx, el, radius, angle) {
 export class ImpactEffects {
   constructor() {
     this.active = [];
+    this.bossFall = null;
   }
 
   note(ev) {
+    if (ev.kind === 'kill' && ev.boss) {
+      this.bossFall = { x: ev.x, y: ev.y, t: 0 };
+    }
     const art = ELEMENT_ART[ev.el];
     if (!ev.impact || !art || !(ev.n > 0)) return;
     const { tier = 1, boss, primary } = ev.impact;
@@ -143,16 +148,17 @@ export class ImpactEffects {
     });
   }
 
-  clear() { this.active.length = 0; }
+  clear() { this.active.length = 0; this.bossFall = null; }
 
   update(dt) {
+    if (this.bossFall && (this.bossFall.t += dt) >= BOSS_FALL_TIME) this.bossFall = null;
     if (!this.active.length) return;
     for (const hit of this.active) hit.t += dt;
     this.active = this.active.filter(hit => hit.t < hit.life);
   }
 
   draw(ctx) {
-    if (!this.active.length) return;
+    if (!this.active.length && !this.bossFall) return;
     ctx.save();
     ctx.beginPath(); ctx.rect(0, BATTLE_ASSET_BAR_H, 720, BATTLE_H - BATTLE_ASSET_BAR_H); ctx.clip();
     ctx.lineJoin = 'round';
@@ -190,6 +196,32 @@ export class ImpactEffects {
       }
       ctx.restore();
     }
+    if (this.bossFall) drawBossFall(ctx, this.bossFall);
     ctx.restore();
   }
+}
+
+function drawBossFall(ctx, fall) {
+  const p = fall.t / BOSS_FALL_TIME;
+  const reach = 1 - (1 - p) ** 2;
+  const radius = 18 + 86 * reach;
+  const fade = (1 - p) ** 1.3;
+  ctx.save();
+  ctx.translate(fall.x, fall.y + 22);
+  ctx.globalAlpha = fade * 0.6;
+  ctx.strokeStyle = '#8e4232';
+  ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.ellipse(0, 0, radius, radius * 0.46, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = '#ffe0a0'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.globalAlpha = fade * 0.8;
+  ctx.fillStyle = '#fff0bc';
+  for (let i = 0; i < 10; i++) {
+    const angle = i * Math.PI / 5 + 0.25;
+    const x = Math.cos(angle) * (radius + i % 3 * 11);
+    const y = Math.sin(angle) * radius * 0.72 - reach * 31;
+    const r = (5 + i % 3) * fade;
+    ctx.beginPath(); ctx.moveTo(x, y - r * 1.8); ctx.lineTo(x + r, y);
+    ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
 }

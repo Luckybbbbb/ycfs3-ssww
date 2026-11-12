@@ -165,19 +165,21 @@ export class BattleHudView {
     const outT = Math.min(1, (cue.duration - cue.t) / 0.22);
     const entry = 1 - (1 - inT) ** 3;
     const boss = cue.kind === 'boss';
-    const half = (boss ? 172 : 112) * (0.82 + entry * 0.18);
-    const top = (boss ? 254 : 258) + (1 - entry) * 8 + (1 - outT) * 5;
+    const center = boss ? 346 : 360;
+    const half = (boss ? 164 : 112) * (0.82 + entry * 0.18);
+    const top = (boss ? 251 : 258) + (1 - entry) * 8 + (1 - outT) * 5;
     const name = ENEMY_NAME[bossType(hud.battle.level)];
     return {
       kind: cue.kind, alpha: Math.min(entry, outT), sweep: inT,
       text: boss ? (name ? `${name}现身` : '首领现身') : '开战',
-      left: 360 - half, right: 360 + half, top, bottom: top + (boss ? 52 : 44),
+      left: center - half, right: center + half, top, bottom: top + (boss ? 58 : 44),
     };
   }
 
-  drawWaveNotice(ctx, notice) {
+  drawWaveNotice(ctx, notice, portrait) {
     const { kind, left, right, top, bottom, alpha, sweep, text } = notice;
     const palette = WAVE_NOTICE_PALETTE[kind];
+    const midX = (left + right) / 2;
     const midY = (top + bottom) / 2;
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -201,15 +203,29 @@ export class BattleHudView {
     ctx.globalAlpha = alpha * 0.46;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(360 - (360 - left - 36) * sweep, bottom - 5);
-    ctx.lineTo(360 + (right - 360 - 36) * sweep, bottom - 5);
+    ctx.moveTo(midX - (midX - left - 36) * sweep, bottom - 5);
+    ctx.lineTo(midX + (right - midX - 36) * sweep, bottom - 5);
     ctx.stroke();
     ctx.globalAlpha = alpha;
+    const hasPortrait = kind === 'boss' && portrait?.complete && portrait.naturalWidth > 0 && portrait.naturalHeight > 0;
+    if (hasPortrait) {
+      const size = 54 / Math.max(portrait.naturalWidth, portrait.naturalHeight);
+      const w = portrait.naturalWidth * size, h = portrait.naturalHeight * size;
+      const x = left + 43;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(x, midY, 25, 0, Math.PI * 2);
+      ctx.fillStyle = '#3c2230'; ctx.fill();
+      ctx.strokeStyle = palette.edge; ctx.lineWidth = 2; ctx.stroke();
+      ctx.clip();
+      ctx.translate(x, midY); ctx.scale(-1, 1);
+      ctx.drawImage(portrait, -w / 2, -h / 2, w, h);
+      ctx.restore();
+    }
     ctx.fillStyle = palette.text;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = `bold ${kind === 'boss' ? 34 : 31}px 'Nunito','Noto Sans SC',sans-serif`;
-    ctx.fillText(text, 360, midY);
+    ctx.fillText(text, midX + (hasPortrait ? 24 : 0), midY);
     ctx.restore();
   }
 

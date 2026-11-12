@@ -732,6 +732,29 @@ test('M8 暴击(6.2d):critChance=t1 9%~t5 25%;直击 roll 命中 → dmg×1.5+�
   assert.equal(b3.floatTexts.find(x => x.kind === 'splash').impact.primary, false);
 });
 
+test('只有实际首领击杀产生金色击破提示和退场效果', () => {
+  const battle = new Battle({ rng: () => 0.99 });
+  const guard = new Enemy({ hp: 1, x: 640, y: 200 });
+  const boss = new Enemy({ name: 'fox', hp: 1, x: 560, y: 230, isBoss: true });
+  battle.enemies = [guard, boss];
+  const fx = new FxLayer();
+  battle.applyHit(mkBolt('fire', 1, 10), guard);
+  const guardKill = battle.drainFloatTexts().find(ev => ev.kind === 'kill');
+  assert.equal(guardKill.boss, false);
+  fx.combatFloat(guardKill);
+  assert.equal(fx.impacts.bossFall, null);
+  battle.applyHit(mkBolt('fire', 1, 10), boss);
+  const bossKill = battle.drainFloatTexts().find(ev => ev.kind === 'kill');
+  assert.equal(bossKill.boss, true);
+  fx.combatFloat(bossKill);
+  assert.deepEqual(fx.impacts.bossFall, { x: 560, y: 230, t: 0 });
+  assert.deepEqual(fx.combatTexts.map(c => [c.text, c.color]), [['击破', '#ffffff'], ['首领击破', '#ffe0a0']]);
+  fx.update(0.2);
+  assert.equal(fx.impacts.bossFall.t, 0.2);
+  fx.update(0.4);
+  assert.equal(fx.impacts.bossFall, null);
+});
+
 test('五行命中使用实际伤害，超出画面上限时优先保留首领暴击', () => {
   const fx = new FxLayer();
   const damage = { kind: 'dmg', x: 560, y: 210, n: 24, el: 'water', fromAngle: 0 };

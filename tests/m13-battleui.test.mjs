@@ -225,20 +225,23 @@ test('开战和首领波显示短播报，普通换波只推进刻度，关动�
   const view = new BattleHudView();
   const battle = { phase: 'FIGHTING', level: 1, wave: 1, aliveEnemies: () => [] };
   const hud = { battle, fxEnabled: () => true };
-  const labels = [], arcs = [];
+  const labels = [], arcs = [], portraits = [];
   const ctx = new Proxy({}, {
     get(state, key) {
       if (key === 'measureText') return text => ({ width: text.length * 10 });
       if (key === 'createLinearGradient') return () => ({ addColorStop() {} });
       if (key === 'fillText') return text => labels.push(text);
       if (key === 'arc') return (x, y, r) => arcs.push({ x, y, r, color: state.strokeStyle });
+      if (key === 'drawImage') return (image, x, y, w, h) => portraits.push({ image, x, y, w, h });
       return () => {};
     },
   });
   view.noteWave(1);
   view.update(0.2, hud);
-  view.drawWaveNotice(ctx, view.waveNotice(hud));
+  const portrait = { complete: true, naturalWidth: 216, naturalHeight: 216 };
+  view.drawWaveNotice(ctx, view.waveNotice(hud), portrait);
   assert.deepEqual(labels, ['开战']);
+  assert.equal(portraits.length, 0);
   battle.wave = 2;
   view.noteWave(2);
   view.update(0.2, hud);
@@ -254,8 +257,11 @@ test('开战和首领波显示短播报，普通换波只推进刻度，关动�
   view.update(0.2, hud);
   view.draw(ctx, hud);
   assert.ok(labels.includes('首领 · 狐妖') && labels.includes('63/75'));
-  view.drawWaveNotice(ctx, view.waveNotice(hud));
+  const notice = view.waveNotice(hud);
+  view.drawWaveNotice(ctx, notice, portrait);
   assert.equal(labels.at(-1), '狐妖现身');
+  assert.deepEqual(portraits, [{ image: portrait, x: -27, y: -27, w: 54, h: 54 }]);
+  assert.ok(notice.top > 248 && notice.right <= 510 && notice.bottom < 330);
   assert.equal(view.waveNotice({ ...hud, fxEnabled: () => false }), null);
   battle.phase = 'VICTORY';
   view.update(0.01, hud);

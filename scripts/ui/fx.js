@@ -24,7 +24,7 @@ const FT_STYLE = {
   absorb:     { color: () => GEM_FLOAT.earth, fmt: ev => String(ev.n), icon: 'shield', fallback: '吸收', imp: 1, size: 32 },
   hurt:       { color: () => '#ff8888', fmt: ev => `-${ev.n}`, imp: 1, size: 32 },
   immune:     { color: () => '#ffd700', fmt: () => `免伤`, imp: 2, size: 40 },
-  kill:       { color: () => '#ffffff', fmt: () => `击破`, imp: 2, size: 40 },
+  kill:       { color: ev => ev.boss ? '#ffe0a0' : '#ffffff', fmt: ev => ev.boss ? '首领击破' : '击破', imp: 2, size: 40 },
   slowMark:   { color: () => GEM_FLOAT.water, fmt: () => '减速', icon: 'slow', imp: 0, size: 28 },
   bindMark:   { color: () => GEM_FLOAT.wood, fmt: () => '束缚', icon: 'bind', imp: 1, size: 28 },
   stunMark:   { color: () => GEM_FLOAT.earth, fmt: () => '眩晕', icon: 'stun', imp: 1, size: 28 },

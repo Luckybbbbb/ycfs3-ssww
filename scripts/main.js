@@ -789,6 +789,7 @@ function boot(images) {
         if (engine.fxEnabled) hud.fx.combatFloat(ev);
         // -06 掉落表现:击杀→掉落货币/材料物(数值已入账,此为表现层;fx 关不生成)
         if (ev.kind === 'kill' && engine.fxEnabled !== false) {
+          if (ev.boss && hud.battleHud.waveCue?.kind === 'boss') hud.battleHud.waveCue = null;
           if (ev.coins > 0) spawnCoinDrop('coin', ev.coins, ev.x, ev.y);
           if (ev.mats > 0) spawnCoinDrop('mat', ev.mats, ev.x, ev.y);
         }

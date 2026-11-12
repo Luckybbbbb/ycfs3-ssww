@@ -169,7 +169,7 @@ export class Battle {
     this.matsGained += rw.mats;
     this.log.push({ t: this.clock, ev: 'kill', boss: !!e.isBoss });
     // -06 掉落表现:kill 事件携带本杀收益(coins/mats),main 转发表现层生成掉落物
-    this.floatEvent({ kind: 'kill', x: e.x, y: e.y, importance: 2, coins: rw.coins, mats: rw.mats }); // `击破`(每次击杀固定 1 条;03 文档 6.2a)
+    this.floatEvent({ kind: 'kill', x: e.x, y: e.y, boss: !!e.isBoss, importance: 2, coins: rw.coins, mats: rw.mats });
     return true;
   }
 
